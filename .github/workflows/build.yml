@@ -10,15 +10,15 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select newest Xcode 26
+      - name: Select newest Xcode
         run: |
           ls /Applications | grep -i xcode || true
-          XC=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          XC=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
           if [ -n "$XC" ]; then echo "Selecting $XC"; sudo xcode-select -s "$XC"; fi
           xcodebuild -version
           swift --version
