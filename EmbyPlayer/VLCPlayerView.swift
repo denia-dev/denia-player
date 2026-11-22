@@ -43,11 +43,9 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     private var loadDate = Date()
     private var resumeAttempts = 0
     private(set) var maxPosition: Double = 0
-    private var desiredAudioID: Int32?
-    private var desiredSubtitleID: Int32?
-    private var audioApplyAttempts = 0
-    private var subtitleApplyAttempts = 0
-    private var lastTrackApply = Date.distantPast
+    private var desiredAudioOrdinal: Int?
+    private var desiredSubtitleOrdinal: Int?
+    private var desiredSubtitleOff = false
     private var lastPositionSample: Double = -1
     private var lastAdvanceAt = Date()
     private var selectionCounter = 0
@@ -114,7 +112,6 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         isBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
         isPlaying = !userPaused && state != .ended && state != .error
             && (state == .playing || !stalled || state == .buffering)
-        enforceDesiredTracks()
         postReloadMaintenance(state: state)
         if duration <= 0, position > 0 {
             let remaining = player.remainingTime.map { Double($0.intValue) / 1000 } ?? 0
@@ -148,34 +145,39 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         if audio.count != audioTracks.count { audioTracks = audio }
         let subs = Self.trackList(names: player.videoSubTitlesNames, indexes: player.videoSubTitlesIndexes)
         if subs.count != subtitleTracks.count { subtitleTracks = subs }
-        if selectedAudioID != player.currentAudioTrackIndex {
-            selectedAudioID = player.currentAudioTrackIndex
-        }
-        if selectedSubtitleID != player.currentVideoSubTitleIndex {
-            selectedSubtitleID = player.currentVideoSubTitleIndex
+        // While a reload is in flight the readbacks are transient garbage;
+        // keep the user's checkmark where they put it.
+        let reloadInFlight = reloadTarget != nil || player.state == .opening
+        if !reloadInFlight {
+            if selectedAudioID != player.currentAudioTrackIndex {
+                selectedAudioID = player.currentAudioTrackIndex
+            }
+            if selectedSubtitleID != player.currentVideoSubTitleIndex {
+                selectedSubtitleID = player.currentVideoSubTitleIndex
+            }
         }
         if !didAutoSelectAudio {
             let real = audioTracks.filter { $0.id >= 0 }
             if !real.isEmpty {
                 didAutoSelectAudio = true
-                if let ordinal = preferredAudioOrdinal, ordinal < real.count {
-                    desiredAudioID = real[ordinal].id
-                } else if player.currentAudioTrackIndex < 0 {
-                    desiredAudioID = real[0].id
-                }
-                if let desiredAudioID, player.currentAudioTrackIndex != desiredAudioID {
-                    player.currentAudioTrackIndex = desiredAudioID
-                    selectedAudioID = desiredAudioID
+                desiredAudioOrdinal = preferredAudioOrdinal.flatMap { $0 < real.count ? $0 : nil }
+                    ?? (player.currentAudioTrackIndex < 0 ? 0 : nil)
+                if let ordinal = desiredAudioOrdinal,
+                   player.currentAudioTrackIndex != real[ordinal].id {
+                    // One-time set inside the initial settling window; this
+                    // is the only in-place track change that is safe.
+                    player.currentAudioTrackIndex = real[ordinal].id
+                    selectedAudioID = real[ordinal].id
                 }
             }
         }
         if !didAutoSelectSubtitle, subtitleTracks.count > 1 {
             didAutoSelectSubtitle = true
             if player.currentVideoSubTitleIndex < 0 {
-                let pick = subtitleTracks.first(where: { $0.name.contains("简") || $0.name.contains("中") })
-                    ?? subtitleTracks.first(where: { $0.id >= 0 })
+                let real = subtitleTracks.filter { $0.id >= 0 }
+                let pick = real.first(where: { $0.name.contains("简") || $0.name.contains("中") }) ?? real.first
                 if let pick {
-                    desiredSubtitleID = pick.id
+                    desiredSubtitleOrdinal = real.firstIndex(where: { $0.id == pick.id })
                     player.currentVideoSubTitleIndex = pick.id
                     selectedSubtitleID = pick.id
                 }
@@ -211,36 +213,25 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         player.rate = newRate
     }
 
-    /// libvlc can silently drop a track change issued while its input is
-    /// still settling; re-apply the desired tracks until the readback agrees.
-    private func enforceDesiredTracks() {
-        guard Date().timeIntervalSince(lastTrackApply) > 0.8 else { return }
-        if let desiredAudioID, player.currentAudioTrackIndex != desiredAudioID, audioApplyAttempts < 5 {
-            audioApplyAttempts += 1
-            lastTrackApply = Date()
-            player.currentAudioTrackIndex = desiredAudioID
-        }
-        if let desiredSubtitleID, player.currentVideoSubTitleIndex != desiredSubtitleID, subtitleApplyAttempts < 5 {
-            subtitleApplyAttempts += 1
-            lastTrackApply = Date()
-            player.currentVideoSubTitleIndex = desiredSubtitleID
-        }
-    }
-
     func selectAudio(_ id: Int32) {
-        desiredAudioID = id
+        let real = audioTracks.filter { $0.id >= 0 }
+        desiredAudioOrdinal = real.firstIndex(where: { $0.id == id })
         selectedAudioID = id
         scheduleReload()
     }
 
     func selectSubtitle(_ id: Int32) {
-        desiredSubtitleID = id
         selectedSubtitleID = id
         if id < 0 {
             // Turning subtitles off needs no decoder; in-place is safe.
+            desiredSubtitleOff = true
+            desiredSubtitleOrdinal = nil
             player.currentVideoSubTitleIndex = -1
             return
         }
+        desiredSubtitleOff = false
+        let real = subtitleTracks.filter { $0.id >= 0 }
+        desiredSubtitleOrdinal = real.firstIndex(where: { $0.id == id })
         scheduleReload()
     }
 
@@ -268,11 +259,15 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         if target > 5 {
             media.addOption("start-time=\(Int(target))")
         }
-        if let desiredAudioID, desiredAudioID >= 0 {
-            media.addOption("audio-track-id=\(desiredAudioID)")
+        // Resolve the desired tracks from the CURRENT track lists by
+        // ordinal (container order is stable even if ES ids drift).
+        let realAudio = audioTracks.filter { $0.id >= 0 }
+        if let ordinal = desiredAudioOrdinal, ordinal < realAudio.count {
+            media.addOption("audio-track-id=\(realAudio[ordinal].id)")
         }
-        if let desiredSubtitleID, desiredSubtitleID >= 0 {
-            media.addOption("sub-track-id=\(desiredSubtitleID)")
+        let realSubs = subtitleTracks.filter { $0.id >= 0 }
+        if !desiredSubtitleOff, let ordinal = desiredSubtitleOrdinal, ordinal < realSubs.count {
+            media.addOption("sub-track-id=\(realSubs[ordinal].id)")
         }
         player.media = media
         needsPostReloadApply = true
@@ -283,9 +278,6 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         guard state == .playing else { return }
         if needsPostReloadApply {
             needsPostReloadApply = false
-            audioApplyAttempts = 0
-            subtitleApplyAttempts = 0
-            lastTrackApply = .distantPast
             if rate != 1 { player.rate = rate }
         }
         if let target = reloadTarget {
