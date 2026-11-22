@@ -108,7 +108,7 @@ struct EmbyMediaStream: Decodable {
     enum CodingKeys: String, CodingKey {
         case Index
         case type = "Type"
-        case Codec, Language, DisplayTitle, IsDefault, IsExternal, IsTextSubtitleStream
+        case Codec, Language, DisplayTitle, IsDefault, IsExternal, IsTextSubtitleStream, DeliveryUrl
     }
     let Codec: String?
     let Language: String?
@@ -116,6 +116,7 @@ struct EmbyMediaStream: Decodable {
     let IsDefault: Bool?
     let IsExternal: Bool?
     let IsTextSubtitleStream: Bool?
+    let DeliveryUrl: String?
 }
 
 struct EmbyPlaybackInfo: Decodable {

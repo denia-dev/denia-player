@@ -24,11 +24,16 @@ struct PlayerView: View {
     @State private var playerGeneration = 0
     @State private var usedMetalFallback = false
     @State private var currentStreamURL: URL?
+    @State private var currentSource: EmbyMediaSource?
+    @State private var preparedGeneration = -1
 
     static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput) -> MPVPlayer {
         var options: [String: String] = [
             "sub-auto": "fuzzy",
+            "slang": "zh-Hans,zh-CN,zh,chi,zho",
             "demuxer-max-bytes": "536870912",
+            "demuxer-readahead-secs": "60",
+            "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
         ]
         // MPVUI ships no fonts and iOS exposes no system font dir to libass,
         // so bundle a CJK font or every Chinese subtitle renders as tofu.
@@ -43,7 +48,9 @@ struct PlayerView: View {
             automaticallyPlays: true,
             dolbyVisionPolicy: .profile7Compatibility,
             hardwareDecoding: .videoToolbox,
+            initialBufferDuration: .seconds(3),
             networkCacheDuration: .seconds(120),
+            rebufferDuration: .seconds(5),
             videoOutput: videoOutput
         ))
     }
@@ -99,8 +106,12 @@ struct PlayerView: View {
         .task { await startPlayback() }
         .task { await progressLoop() }
         .task { await fallbackWatcher() }
-        .onAppear { savedBrightness = UIScreen.main.brightness }
+        .onAppear {
+            savedBrightness = UIScreen.main.brightness
+            requestOrientation(.landscape)
+        }
         .onDisappear {
+            requestOrientation(.portrait)
             hideTask?.cancel()
             UIScreen.main.brightness = savedBrightness
             if let session {
@@ -128,7 +139,9 @@ struct PlayerView: View {
             }
             session = (source.Id, info.PlaySessionId)
             currentStreamURL = url
+            currentSource = source
             player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
+            Task { await prepareSubtitles() }
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
             scheduleHide()
         } catch {
@@ -150,7 +163,59 @@ struct PlayerView: View {
             player = Self.makePlayer(videoOutput: .metal)
             playerGeneration += 1
             player.load(url, startTime: resume > 5 ? .seconds(resume) : nil)
+            Task { await prepareSubtitles() }
         }
+    }
+
+    // MARK: - subtitles & orientation
+
+    private func isChineseSub(language: String?, title: String?) -> Bool {
+        let lang = (language ?? "").lowercased()
+        if lang.hasPrefix("zh") || lang == "chi" || lang == "zho" { return true }
+        let t = title ?? ""
+        return t.contains("中") || t.contains("简") || t.contains("繁") || t.localizedCaseInsensitiveContains("chs") || t.localizedCaseInsensitiveContains("cht")
+    }
+
+    /// Adds the server's external subtitle files and, when the container did
+    /// not auto-select one, selects the best embedded track (Chinese first,
+    /// then the container's default, then the first track).
+    private func prepareSubtitles() async {
+        guard let source = currentSource, let client = store.client() else { return }
+        let generation = playerGeneration
+        guard preparedGeneration != generation else { return }
+        preparedGeneration = generation
+
+        let externals = client.externalSubtitles(itemID: item.Id, source: source)
+        if !externals.isEmpty {
+            let preferred = externals.first(where: { isChineseSub(language: $0.language, title: $0.title) }) ?? externals[0]
+            for ext in externals where ext.url != preferred.url {
+                player.loadExternalSubtitle(ext.url, selecting: nil)
+            }
+            player.loadExternalSubtitle(preferred.url, selecting: .primary)
+        }
+
+        for _ in 0..<24 {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard generation == playerGeneration, !Task.isCancelled else { return }
+            let subs = player.subtitleTracks
+            if subs.contains(where: { $0.isSelected }) { return }
+            guard let best = subs.first(where: { isChineseSub(language: $0.language, title: $0.title) })
+                    ?? subs.first(where: { $0.isDefault })
+                    ?? subs.first else { continue }
+            try? await Task.sleep(for: .seconds(1))
+            guard generation == playerGeneration else { return }
+            if !player.subtitleTracks.contains(where: { $0.isSelected }) {
+                player.selectSubtitle(best.id)
+            }
+            return
+        }
+    }
+
+    private func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
     }
 
     private func progressLoop() async {

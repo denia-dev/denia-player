@@ -287,6 +287,31 @@ struct EmbyClient {
         return components?.url
     }
 
+    /// External subtitle files live outside the media container, so the
+    /// static stream URL never contains them; the player must add them itself.
+    func externalSubtitles(itemID: String, source: EmbyMediaSource) -> [(url: URL, title: String?, language: String?)] {
+        guard let streams = source.MediaStreams else { return [] }
+        return streams.compactMap { stream in
+            guard stream.type == "Subtitle", stream.IsExternal == true else { return nil }
+            var url: URL?
+            if let delivery = stream.DeliveryUrl {
+                url = URL(string: server.baseURL + delivery)
+            }
+            if url == nil {
+                let format = (stream.Codec ?? "srt").lowercased()
+                url = URL(string: server.baseURL + "/Videos/\(itemID)/\(source.Id)/Subtitles/\(stream.Index)/Stream.\(format)")
+            }
+            guard var components = url.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else { return nil }
+            var query = components.queryItems ?? []
+            if !query.contains(where: { $0.name == "api_key" }) {
+                query.append(URLQueryItem(name: "api_key", value: server.accessToken))
+                components.queryItems = query
+            }
+            guard let finalURL = components.url else { return nil }
+            return (finalURL, stream.DisplayTitle, stream.Language)
+        }
+    }
+
     // MARK: - session reporting
 
     private func report(path: String, itemID: String, sourceID: String, sessionID: String?, positionSeconds: Double, isPaused: Bool? = nil) async {
