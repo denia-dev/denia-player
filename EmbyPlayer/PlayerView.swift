@@ -20,9 +20,10 @@ struct PlayerView: View {
     let item: EmbyItem
     let startSeconds: Double
 
-    @State private var player = PlayerView.makePlayer(videoOutput: .sampleBuffer)
+    @State private var player = PlayerView.makePlayer(videoOutput: .metal)
     @State private var playerGeneration = 0
     @State private var usedMetalFallback = false
+    @State private var currentOutputIsMetal = true
     @State private var currentStreamURL: URL?
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
@@ -154,11 +155,12 @@ struct PlayerView: View {
     private func fallbackWatcher() async {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(1))
-            guard !usedMetalFallback,
+            guard !usedMetalFallback, !currentOutputIsMetal,
                   let error = player.lastError,
                   String(describing: error).contains("nativeVideoOutputUnavailable"),
                   let url = currentStreamURL else { continue }
             usedMetalFallback = true
+            currentOutputIsMetal = true
             let resume = max(player.position.secondsValue, startSeconds)
             player = Self.makePlayer(videoOutput: .metal)
             playerGeneration += 1
@@ -420,7 +422,10 @@ struct PlayerView: View {
     }
 
     private func trackLabel(_ track: MPVMediaTrack) -> String {
-        if let title = track.title, !title.isEmpty { return title }
+        if let title = track.title, !title.isEmpty {
+            if let codec = track.codec, !codec.isEmpty { return "\(title) · \(codec)" }
+            return title
+        }
         var parts: [String] = []
         if let language = track.language { parts.append(language) }
         if let codec = track.codec { parts.append(codec) }
