@@ -53,6 +53,37 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     private var selectionCounter = 0
     private var userPaused = false
     private var preferredSubtitleOrdinal: Int?
+    private let logStart = Date()
+    private var eventLog: [String] = []
+    private var lastSampleState: VLCMediaPlayerState?
+    private var lastSampleAudio: Int32 = .min
+    private var lastSampleSub: Int32 = .min
+
+    func logEvent(_ message: String) {
+        let t = Date().timeIntervalSince(logStart)
+        eventLog.append(String(format: "[+%06.1fs] %@", t, message))
+        if eventLog.count > 150 { eventLog.removeFirst(eventLog.count - 150) }
+    }
+
+    func diagnosticsDump() -> String {
+        var lines: [String] = []
+        lines.append("VLC DIAG build 20")
+        lines.append("state=\(player.state.rawValue) playing=\(player.isPlaying) pos=\(Int(position))/\(Int(duration))")
+        lines.append("audio readback=\(player.currentAudioTrackIndex) selected=\(selectedAudioID) desiredOrdinal=\(desiredAudioOrdinal.map(String.init) ?? "-")")
+        lines.append("sub readback=\(player.currentVideoSubTitleIndex) selected=\(selectedSubtitleID) desiredOrdinal=\(desiredSubtitleOrdinal.map(String.init) ?? "-") off=\(desiredSubtitleOff)")
+        lines.append("audioTracks=\(audioTracks.map { "\($0.id):\($0.name)" }.joined(separator: " | "))")
+        lines.append("subTracks=\(subtitleTracks.map { "\($0.id):\($0.name)" }.joined(separator: " | "))")
+        if let media = player.media {
+            lines.append("media decodedAudio=\(media.numberOfDecodedAudioBlocks) playedBuffers=\(media.numberOfPlayedAudioBuffers) lostBuffers=\(media.numberOfLostAudioBuffers)")
+            lines.append("media decodedVideo=\(media.numberOfDecodedVideoBlocks) displayed=\(media.numberOfDisplayedPictures) lostPictures=\(media.numberOfLostPictures)")
+            lines.append("media inputBitrate=\(media.inputBitrate) demuxBitrate=\(media.demuxBitrate)")
+        }
+        let session = AVAudioSession.sharedInstance()
+        lines.append("audioSession category=\(session.category.rawValue) route=\(session.currentRoute.outputs.map { $0.portType.rawValue }.joined(separator: ","))")
+        lines.append("--- events ---")
+        lines.append(contentsOf: eventLog)
+        return lines.joined(separator: "\n")
+    }
     /// Set by the view: a manual track switch is executed by the parent by
     /// tearing this whole view down and re-entering with a fresh Emby
     /// session and the chosen tracks as initial selections - the exact
@@ -73,6 +104,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         }
         player.media = media
         player.delegate = self
+        logEvent("prepare start=\(Int(startSeconds)) prefAudio=\(preferredAudioOrdinal ?? -1) prefSub=\(preferredSubtitleOrdinal ?? -99)")
         if drawableAttached { player.play() }
     }
 
@@ -116,6 +148,14 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         isBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
         isPlaying = !userPaused && state != .ended && state != .error
             && (state == .playing || !stalled || state == .buffering)
+        let sampleAudio = player.currentAudioTrackIndex
+        let sampleSub = player.currentVideoSubTitleIndex
+        if sampleAudio != lastSampleAudio || sampleSub != lastSampleSub || state != lastSampleState {
+            logEvent("sample state=\(state.rawValue) audio=\(sampleAudio) sub=\(sampleSub) pos=\(Int(position))")
+            lastSampleAudio = sampleAudio
+            lastSampleSub = sampleSub
+            lastSampleState = state
+        }
         if duration <= 0, position > 0 {
             let remaining = player.remainingTime.map { Double($0.intValue) / 1000 } ?? 0
             if remaining > 0 { duration = position + remaining }
@@ -228,6 +268,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         guard let ordinal = real.firstIndex(where: { $0.id == id }) else { return }
         desiredAudioOrdinal = ordinal
         selectedAudioID = id
+        logEvent("selectAudio id=\(id) ordinal=\(ordinal)")
         requestTrackSwitch()
     }
 
@@ -245,6 +286,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         let real = subtitleTracks.filter { $0.id >= 0 }
         guard let ordinal = real.firstIndex(where: { $0.id == id }) else { return }
         desiredSubtitleOrdinal = ordinal
+        logEvent("selectSubtitle id=\(id) ordinal=\(ordinal)")
         requestTrackSwitch()
     }
 
@@ -264,6 +306,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
             let audioOrdinal = self.desiredAudioOrdinal ?? self.currentAudioOrdinal() ?? 0
             let subtitleOrdinal = self.desiredSubtitleOff ? -1
                 : (self.desiredSubtitleOrdinal ?? self.currentSubtitleOrdinal() ?? -1)
+            self.logEvent("switchRequest audio=\(audioOrdinal) sub=\(subtitleOrdinal) pos=\(Int(self.directPosition()))")
             onTrackSwitchRequest(audioOrdinal, subtitleOrdinal, self.directPosition())
         }
     }
@@ -316,6 +359,8 @@ struct VLCPlayerView: View {
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
     @State private var gestureHint: String?
+    @State private var diagText = ""
+    @State private var showDiag = false
     @State private var dragMode: DragMode?
     @State private var dragStartPosition: Double = 0
     @State private var dragStartLevel: Double = 0
@@ -391,12 +436,35 @@ struct VLCPlayerView: View {
             controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal, preferredSubtitleOrdinal: route.preferredSubtitleOrdinal)
             scheduleHide()
         }
+        .sheet(isPresented: $showDiag) { diagSheet }
         .onDisappear {
             hideTask?.cancel()
             let client = store.client()
             let position = controller.directPosition()
             Task { await client?.reportStopped(itemID: item.Id, sourceID: route.sourceID, sessionID: route.sessionID, positionSeconds: position) }
             controller.player.stop()
+        }
+    }
+
+    private var diagSheet: some View {
+        NavigationStack {
+            ScrollView {
+                Text(diagText)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding()
+            }
+            .navigationTitle("VLC 诊断")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("复制") { UIPasteboard.general.string = diagText }
+                }
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("关闭") { showDiag = false }
+                }
+            }
         }
     }
 
@@ -467,6 +535,12 @@ struct VLCPlayerView: View {
 
     private var trackMenus: some View {
         HStack(spacing: 14) {
+            Button {
+                diagText = controller.diagnosticsDump()
+                showDiag = true
+            } label: {
+                Image(systemName: "info.circle").font(.title3)
+            }
             if controller.audioTracks.count > 1 {
                 Menu {
                     ForEach(Array(realAudioTracks.enumerated()), id: \.element.id) { ordinal, track in
