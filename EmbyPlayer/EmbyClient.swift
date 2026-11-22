@@ -251,6 +251,7 @@ struct EmbyClient {
                 ["Format": "srt", "Method": "Embed"], ["Format": "srt", "Method": "External"],
                 ["Format": "vtt", "Method": "Embed"], ["Format": "vtt", "Method": "External"],
                 ["Format": "pgs", "Method": "Embed"], ["Format": "sup", "Method": "Embed"],
+                ["Format": "pgs", "Method": "External"], ["Format": "sup", "Method": "External"],
             ],
         ]
     }
@@ -301,7 +302,8 @@ struct EmbyClient {
                 url = URL(string: server.baseURL + delivery)
             }
             if url == nil {
-                let format = (stream.Codec ?? "srt").lowercased()
+                let rawCodec = (stream.Codec ?? "srt").lowercased()
+                let format = rawCodec.contains("pgs") ? "sup" : rawCodec
                 url = URL(string: server.baseURL + "/Videos/\(itemID)/\(source.Id)/Subtitles/\(stream.Index)/Stream.\(format)")
             }
             guard var components = url.flatMap({ URLComponents(url: $0, resolvingAgainstBaseURL: false) }) else { return nil }

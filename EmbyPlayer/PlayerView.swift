@@ -96,7 +96,7 @@ struct PlayerView: View {
             VStack {
                 HStack {
                     Button { dismiss() } label: {
-                        Image(systemName: "chevron.down")
+                        Image(systemName: "xmark")
                             .font(.body.bold())
                             .foregroundStyle(.white)
                             .padding(10)
@@ -161,6 +161,8 @@ struct PlayerView: View {
             currentStreamURL = url
             currentSource = source
             player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
+            player.requestVideoFeatures([.nativeSubtitles])
+            player.setSubtitlesVisible(true)
             Task { await prepareSubtitles() }
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
             scheduleHide()
@@ -226,7 +228,9 @@ struct PlayerView: View {
             try? await Task.sleep(for: .seconds(1))
             guard generation == playerGeneration else { return }
             if !player.subtitleTracks.contains(where: { $0.isSelected }) {
+                player.requestVideoFeatures([.nativeSubtitles])
                 player.selectSubtitle(best.id)
+                player.setSubtitlesVisible(true)
             }
             return
         }
@@ -343,9 +347,8 @@ struct PlayerView: View {
     private var chrome: some View {
         VStack {
             HStack(spacing: 14) {
-                Button { dismiss() } label: {
-                    Image(systemName: "chevron.down").font(.title3)
-                }
+                // The always-on close button sits at the top-left; leave room.
+                Color.clear.frame(width: 34, height: 1)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.Name).font(.subheadline.bold()).lineLimit(1)
                     if let series = item.SeriesName {
@@ -422,6 +425,7 @@ struct PlayerView: View {
                     ForEach(player.subtitleTracks, id: \.mpvID) { track in
                         Button {
                             player.selectSubtitle(track.id)
+                            player.setSubtitlesVisible(true)
                         } label: {
                             Label(trackLabel(track), systemImage: track.isSelected ? "checkmark" : "")
                         }
