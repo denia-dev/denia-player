@@ -7,7 +7,7 @@ struct ItemImage: View {
     var kind: String = "Primary"
 
     var body: some View {
-        let sourceID = (kind == "Primary" && item.Type == "Episode" && item.ImageTags?["Primary"] == nil)
+        let sourceID = (kind == "Primary" && item.type == "Episode" && item.ImageTags?["Primary"] == nil)
             ? (item.SeriesId ?? item.Id) : item.Id
         return AsyncImage(url: client.imageURL(itemID: sourceID, kind: kind)) { phase in
             switch phase {

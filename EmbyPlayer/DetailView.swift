@@ -17,7 +17,7 @@ struct DetailView: View {
     @State private var errorText: String?
 
     private var current: EmbyItem { detail ?? item }
-    private var isSeries: Bool { current.Type == "Series" }
+    private var isSeries: Bool { current.type == "Series" }
 
     var body: some View {
         ScrollView {
@@ -136,7 +136,7 @@ struct DetailView: View {
     private func load() async {
         guard let client = store.client() else { return }
         detail = try? await client.item(id: item.Id)
-        if current.Type == "Series" {
+        if current.type == "Series" {
             seasons = (try? await client.seasons(seriesID: current.Id)) ?? []
             selectedSeasonID = seasons.first?.Id
             if let first = seasons.first { await loadEpisodes(first.Id) }

@@ -21,13 +21,13 @@ struct PlayerView: View {
     let startSeconds: Double
 
     @State private var player = MPVPlayer(configuration: .init(
-        automaticallyPlays: true,
-        hardwareDecoding: .automatic,
-        networkCacheDuration: .seconds(120),
         additionalOptions: [
             "sub-auto": "fuzzy",
             "demuxer-max-bytes": "536870912",
-        ]
+        ],
+        automaticallyPlays: true,
+        hardwareDecoding: .automatic,
+        networkCacheDuration: .seconds(120)
     ))
 
     @State private var chromeVisible = true
