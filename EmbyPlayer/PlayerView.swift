@@ -20,10 +20,10 @@ struct PlayerView: View {
     let item: EmbyItem
     let startSeconds: Double
 
-    @State private var player = PlayerView.makePlayer(videoOutput: .metal)
+    @State private var player = PlayerView.makePlayer(videoOutput: .sampleBuffer)
     @State private var playerGeneration = 0
     @State private var usedMetalFallback = false
-    @State private var currentOutputIsMetal = true
+    @State private var currentOutputIsMetal = false
     @State private var currentStreamURL: URL?
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
@@ -90,6 +90,25 @@ struct PlayerView: View {
                     .background(.black.opacity(0.6), in: Capsule())
                     .foregroundStyle(.white)
             }
+
+            // Exit must never depend on the chrome layer: this button lives
+            // outside it, above every other layer, and is always hittable.
+            VStack {
+                HStack {
+                    Button { dismiss() } label: {
+                        Image(systemName: "chevron.down")
+                            .font(.body.bold())
+                            .foregroundStyle(.white)
+                            .padding(10)
+                            .background(.black.opacity(0.45), in: Circle())
+                    }
+                    Spacer()
+                }
+                Spacer()
+            }
+            .padding(.leading, 14)
+            .padding(.top, 10)
+            .zIndex(10)
 
             if player.state == .loading {
                 ProgressView().tint(.white).scaleEffect(1.4)

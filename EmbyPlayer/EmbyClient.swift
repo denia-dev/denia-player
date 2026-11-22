@@ -292,7 +292,10 @@ struct EmbyClient {
     func externalSubtitles(itemID: String, source: EmbyMediaSource) -> [(url: URL, title: String?, language: String?)] {
         guard let streams = source.MediaStreams else { return [] }
         return streams.compactMap { stream in
-            guard stream.type == "Subtitle", stream.IsExternal == true else { return nil }
+            // Sidecar files (IsExternal) and embedded text tracks the server
+            // offers as a download (DeliveryUrl, e.g. mov_text extracted to
+            // srt) both live outside the static stream bytes.
+            guard stream.type == "Subtitle", stream.IsExternal == true || stream.DeliveryUrl != nil else { return nil }
             var url: URL?
             if let delivery = stream.DeliveryUrl {
                 url = URL(string: server.baseURL + delivery)
