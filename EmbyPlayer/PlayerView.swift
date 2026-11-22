@@ -20,10 +20,8 @@ struct PlayerView: View {
     let item: EmbyItem
     let startSeconds: Double
 
-    @State private var player = PlayerView.makePlayer(videoOutput: .sampleBuffer)
+    @State private var player = PlayerView.makePlayer(videoOutput: .metal)
     @State private var playerGeneration = 0
-    @State private var usedMetalFallback = false
-    @State private var currentOutputIsMetal = false
     @State private var currentStreamURL: URL?
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
@@ -152,7 +150,6 @@ struct PlayerView: View {
         }
         .task { await startPlayback() }
         .task { await progressLoop() }
-        .task { await fallbackWatcher() }
         .onAppear {
             savedBrightness = UIScreen.main.brightness
             requestOrientation(.landscape)
@@ -195,25 +192,6 @@ struct PlayerView: View {
             scheduleHide()
         } catch {
             loadError = "加载失败：\(error.localizedDescription)"
-        }
-    }
-
-    /// If the native (sample-buffer) output refuses a Dolby Vision stream,
-    /// rebuild the player on the Metal renderer and reload in place.
-    private func fallbackWatcher() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(1))
-            guard !usedMetalFallback, !currentOutputIsMetal,
-                  let error = player.lastError,
-                  String(describing: error).contains("nativeVideoOutputUnavailable"),
-                  let url = currentStreamURL else { continue }
-            usedMetalFallback = true
-            currentOutputIsMetal = true
-            let resume = max(player.position.secondsValue, startSeconds)
-            player = Self.makePlayer(videoOutput: .metal)
-            playerGeneration += 1
-            player.load(url, startTime: resume > 5 ? .seconds(resume) : nil)
-            Task { await prepareSubtitles() }
         }
     }
 
