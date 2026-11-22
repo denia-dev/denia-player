@@ -66,7 +66,7 @@ struct AddServerView: View {
             Form {
                 Section("服务器") {
                     TextField("名称（可空）", text: $name)
-                    TextField("地址，如 http://192.168.1.10:8096", text: $address)
+                    TextField("地址，只填域名即可，如 emby.example.com", text: $address)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .keyboardType(.URL)
@@ -99,10 +99,9 @@ struct AddServerView: View {
         busy = true
         errorText = nil
         defer { busy = false }
-        let trimmed = address.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         do {
             let config = try await EmbyClient.authenticate(
-                baseURL: trimmed, name: name, username: username, password: password)
+                address: address, name: name, username: username, password: password)
             store.add(config)
             dismiss()
         } catch {

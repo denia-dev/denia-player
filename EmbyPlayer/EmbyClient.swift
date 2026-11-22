@@ -70,7 +70,65 @@ struct EmbyClient {
         try? JSONSerialization.data(withJSONObject: object)
     }
 
+    // MARK: - address normalization
+
+    /// Turns whatever the user typed into candidate base URLs, best first.
+    /// Accepts a bare domain ("emby.example.com"), a LAN address with port
+    /// ("192.168.1.10:8096"), a full URL, and repairs common keyboard damage
+    /// (full-width colon/slashes from the Chinese IME, missing "//").
+    /// A bare domain defaults to https first; an IP or explicit port
+    /// defaults to http first (typical LAN Emby).
+    static func candidateBaseURLs(from raw: String) -> [String] {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        text = text.replacingOccurrences(of: "：", with: ":")
+                   .replacingOccurrences(of: "／", with: "/")
+                   .replacingOccurrences(of: " ", with: "")
+        // Strip any scheme the user typed, however mangled ("http:host",
+        // "https：//host", "http//host"), remembering an explicit http.
+        var explicitHTTP = false
+        let lowered = text.lowercased()
+        if lowered.hasPrefix("http") {
+            explicitHTTP = lowered.hasPrefix("http:") && !lowered.hasPrefix("https")
+            if let range = text.range(of: "://") {
+                text = String(text[range.upperBound...])
+            } else if let colon = text.firstIndex(of: ":") {
+                // "http:host" — but leave "host:8096" (starts with a digit
+                // or has no letters before the colon that spell a scheme).
+                let before = text[..<colon].lowercased()
+                if before == "http" || before == "https" {
+                    text = String(text[text.index(after: colon)...]).drop(while: { $0 == "/" }).description
+                }
+            }
+        }
+        text = text.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard !text.isEmpty else { return [] }
+        let hostPart = text.split(separator: "/").first.map(String.init) ?? text
+        let looksLikeIP = hostPart.range(of: #"^\d{1,3}(\.\d{1,3}){3}"#, options: .regularExpression) != nil
+        let hasPort = hostPart.contains(":")
+        let https = "https://" + text
+        let http = "http://" + text
+        if explicitHTTP { return [http, https] }
+        if looksLikeIP || hasPort { return [http, https] }
+        return [https, http]
+    }
+
     // MARK: - auth
+
+    /// Authenticates against a raw user-typed address, trying each
+    /// normalized candidate in order. Returns a filled-in config copy.
+    static func authenticate(address: String, name: String, username: String, password: String) async throws -> ServerConfig {
+        let candidates = candidateBaseURLs(from: address)
+        guard !candidates.isEmpty else { throw ClientError.badURL }
+        var lastError: Error = ClientError.badURL
+        for baseURL in candidates {
+            do {
+                return try await authenticate(baseURL: baseURL, name: name, username: username, password: password)
+            } catch {
+                lastError = error
+            }
+        }
+        throw lastError
+    }
 
     /// Authenticates against one base URL. Returns a filled-in config copy.
     static func authenticate(baseURL: String, name: String, username: String, password: String) async throws -> ServerConfig {
