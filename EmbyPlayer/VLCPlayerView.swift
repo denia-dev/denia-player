@@ -13,6 +13,8 @@ struct VLCRoute {
     /// PlayerView picks a Chinese non-TrueHD track, because libvlc can fail
     /// silent on TrueHD/Atmos defaults.
     let preferredAudioOrdinal: Int?
+    /// Ordinal among subtitle streams: nil = auto (Chinese first), -1 = off.
+    let preferredSubtitleOrdinal: Int?
     let audioLabels: [String]
     let subtitleLabels: [String]
 }
@@ -20,7 +22,7 @@ struct VLCRoute {
 // MARK: - controller
 
 final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDelegate {
-    var player = VLCMediaPlayer()
+    let player = VLCMediaPlayer()
 
     @Published var isPlaying = false
     @Published var isBuffering = true
@@ -35,7 +37,6 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
 
     private var mediaConfigured = false
     private var drawableAttached = false
-    private weak var surfaceView: UIView?
     private var startSeconds: Double = 0
     private var didInitialSeek = false
     private var didAutoSelectSubtitle = false
@@ -50,18 +51,20 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     private var lastPositionSample: Double = -1
     private var lastAdvanceAt = Date()
     private var selectionCounter = 0
-    private var currentURL: URL?
-    private var reloadTarget: Double?
-    private var reloadSeekAttempts = 0
-    private var needsPostReloadApply = false
     private var userPaused = false
+    private var preferredSubtitleOrdinal: Int?
+    /// Set by the view: a manual track switch is executed by the parent by
+    /// tearing this whole view down and re-entering with a fresh Emby
+    /// session and the chosen tracks as initial selections - the exact
+    /// sequence a manual exit + re-entry performs, which always works.
+    var onTrackSwitchRequest: ((_ audioOrdinal: Int, _ subtitleOrdinal: Int, _ position: Double) -> Void)?
 
-    func prepare(url: URL, startSeconds: Double, preferredAudioOrdinal: Int?) {
+    func prepare(url: URL, startSeconds: Double, preferredAudioOrdinal: Int?, preferredSubtitleOrdinal: Int?) {
         guard !mediaConfigured else { return }
         mediaConfigured = true
-        currentURL = url
         self.startSeconds = startSeconds
         self.preferredAudioOrdinal = preferredAudioOrdinal
+        self.preferredSubtitleOrdinal = preferredSubtitleOrdinal
         loadDate = Date()
         let media = VLCMedia(url: url)
         media.addOption("network-caching=15000")
@@ -74,7 +77,6 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     }
 
     func attachDrawable(_ view: UIView) {
-        surfaceView = view
         player.drawable = view
         drawableAttached = true
         if mediaConfigured, player.media != nil, !player.isPlaying, player.state != .playing {
@@ -114,7 +116,6 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         isBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
         isPlaying = !userPaused && state != .ended && state != .error
             && (state == .playing || !stalled || state == .buffering)
-        postReloadMaintenance(state: state)
         if duration <= 0, position > 0 {
             let remaining = player.remainingTime.map { Double($0.intValue) / 1000 } ?? 0
             if remaining > 0 { duration = position + remaining }
@@ -149,7 +150,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         if subs.count != subtitleTracks.count { subtitleTracks = subs }
         // While a reload is in flight the readbacks are transient garbage;
         // keep the user's checkmark where they put it.
-        let reloadInFlight = reloadTarget != nil || player.state == .opening
+        let reloadInFlight = player.state == .opening
         if !reloadInFlight {
             if selectedAudioID != player.currentAudioTrackIndex {
                 selectedAudioID = player.currentAudioTrackIndex
@@ -175,8 +176,15 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         }
         if !didAutoSelectSubtitle, subtitleTracks.count > 1 {
             didAutoSelectSubtitle = true
-            if player.currentVideoSubTitleIndex < 0 {
-                let real = subtitleTracks.filter { $0.id >= 0 }
+            let real = subtitleTracks.filter { $0.id >= 0 }
+            if let ordinal = preferredSubtitleOrdinal {
+                if ordinal >= 0, ordinal < real.count {
+                    desiredSubtitleOrdinal = ordinal
+                    player.currentVideoSubTitleIndex = real[ordinal].id
+                    selectedSubtitleID = real[ordinal].id
+                }
+                // ordinal < 0: subtitles stay off for this entry.
+            } else if player.currentVideoSubTitleIndex < 0 {
                 let pick = real.first(where: { $0.name.contains("简") || $0.name.contains("中") }) ?? real.first
                 if let pick {
                     desiredSubtitleOrdinal = real.firstIndex(where: { $0.id == pick.id })
@@ -217,15 +225,17 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
 
     func selectAudio(_ id: Int32) {
         let real = audioTracks.filter { $0.id >= 0 }
-        desiredAudioOrdinal = real.firstIndex(where: { $0.id == id })
+        guard let ordinal = real.firstIndex(where: { $0.id == id }) else { return }
+        desiredAudioOrdinal = ordinal
         selectedAudioID = id
-        scheduleReload()
+        requestTrackSwitch()
     }
 
     func selectSubtitle(_ id: Int32) {
         selectedSubtitleID = id
         if id < 0 {
-            // Turning subtitles off needs no decoder; in-place is safe.
+            // Turning subtitles off needs no decoder; in-place is safe,
+            // and the off state is carried into any later switch.
             desiredSubtitleOff = true
             desiredSubtitleOrdinal = nil
             player.currentVideoSubTitleIndex = -1
@@ -233,75 +243,39 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         }
         desiredSubtitleOff = false
         let real = subtitleTracks.filter { $0.id >= 0 }
-        desiredSubtitleOrdinal = real.firstIndex(where: { $0.id == id })
-        scheduleReload()
+        guard let ordinal = real.firstIndex(where: { $0.id == id }) else { return }
+        desiredSubtitleOrdinal = ordinal
+        requestTrackSwitch()
     }
 
-    /// Mid-playback ES switches kill libvlc's audio/SPU pipelines for the
-    /// rest of the session (builds 12-13: switched tracks stay silent /
-    /// invisible, even switching back). The state that always works is a
-    /// fresh input with the tracks preselected, so a manual switch reloads
-    /// the stream at the current position with track-id options baked in.
-    private func scheduleReload() {
+    /// Every in-player attempt to change tracks after entry wedges
+    /// libvlc's audio/SPU outputs for the rest of the view's life
+    /// (builds 12-16: in-place sets, media reloads, even a brand-new
+    /// VLCMediaPlayer inside the same view). The one sequence that has
+    /// never failed is leaving and re-entering the player, so a manual
+    /// switch asks the parent to do exactly that, with the chosen tracks
+    /// carried over as the fresh entry's initial selections.
+    private func requestTrackSwitch() {
         selectionCounter += 1
         let token = selectionCounter
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-            guard let self, token == self.selectionCounter else { return }
-            self.reloadWithDesiredTracks()
+            guard let self, token == self.selectionCounter,
+                  let onTrackSwitchRequest else { return }
+            let audioOrdinal = self.desiredAudioOrdinal ?? self.currentAudioOrdinal() ?? 0
+            let subtitleOrdinal = self.desiredSubtitleOff ? -1
+                : (self.desiredSubtitleOrdinal ?? self.currentSubtitleOrdinal() ?? -1)
+            onTrackSwitchRequest(audioOrdinal, subtitleOrdinal, self.directPosition())
         }
     }
 
-    private func reloadWithDesiredTracks() {
-        guard let url = currentURL else { return }
-        let target = directPosition()
-        reloadTarget = target
-        reloadSeekAttempts = 0
-        let media = VLCMedia(url: url)
-        media.addOption("network-caching=15000")
-        if target > 5 {
-            media.addOption("start-time=\(Int(target))")
-        }
-        // Resolve the desired tracks from the CURRENT track lists by
-        // ordinal (container order is stable even if ES ids drift).
-        let realAudio = audioTracks.filter { $0.id >= 0 }
-        if let ordinal = desiredAudioOrdinal, ordinal < realAudio.count {
-            media.addOption("audio-track-id=\(realAudio[ordinal].id)")
-        }
-        let realSubs = subtitleTracks.filter { $0.id >= 0 }
-        if !desiredSubtitleOff, let ordinal = desiredSubtitleOrdinal, ordinal < realSubs.count {
-            media.addOption("sub-track-id=\(realSubs[ordinal].id)")
-        }
-        // Reusing one VLCMediaPlayer across set-media restarts leaves its
-        // audio/SPU outputs wedged for good (builds 13-15: a switch that
-        // lands silent also kills subtitles, nothing recovers). A fresh
-        // player instance is the exact state a player entry creates, and
-        // entry always works - so a track switch recreates the player.
-        let old = player
-        old.delegate = nil
-        old.stop()
-        let fresh = VLCMediaPlayer()
-        fresh.delegate = self
-        if let surfaceView { fresh.drawable = surfaceView }
-        player = fresh
-        fresh.media = media
-        needsPostReloadApply = true
-        fresh.play()
+    private func currentAudioOrdinal() -> Int? {
+        let real = audioTracks.filter { $0.id >= 0 }
+        return real.firstIndex(where: { $0.id == selectedAudioID })
     }
 
-    private func postReloadMaintenance(state: VLCMediaPlayerState) {
-        guard state == .playing else { return }
-        if needsPostReloadApply {
-            needsPostReloadApply = false
-            if rate != 1 { player.rate = rate }
-        }
-        if let target = reloadTarget {
-            if abs(position - target) <= 3 {
-                reloadTarget = nil
-            } else if reloadSeekAttempts < 2, position > 0 {
-                reloadSeekAttempts += 1
-                seek(to: target)
-            }
-        }
+    private func currentSubtitleOrdinal() -> Int? {
+        let real = subtitleTracks.filter { $0.id >= 0 }
+        return real.firstIndex(where: { $0.id == selectedSubtitleID })
     }
 
     var volumeLevel: Double {
@@ -334,6 +308,7 @@ struct VLCPlayerView: View {
     let item: EmbyItem
     let route: VLCRoute
     let startSeconds: Double
+    let onTrackSwitch: (Int, Int, Double) -> Void
 
     @StateObject private var controller = VLCPlayerController()
     @State private var chromeVisible = true
@@ -410,9 +385,10 @@ struct VLCPlayerView: View {
             }
         }
         .onAppear {
+            controller.onTrackSwitchRequest = onTrackSwitch
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try? AVAudioSession.sharedInstance().setActive(true)
-            controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal)
+            controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal, preferredSubtitleOrdinal: route.preferredSubtitleOrdinal)
             scheduleHide()
         }
         .onDisappear {
