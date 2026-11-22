@@ -13,6 +13,8 @@ struct VLCRoute {
     /// PlayerView picks a Chinese non-TrueHD track, because libvlc can fail
     /// silent on TrueHD/Atmos defaults.
     let preferredAudioOrdinal: Int?
+    let audioLabels: [String]
+    let subtitleLabels: [String]
 }
 
 // MARK: - controller
@@ -41,6 +43,14 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     private var loadDate = Date()
     private var resumeAttempts = 0
     private(set) var maxPosition: Double = 0
+    private var desiredAudioID: Int32?
+    private var desiredSubtitleID: Int32?
+    private var audioApplyAttempts = 0
+    private var subtitleApplyAttempts = 0
+    private var lastTrackApply = Date.distantPast
+    private var lastPositionSample: Double = -1
+    private var lastAdvanceAt = Date()
+    private var selectionCounter = 0
 
     func prepare(url: URL, startSeconds: Double, preferredAudioOrdinal: Int?) {
         guard !mediaConfigured else { return }
@@ -76,16 +86,28 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         DispatchQueue.main.async { [weak self] in self?.refresh() }
     }
 
-    private func refresh() {
+    func refresh() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in self?.refresh() }
+            return
+        }
         let state = player.state
         isPlaying = state == .playing
-        isBuffering = state == .opening || state == .buffering
         hasError = state == .error
         position = Double(player.time.intValue) / 1000
         if let media = player.media, media.length.intValue > 0 {
             duration = Double(media.length.intValue) / 1000
         }
         if position > maxPosition { maxPosition = position }
+        if position != lastPositionSample {
+            lastPositionSample = position
+            lastAdvanceAt = Date()
+        }
+        // libvlc's state can sit on .buffering while frames are flowing;
+        // trust position movement over the raw state.
+        let stalled = Date().timeIntervalSince(lastAdvanceAt) > 1.0
+        isBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
+        enforceDesiredTracks()
         if duration <= 0, position > 0 {
             let remaining = player.remainingTime.map { Double($0.intValue) / 1000 } ?? 0
             if remaining > 0 { duration = position + remaining }
@@ -129,11 +151,13 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
             if !real.isEmpty {
                 didAutoSelectAudio = true
                 if let ordinal = preferredAudioOrdinal, ordinal < real.count {
-                    player.currentAudioTrackIndex = real[ordinal].id
-                    selectedAudioID = real[ordinal].id
+                    desiredAudioID = real[ordinal].id
                 } else if player.currentAudioTrackIndex < 0 {
-                    player.currentAudioTrackIndex = real[0].id
-                    selectedAudioID = real[0].id
+                    desiredAudioID = real[0].id
+                }
+                if let desiredAudioID, player.currentAudioTrackIndex != desiredAudioID {
+                    player.currentAudioTrackIndex = desiredAudioID
+                    selectedAudioID = desiredAudioID
                 }
             }
         }
@@ -143,6 +167,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
                 let pick = subtitleTracks.first(where: { $0.name.contains("简") || $0.name.contains("中") })
                     ?? subtitleTracks.first(where: { $0.id >= 0 })
                 if let pick {
+                    desiredSubtitleID = pick.id
                     player.currentVideoSubTitleIndex = pick.id
                     selectedSubtitleID = pick.id
                 }
@@ -178,14 +203,47 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         player.rate = newRate
     }
 
+    /// libvlc can silently drop a track change issued while its input is
+    /// still settling; re-apply the desired tracks until the readback agrees.
+    private func enforceDesiredTracks() {
+        guard Date().timeIntervalSince(lastTrackApply) > 0.8 else { return }
+        if let desiredAudioID, player.currentAudioTrackIndex != desiredAudioID, audioApplyAttempts < 5 {
+            audioApplyAttempts += 1
+            lastTrackApply = Date()
+            player.currentAudioTrackIndex = desiredAudioID
+        }
+        if let desiredSubtitleID, player.currentVideoSubTitleIndex != desiredSubtitleID, subtitleApplyAttempts < 5 {
+            subtitleApplyAttempts += 1
+            lastTrackApply = Date()
+            player.currentVideoSubTitleIndex = desiredSubtitleID
+        }
+    }
+
     func selectAudio(_ id: Int32) {
+        desiredAudioID = id
+        audioApplyAttempts = 0
+        lastTrackApply = Date()
         player.currentAudioTrackIndex = id
         selectedAudioID = id
     }
 
     func selectSubtitle(_ id: Int32) {
+        desiredSubtitleID = id
+        subtitleApplyAttempts = 0
+        lastTrackApply = Date()
         player.currentVideoSubTitleIndex = id
         selectedSubtitleID = id
+        // After a successful switch libvlc may still never paint the new
+        // bitmap track until the SPU decoder re-emits an event; a 1-second
+        // step back forces that without a visible jump cut.
+        selectionCounter += 1
+        let token = selectionCounter
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self] in
+            guard let self, token == self.selectionCounter,
+                  self.player.currentVideoSubTitleIndex == id,
+                  self.position > 10 else { return }
+            self.seek(to: self.position - 1)
+        }
     }
 
     var volumeLevel: Double {
@@ -287,6 +345,12 @@ struct VLCPlayerView: View {
         }
         .statusBarHidden(true)
         .task { await reportingLoop() }
+        .task {
+            while !Task.isCancelled {
+                controller.refresh()
+                try? await Task.sleep(for: .milliseconds(500))
+            }
+        }
         .onAppear {
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try? AVAudioSession.sharedInstance().setActive(true)
@@ -371,11 +435,12 @@ struct VLCPlayerView: View {
         HStack(spacing: 14) {
             if controller.audioTracks.count > 1 {
                 Menu {
-                    ForEach(controller.audioTracks, id: \.id) { track in
+                    ForEach(Array(realAudioTracks.enumerated()), id: \.element.id) { ordinal, track in
                         Button {
                             controller.selectAudio(track.id)
                         } label: {
-                            Label(track.name, systemImage: controller.selectedAudioID == track.id ? "checkmark" : "")
+                            Label(menuLabel(route.audioLabels, ordinal, fallback: track.name),
+                                  systemImage: controller.selectedAudioID == track.id ? "checkmark" : "")
                         }
                     }
                 } label: {
@@ -385,11 +450,17 @@ struct VLCPlayerView: View {
             if controller.subtitleTracks.count > 1 {
                 Menu {
                     Text("引擎：VLCKit（PGS 字幕）")
-                    ForEach(controller.subtitleTracks, id: \.id) { track in
+                    Button {
+                        controller.selectSubtitle(-1)
+                    } label: {
+                        Label("关闭字幕", systemImage: controller.selectedSubtitleID < 0 ? "checkmark" : "")
+                    }
+                    ForEach(Array(realSubtitleTracks.enumerated()), id: \.element.id) { ordinal, track in
                         Button {
                             controller.selectSubtitle(track.id)
                         } label: {
-                            Label(track.name, systemImage: controller.selectedSubtitleID == track.id ? "checkmark" : "")
+                            Label(menuLabel(route.subtitleLabels, ordinal, fallback: track.name),
+                                  systemImage: controller.selectedSubtitleID == track.id ? "checkmark" : "")
                         }
                     }
                 } label: {
@@ -404,6 +475,18 @@ struct VLCPlayerView: View {
                 Image(systemName: "gauge.with.dots.needle.33percent").font(.title3)
             }
         }
+    }
+
+    private var realAudioTracks: [(id: Int32, name: String)] {
+        controller.audioTracks.filter { $0.id >= 0 }
+    }
+
+    private var realSubtitleTracks: [(id: Int32, name: String)] {
+        controller.subtitleTracks.filter { $0.id >= 0 }
+    }
+
+    private func menuLabel(_ labels: [String], _ ordinal: Int, fallback: String) -> String {
+        labels.indices.contains(ordinal) && !labels[ordinal].isEmpty ? labels[ordinal] : fallback
     }
 
     // MARK: - gestures

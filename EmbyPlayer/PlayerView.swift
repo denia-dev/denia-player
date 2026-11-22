@@ -209,7 +209,14 @@ struct PlayerView: View {
                     ?? audios.first(where: { !isTrueHD($0) })
                     ?? audios.first
                 let ordinal = preferredAudio.flatMap { pick in audios.firstIndex(where: { $0.Index == pick.Index }) }
-                vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId, preferredAudioOrdinal: ordinal)
+                let audioLabels = audios.map { $0.DisplayTitle ?? $0.Codec ?? "音轨" }
+                let subtitleLabels = (source.MediaStreams ?? [])
+                    .filter { $0.type == "Subtitle" }
+                    .sorted { $0.Index < $1.Index }
+                    .map { $0.DisplayTitle ?? $0.Codec ?? "字幕" }
+                vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId,
+                                    preferredAudioOrdinal: ordinal,
+                                    audioLabels: audioLabels, subtitleLabels: subtitleLabels)
                 return
             }
             session = (source.Id, info.PlaySessionId)
