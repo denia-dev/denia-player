@@ -24,8 +24,6 @@ struct PlayerView: View {
     @State private var playerGeneration = 0
     @State private var currentStreamURL: URL?
     @State private var vlcRoute: VLCRoute?
-    @State private var vlcGeneration = 0
-    @State private var vlcStartOverride: Double?
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
 
@@ -121,9 +119,7 @@ struct PlayerView: View {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
             if let vlcRoute {
-                VLCPlayerView(item: item, route: vlcRoute, startSeconds: vlcStartOverride ?? startSeconds,
-                              onTrackSwitch: handleVLCTrackSwitch)
-                    .id(vlcGeneration)
+                VLCPlayerView(item: item, route: vlcRoute, startSeconds: startSeconds)
                     .zIndex(30)
             }
 
@@ -220,11 +216,9 @@ struct PlayerView: View {
                     .map { $0.DisplayTitle ?? $0.Codec ?? "字幕" }
                 vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId,
                                     preferredAudioOrdinal: ordinal,
-                                    preferredSubtitleOrdinal: nil,
                                     audioLabels: audioLabels, subtitleLabels: subtitleLabels)
                 return
             }
-
             session = (source.Id, info.PlaySessionId)
             currentStreamURL = url
             currentSource = source
@@ -236,44 +230,6 @@ struct PlayerView: View {
             scheduleHide()
         } catch {
             loadError = "加载失败：\(error.localizedDescription)"
-        }
-    }
-
-    // MARK: - VLC track switching (full re-entry)
-
-    private func handleVLCTrackSwitch(audioOrdinal: Int, subtitleOrdinal: Int, position: Double) {
-        Task { await rebuildVLCRoute(audioOrdinal: audioOrdinal, subtitleOrdinal: subtitleOrdinal, position: position) }
-    }
-
-    /// A track switch inside the VLC view re-enters it from scratch: fresh
-    /// PlaybackInfo (new PlaySessionId), the old view reports stopped on
-    /// teardown, and the fresh view starts at the switch position with the
-    /// chosen tracks as its initial selections.
-    private func rebuildVLCRoute(audioOrdinal: Int, subtitleOrdinal: Int, position: Double) async {
-        guard let client = store.client(), let old = vlcRoute else { return }
-        // Sequence matters (build 17's failure): a manual exit stops the
-        // old stream BEFORE the new PlaybackInfo is requested. Doing the
-        // fetch while the old stream was still live made the server hand
-        // the second session a stripped source (single TrueHD track, no
-        // subtitle tracks at all). Mirror the manual order exactly.
-        vlcRoute = nil
-        try? await Task.sleep(for: .milliseconds(900))
-        guard !Task.isCancelled else { return }
-        do {
-            let info = try await client.playbackInfo(itemID: item.Id, startSeconds: position)
-            guard let source = info.MediaSources.first(where: { $0.SupportsDirectPlay == true && $0.Id == old.sourceID })
-                    ?? info.MediaSources.first(where: { $0.SupportsDirectPlay == true })
-                    ?? info.MediaSources.first,
-                  let url = client.directStreamURL(itemID: item.Id, source: source, sessionID: info.PlaySessionId)
-            else { return }
-            vlcStartOverride = position
-            vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId,
-                                preferredAudioOrdinal: audioOrdinal,
-                                preferredSubtitleOrdinal: subtitleOrdinal,
-                                audioLabels: old.audioLabels, subtitleLabels: old.subtitleLabels)
-            vlcGeneration += 1
-        } catch {
-            // Keep the current view playing if the re-entry fetch fails.
         }
     }
 
