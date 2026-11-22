@@ -20,7 +20,7 @@ struct VLCRoute {
 // MARK: - controller
 
 final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDelegate {
-    let player = VLCMediaPlayer()
+    var player = VLCMediaPlayer()
 
     @Published var isPlaying = false
     @Published var isBuffering = true
@@ -35,6 +35,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
 
     private var mediaConfigured = false
     private var drawableAttached = false
+    private weak var surfaceView: UIView?
     private var startSeconds: Double = 0
     private var didInitialSeek = false
     private var didAutoSelectSubtitle = false
@@ -73,6 +74,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     }
 
     func attachDrawable(_ view: UIView) {
+        surfaceView = view
         player.drawable = view
         drawableAttached = true
         if mediaConfigured, player.media != nil, !player.isPlaying, player.state != .playing {
@@ -269,9 +271,21 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         if !desiredSubtitleOff, let ordinal = desiredSubtitleOrdinal, ordinal < realSubs.count {
             media.addOption("sub-track-id=\(realSubs[ordinal].id)")
         }
-        player.media = media
+        // Reusing one VLCMediaPlayer across set-media restarts leaves its
+        // audio/SPU outputs wedged for good (builds 13-15: a switch that
+        // lands silent also kills subtitles, nothing recovers). A fresh
+        // player instance is the exact state a player entry creates, and
+        // entry always works - so a track switch recreates the player.
+        let old = player
+        old.delegate = nil
+        old.stop()
+        let fresh = VLCMediaPlayer()
+        fresh.delegate = self
+        if let surfaceView { fresh.drawable = surfaceView }
+        player = fresh
+        fresh.media = media
         needsPostReloadApply = true
-        player.play()
+        fresh.play()
     }
 
     private func postReloadMaintenance(state: VLCMediaPlayerState) {
