@@ -20,15 +20,24 @@ struct PlayerView: View {
     let item: EmbyItem
     let startSeconds: Double
 
-    @State private var player = MPVPlayer(configuration: .init(
-        additionalOptions: [
-            "sub-auto": "fuzzy",
-            "demuxer-max-bytes": "536870912",
-        ],
-        automaticallyPlays: true,
-        hardwareDecoding: .automatic,
-        networkCacheDuration: .seconds(120)
-    ))
+    @State private var player = PlayerView.makePlayer(videoOutput: .sampleBuffer)
+    @State private var playerGeneration = 0
+    @State private var usedMetalFallback = false
+    @State private var currentStreamURL: URL?
+
+    static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput) -> MPVPlayer {
+        MPVPlayer(configuration: .init(
+            additionalOptions: [
+                "sub-auto": "fuzzy",
+                "demuxer-max-bytes": "536870912",
+            ],
+            automaticallyPlays: true,
+            dolbyVisionPolicy: .profile7Compatibility,
+            hardwareDecoding: .automatic,
+            networkCacheDuration: .seconds(120),
+            videoOutput: videoOutput
+        ))
+    }
 
     @State private var chromeVisible = true
     @State private var hideTask: Task<Void, Never>?
@@ -45,6 +54,7 @@ struct PlayerView: View {
 
             // Rendering layer — constant, full-bleed, never re-laid out.
             MPVVideoPlayer(player: player)
+                .id(playerGeneration)
                 .ignoresSafeArea()
 
             // Gesture layer.
@@ -79,6 +89,7 @@ struct PlayerView: View {
         .statusBarHidden(true)
         .task { await startPlayback() }
         .task { await progressLoop() }
+        .task { await fallbackWatcher() }
         .onAppear { savedBrightness = UIScreen.main.brightness }
         .onDisappear {
             hideTask?.cancel()
@@ -107,11 +118,29 @@ struct PlayerView: View {
                 return
             }
             session = (source.Id, info.PlaySessionId)
+            currentStreamURL = url
             player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
             scheduleHide()
         } catch {
             loadError = "加载失败：\(error.localizedDescription)"
+        }
+    }
+
+    /// If the native (sample-buffer) output refuses a Dolby Vision stream,
+    /// rebuild the player on the Metal renderer and reload in place.
+    private func fallbackWatcher() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            guard !usedMetalFallback,
+                  let error = player.lastError,
+                  String(describing: error).contains("nativeVideoOutputUnavailable"),
+                  let url = currentStreamURL else { continue }
+            usedMetalFallback = true
+            let resume = max(player.position.secondsValue, startSeconds)
+            player = Self.makePlayer(videoOutput: .metal)
+            playerGeneration += 1
+            player.load(url, startTime: resume > 5 ? .seconds(resume) : nil)
         }
     }
 
