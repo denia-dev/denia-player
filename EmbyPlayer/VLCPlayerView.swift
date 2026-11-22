@@ -69,7 +69,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         isPlaying = state == .playing
         isBuffering = state == .opening || state == .buffering
         hasError = state == .error
-        if let t = player.time { position = Double(t.intValue) / 1000 }
+        position = Double(player.time.intValue) / 1000
         if let media = player.media, media.length.intValue > 0 {
             duration = Double(media.length.intValue) / 1000
         }
