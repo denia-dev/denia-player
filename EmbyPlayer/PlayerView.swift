@@ -26,14 +26,23 @@ struct PlayerView: View {
     @State private var currentStreamURL: URL?
 
     static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput) -> MPVPlayer {
-        MPVPlayer(configuration: .init(
-            additionalOptions: [
-                "sub-auto": "fuzzy",
-                "demuxer-max-bytes": "536870912",
-            ],
+        var options: [String: String] = [
+            "sub-auto": "fuzzy",
+            "demuxer-max-bytes": "536870912",
+        ]
+        // MPVUI ships no fonts and iOS exposes no system font dir to libass,
+        // so bundle a CJK font or every Chinese subtitle renders as tofu.
+        let fontURL = Bundle.main.url(forResource: "NotoSansCJKsc-Regular", withExtension: "otf")
+            ?? Bundle.main.url(forResource: "NotoSansCJKsc-Regular", withExtension: "otf", subdirectory: "Fonts")
+        if let fontURL {
+            options["sub-fonts-dir"] = fontURL.deletingLastPathComponent().path
+            options["sub-font"] = "Noto Sans CJK SC"
+        }
+        return MPVPlayer(configuration: .init(
+            additionalOptions: options,
             automaticallyPlays: true,
             dolbyVisionPolicy: .profile7Compatibility,
-            hardwareDecoding: .automatic,
+            hardwareDecoding: .videoToolbox,
             networkCacheDuration: .seconds(120),
             videoOutput: videoOutput
         ))

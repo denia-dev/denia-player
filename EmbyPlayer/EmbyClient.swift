@@ -51,8 +51,19 @@ struct EmbyClient {
         return request
     }
 
+    /// One automatic retry for transient connection drops (the free servers
+    /// reset connections often enough that a single attempt is not reliable).
+    private func dataWithRetry(_ request: URLRequest) async throws -> (Data, URLResponse) {
+        do {
+            return try await URLSession.shared.data(for: request)
+        } catch let error as URLError where [.networkConnectionLost, .timedOut, .cannotConnectToHost, .notConnectedToInternet].contains(error.code) {
+            try await Task.sleep(for: .milliseconds(800))
+            return try await URLSession.shared.data(for: request)
+        }
+    }
+
     private func send<T: Decodable>(_ request: URLRequest) async throws -> T {
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await dataWithRetry(request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw ClientError.http(http.statusCode)
         }
@@ -60,7 +71,7 @@ struct EmbyClient {
     }
 
     private func sendVoid(_ request: URLRequest) async throws {
-        let (_, response) = try await URLSession.shared.data(for: request)
+        let (_, response) = try await dataWithRetry(request)
         if let http = response as? HTTPURLResponse, !(200..<300).contains(http.statusCode) {
             throw ClientError.http(http.statusCode)
         }
