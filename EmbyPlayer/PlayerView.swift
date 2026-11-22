@@ -23,6 +23,7 @@ struct PlayerView: View {
     @State private var player = PlayerView.makePlayer(videoOutput: .metal)
     @State private var playerGeneration = 0
     @State private var currentStreamURL: URL?
+    @State private var vlcRoute: VLCRoute?
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
 
@@ -117,6 +118,11 @@ struct PlayerView: View {
             if player.state == .loading {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
+            if let vlcRoute {
+                VLCPlayerView(item: item, route: vlcRoute, startSeconds: startSeconds)
+                    .zIndex(30)
+            }
+
             if let loadError {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
@@ -179,6 +185,17 @@ struct PlayerView: View {
             }
             guard let url = client.directStreamURL(itemID: item.Id, source: source, sessionID: info.PlaySessionId) else {
                 loadError = "无法生成直连地址"
+                return
+            }
+            // PGS (bitmap) subtitles cannot be composited by MPVUI's
+            // renderers (proven by diagnostics, builds 8-10): hand those
+            // items to the VLCKit engine, which renders them natively.
+            // The VLC view owns session reporting for this route.
+            let hasPGS = (source.MediaStreams ?? []).contains {
+                $0.type == "Subtitle" && ($0.Codec ?? "").lowercased().contains("pgs")
+            }
+            if hasPGS {
+                vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId)
                 return
             }
             session = (source.Id, info.PlaySessionId)
