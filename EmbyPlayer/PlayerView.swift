@@ -44,7 +44,7 @@ struct PlayerView: View {
             options["sub-fonts-dir"] = fontURL.deletingLastPathComponent().path
             options["sub-font"] = "Noto Sans CJK SC"
         }
-        return MPVPlayer(configuration: .init(
+        let created = MPVPlayer(configuration: .init(
             additionalOptions: options,
             automaticallyPlays: true,
             dolbyVisionPolicy: .profile7Compatibility,
@@ -54,6 +54,8 @@ struct PlayerView: View {
             rebufferDuration: .seconds(5),
             videoOutput: videoOutput
         ))
+        created.setDiagnosticsEnabled(true)
+        return created
     }
 
     @State private var chromeVisible = true
@@ -63,6 +65,7 @@ struct PlayerView: View {
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
     @State private var gestureHint: String?
+    @State private var showDiagnostics = false
     @State private var savedBrightness: CGFloat = UIScreen.main.brightness
 
     var body: some View {
@@ -109,6 +112,9 @@ struct PlayerView: View {
             .padding(.leading, 14)
             .padding(.top, 10)
             .zIndex(10)
+            .opacity(chromeVisible ? 1 : 0)
+            .animation(.easeInOut(duration: 0.25), value: chromeVisible)
+            .allowsHitTesting(chromeVisible)
 
             if player.state == .loading {
                 ProgressView().tint(.white).scaleEffect(1.4)
@@ -123,6 +129,27 @@ struct PlayerView: View {
             }
         }
         .statusBarHidden(true)
+        .sheet(isPresented: $showDiagnostics) {
+            NavigationStack {
+                ScrollView {
+                    Text(diagnosticsText())
+                        .font(.caption.monospaced())
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .textSelection(.enabled)
+                }
+                .navigationTitle("播放诊断")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("复制") { UIPasteboard.general.string = diagnosticsText() }
+                    }
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button("关闭") { showDiagnostics = false }
+                    }
+                }
+            }
+        }
         .task { await startPlayback() }
         .task { await progressLoop() }
         .task { await fallbackWatcher() }
@@ -356,6 +383,9 @@ struct PlayerView: View {
                     }
                 }
                 Spacer()
+                Button { showDiagnostics = true } label: {
+                    Image(systemName: "info.circle").font(.title3)
+                }
                 trackMenus
             }
             .padding(.horizontal)
@@ -453,6 +483,28 @@ struct PlayerView: View {
         if let language = track.language { parts.append(language) }
         if let codec = track.codec { parts.append(codec) }
         return parts.isEmpty ? "轨道 \(track.mpvID)" : parts.joined(separator: " · ")
+    }
+
+    // MARK: - diagnostics
+
+    private func diagnosticsText() -> String {
+        let caps = player.videoFeatureCapabilities
+        let diag = player.playbackDiagnostics
+        var lines: [String] = []
+        lines.append("configuredOutput: \(player.videoOutput)")
+        lines.append("backend: \(caps.backend)")
+        lines.append("nativeSubtitles: \(caps.nativeSubtitles.availability.rawValue) restriction=\(caps.nativeSubtitles.restriction?.rawValue ?? "-")")
+        lines.append("dolbyVision: \(String(describing: player.dolbyVisionStatus))")
+        lines.append("renderColor: \(String(describing: player.renderColorStatus))")
+        lines.append("decoder: \(String(describing: diag.decoder))")
+        lines.append("nativeOutputActive: \(diag.nativeOutputStatistics != nil)")
+        lines.append("dropped: decoder=\(diag.decoderDroppedFrames ?? -1) output=\(diag.outputDroppedFrames ?? -1)")
+        lines.append("featureResult: \(String(describing: player.videoFeatureRequestResult))")
+        lines.append("media: \(String(describing: player.mediaInformation))")
+        for track in player.subtitleTracks {
+            lines.append("sub #\(track.mpvID): codec=\(track.codec ?? "-") lang=\(track.language ?? "-") selected=\(track.isSelected) external=\(track.isExternal)")
+        }
+        return lines.joined(separator: "\n")
     }
 
     // MARK: - chrome visibility
