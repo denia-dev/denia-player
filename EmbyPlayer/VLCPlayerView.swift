@@ -1,3 +1,4 @@
+import AVFoundation
 import MobileVLCKit
 import SwiftUI
 import UIKit
@@ -8,6 +9,10 @@ struct VLCRoute {
     let url: URL
     let sourceID: String
     let sessionID: String?
+    /// Ordinal (among the file's audio streams) of the audio track to prefer:
+    /// PlayerView picks a Chinese non-TrueHD track, because libvlc can fail
+    /// silent on TrueHD/Atmos defaults.
+    let preferredAudioOrdinal: Int?
 }
 
 // MARK: - controller
@@ -31,13 +36,20 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     private var startSeconds: Double = 0
     private var didInitialSeek = false
     private var didAutoSelectSubtitle = false
+    private var didAutoSelectAudio = false
+    private var preferredAudioOrdinal: Int?
+    private var loadDate = Date()
+    private var resumeAttempts = 0
+    private(set) var maxPosition: Double = 0
 
-    func prepare(url: URL, startSeconds: Double) {
+    func prepare(url: URL, startSeconds: Double, preferredAudioOrdinal: Int?) {
         guard !mediaConfigured else { return }
         mediaConfigured = true
         self.startSeconds = startSeconds
+        self.preferredAudioOrdinal = preferredAudioOrdinal
+        loadDate = Date()
         let media = VLCMedia(url: url)
-        media.addOption("network-caching=5000")
+        media.addOption("network-caching=15000")
         if startSeconds > 5 {
             media.addOption("start-time=\(Int(startSeconds))")
         }
@@ -73,6 +85,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         if let media = player.media, media.length.intValue > 0 {
             duration = Double(media.length.intValue) / 1000
         }
+        if position > maxPosition { maxPosition = position }
         if duration <= 0, position > 0 {
             let remaining = player.remainingTime.map { Double($0.intValue) / 1000 } ?? 0
             if remaining > 0 { duration = position + remaining }
@@ -84,6 +97,20 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
                 seek(to: startSeconds)
             }
         }
+        // Resume enforcement: libvlc sometimes drops the start-time option
+        // while the ES list is still settling; re-seek a few times early on.
+        if startSeconds > 5, resumeAttempts < 3, state == .playing,
+           Date().timeIntervalSince(loadDate) < 25,
+           position < startSeconds - 3, !subtitleTracks.isEmpty {
+            resumeAttempts += 1
+            seek(to: startSeconds)
+        }
+    }
+
+    /// Best known position for session reporting: a direct read wins over a
+    /// possibly stale published value, and the value never rewinds.
+    func directPosition() -> Double {
+        max(Double(player.time.intValue) / 1000, maxPosition)
     }
 
     private func refreshTracks() {
@@ -91,8 +118,25 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         if audio.count != audioTracks.count { audioTracks = audio }
         let subs = Self.trackList(names: player.videoSubTitlesNames, indexes: player.videoSubTitlesIndexes)
         if subs.count != subtitleTracks.count { subtitleTracks = subs }
-        selectedAudioID = player.currentAudioTrackIndex
-        selectedSubtitleID = player.currentVideoSubTitleIndex
+        if selectedAudioID != player.currentAudioTrackIndex {
+            selectedAudioID = player.currentAudioTrackIndex
+        }
+        if selectedSubtitleID != player.currentVideoSubTitleIndex {
+            selectedSubtitleID = player.currentVideoSubTitleIndex
+        }
+        if !didAutoSelectAudio {
+            let real = audioTracks.filter { $0.id >= 0 }
+            if !real.isEmpty {
+                didAutoSelectAudio = true
+                if let ordinal = preferredAudioOrdinal, ordinal < real.count {
+                    player.currentAudioTrackIndex = real[ordinal].id
+                    selectedAudioID = real[ordinal].id
+                } else if player.currentAudioTrackIndex < 0 {
+                    player.currentAudioTrackIndex = real[0].id
+                    selectedAudioID = real[0].id
+                }
+            }
+        }
         if !didAutoSelectSubtitle, subtitleTracks.count > 1 {
             didAutoSelectSubtitle = true
             if player.currentVideoSubTitleIndex < 0 {
@@ -244,13 +288,15 @@ struct VLCPlayerView: View {
         .statusBarHidden(true)
         .task { await reportingLoop() }
         .onAppear {
-            controller.prepare(url: route.url, startSeconds: startSeconds)
+            try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+            try? AVAudioSession.sharedInstance().setActive(true)
+            controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal)
             scheduleHide()
         }
         .onDisappear {
             hideTask?.cancel()
             let client = store.client()
-            let position = controller.position
+            let position = controller.directPosition()
             Task { await client?.reportStopped(itemID: item.Id, sourceID: route.sourceID, sessionID: route.sessionID, positionSeconds: position) }
             controller.player.stop()
         }
@@ -263,6 +309,7 @@ struct VLCPlayerView: View {
         await client.reportStart(itemID: item.Id, sourceID: route.sourceID, sessionID: route.sessionID, positionSeconds: startSeconds)
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))
+            guard controller.position > 0 else { continue }
             await client.reportProgress(itemID: item.Id, sourceID: route.sourceID,
                                         sessionID: route.sessionID,
                                         positionSeconds: controller.position,

@@ -195,7 +195,21 @@ struct PlayerView: View {
                 $0.type == "Subtitle" && ($0.Codec ?? "").lowercased().contains("pgs")
             }
             if hasPGS {
-                vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId)
+                let audios = (source.MediaStreams ?? [])
+                    .filter { $0.type == "Audio" }
+                    .sorted { $0.Index < $1.Index }
+                func isTrueHD(_ stream: EmbyMediaStream) -> Bool {
+                    (stream.Codec ?? "").lowercased().contains("truehd")
+                }
+                func isChineseAudio(_ stream: EmbyMediaStream) -> Bool {
+                    let lang = (stream.Language ?? "").lowercased()
+                    return lang.hasPrefix("zh") || lang == "chi" || lang == "zho"
+                }
+                let preferredAudio = audios.first(where: { isChineseAudio($0) && !isTrueHD($0) })
+                    ?? audios.first(where: { !isTrueHD($0) })
+                    ?? audios.first
+                let ordinal = preferredAudio.flatMap { pick in audios.firstIndex(where: { $0.Index == pick.Index }) }
+                vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId, preferredAudioOrdinal: ordinal)
                 return
             }
             session = (source.Id, info.PlaySessionId)
