@@ -225,6 +225,20 @@ struct PlayerView: View {
                 return
             }
 
+            session = (source.Id, info.PlaySessionId)
+            currentStreamURL = url
+            currentSource = source
+            player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
+            player.requestVideoFeatures([.nativeSubtitles])
+            player.setSubtitlesVisible(true)
+            Task { await prepareSubtitles() }
+            await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
+            scheduleHide()
+        } catch {
+            loadError = "加载失败：\(error.localizedDescription)"
+        }
+    }
+
     // MARK: - VLC track switching (full re-entry)
 
     private func handleVLCTrackSwitch(audioOrdinal: Int, subtitleOrdinal: Int, position: Double) {
@@ -250,20 +264,6 @@ struct PlayerView: View {
             vlcGeneration += 1
         } catch {
             // Keep the current view playing if the re-entry fetch fails.
-        }
-    }
-
-            session = (source.Id, info.PlaySessionId)
-            currentStreamURL = url
-            currentSource = source
-            player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
-            player.requestVideoFeatures([.nativeSubtitles])
-            player.setSubtitlesVisible(true)
-            Task { await prepareSubtitles() }
-            await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
-            scheduleHide()
-        } catch {
-            loadError = "加载失败：\(error.localizedDescription)"
         }
     }
 
