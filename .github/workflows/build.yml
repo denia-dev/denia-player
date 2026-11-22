@@ -28,6 +28,11 @@ jobs:
           defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
           defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidation -bool YES
 
+      - name: Generate project with XcodeGen
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
       - name: Build (no signing)
         run: |
           xcodebuild -project EmbyPlayer.xcodeproj -scheme EmbyPlayer \
