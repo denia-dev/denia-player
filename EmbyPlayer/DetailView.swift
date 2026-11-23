@@ -8,6 +8,8 @@ struct PlayRequest: Identifiable {
 
 struct DetailView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    @Environment(ShellState.self) private var shell
     let item: EmbyItem
     @State private var detail: EmbyItem?
     @State private var seasons: [EmbyItem] = []
@@ -31,6 +33,8 @@ struct DetailView: View {
     private var isPlayed: Bool { playedOverride ?? (current.UserData?.Played ?? false) }
 
     var body: some View {
+        GeometryReader { geo in
+        ZStack(alignment: .top) {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 hero
@@ -41,16 +45,20 @@ struct DetailView: View {
                     actionsRow
                     if let overview = current.Overview, !overview.isEmpty {
                         Text(overview)
-                            .font(.body)
+                            .font(.subheadline)
                             .foregroundStyle(.secondary)
                             .lineLimit(overviewExpanded ? nil : 3)
                             .onTapGesture { overviewExpanded.toggle() }
                     }
                     if let rating = current.CommunityRating {
-                        HStack(spacing: 6) {
-                            Image(systemName: "star.fill").foregroundStyle(.orange)
-                            Text(String(format: "%.1f", rating)).font(.headline)
-                            Text("评分").foregroundStyle(.secondary).font(.subheadline)
+                        HStack {
+                            Spacer()
+                            HStack(spacing: 6) {
+                                Image(systemName: "star.fill").foregroundStyle(.orange).font(.footnote)
+                                Text(String(format: "%.1f", rating)).font(.subheadline.weight(.semibold))
+                                Text("评分").foregroundStyle(.secondary).font(.subheadline)
+                            }
+                            Spacer()
                         }
                     }
                     castSection
@@ -60,19 +68,16 @@ struct DetailView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 40)
             }
+            .frame(width: geo.size.width)
+        }
+        .background { ambientBackground }
+        topOverlay
+            .padding(.top, max(geo.safeAreaInsets.top, 47) + 14)
+            .padding(.horizontal)
+        }
         }
         .ignoresSafeArea(edges: .top)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbarBackground(.hidden, for: .navigationBar)
-        .toolbarColorScheme(.dark, for: .navigationBar)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { toggleFavorite() } label: {
-                    Image(systemName: isFavorite ? "heart.fill" : "heart")
-                        .foregroundStyle(isFavorite ? Color.red : Color.white)
-                }
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
         .onChange(of: selectedSeasonID) { _, seasonID in
             episodeRange = 0
@@ -80,6 +85,70 @@ struct DetailView: View {
         }
         .fullScreenCover(item: $playRequest) { request in
             PlayerView(item: request.item, startSeconds: request.startSeconds)
+        }
+        .onAppear { shell.pushedCount += 1 }
+        .onDisappear { shell.pushedCount -= 1 }
+    }
+
+    /// The backdrop, washed out, behind the whole page (SenPlayer's
+    /// ambient tint) instead of a hard white background.
+    private var ambientBackground: some View {
+        ZStack {
+            if let client = store.client() {
+                ItemImage(item: current, client: client, kind: "Backdrop")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
+            Color(.systemBackground).opacity(0.8)
+        }
+        .ignoresSafeArea()
+    }
+
+    /// Fixed SenPlayer-style top chrome: a glass back circle on the left,
+    /// a glass capsule with search + more on the right. It lives outside
+    /// the ScrollView so it can never scroll away.
+    private var topOverlay: some View {
+        HStack(alignment: .top) {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.primary)
+                    .frame(width: 40, height: 40)
+                    .glassEffect(.regular.interactive(), in: Circle())
+            }
+            .buttonStyle(.plain)
+            Spacer()
+            HStack(spacing: 22) {
+                Button {
+                    shell.searchRequested = true
+                    dismiss()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 17, weight: .medium))
+                }
+                Menu {
+                    Button { togglePlayed() } label: {
+                        Label(isPlayed ? "取消已看" : "标记已看", systemImage: "checkmark.circle")
+                    }
+                    Button { toggleFavorite() } label: {
+                        Label(isFavorite ? "取消收藏" : "收藏", systemImage: "heart")
+                    }
+                    if let target = playTarget {
+                        Button {
+                            playRequest = PlayRequest(item: target, startSeconds: 0)
+                        } label: {
+                            Label("从头播", systemImage: "arrow.counterclockwise")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 17, weight: .medium))
+                }
+            }
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 11)
+            .glassEffect(.regular.interactive(), in: Capsule())
         }
     }
 
@@ -93,7 +162,7 @@ struct DetailView: View {
                     .frame(height: 478)
                     .clipped()
             }
-            LinearGradient(colors: [.black.opacity(0.25), .clear, Color(.systemBackground).opacity(0.72), Color(.systemBackground)],
+            LinearGradient(colors: [.black.opacity(0.25), .clear, Color(.systemBackground).opacity(0.45), Color(.systemBackground).opacity(0.8)],
                            startPoint: .top, endPoint: .bottom)
 
             VStack(spacing: 10) {
@@ -149,6 +218,10 @@ struct DetailView: View {
             let title = (video.DisplayTitle ?? "").uppercased()
             if title.contains("DOLBY") || title.contains(" DV") { parts.append("Dolby Vision") }
             else if title.contains("HDR") { parts.append("HDR") }
+            else { parts.append("SDR") }
+            if let fps = video.AverageFrameRate ?? video.RealFrameRate, fps > 0 {
+                parts.append("\(Int(fps.rounded()))FPS")
+            }
             if let size = source.Size {
                 parts.append(String(format: "%.2fG", Double(size) / 1_073_741_824))
             }
@@ -173,15 +246,14 @@ struct DetailView: View {
                     HStack(spacing: 8) {
                         Image(systemName: "play.fill")
                         Text("播放")
-                        if target.resumeSeconds > 60 {
-                            Text(formatDuration(target.resumeSeconds)).foregroundStyle(.secondary)
-                        }
+                        Text(formatHMS(target.resumeSeconds > 5 ? target.resumeSeconds : target.durationSeconds))
+                            .foregroundStyle(.secondary)
                     }
                     .font(.headline)
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity)
                     .frame(height: 52)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 16))
+                    .background(Color.white, in: RoundedRectangle(cornerRadius: 20))
                     .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 }
                 .buttonStyle(.plain)
@@ -192,31 +264,30 @@ struct DetailView: View {
     // MARK: - actions / cast
 
     private var actionsRow: some View {
-        HStack(spacing: 0) {
+        HStack {
             if let target = playTarget {
-                actionButton(icon: "arrow.counterclockwise", label: "从头播") {
+                actionButton(icon: "arrow.counterclockwise", active: false) {
                     playRequest = PlayRequest(item: target, startSeconds: 0)
                 }
+                Spacer()
             }
-            actionButton(icon: isPlayed ? "checkmark.circle.fill" : "checkmark.circle", label: "已看") {
+            actionButton(icon: isPlayed ? "checkmark.circle.fill" : "checkmark.circle", active: isPlayed) {
                 togglePlayed()
             }
-            actionButton(icon: isFavorite ? "heart.fill" : "heart", label: "收藏", active: isFavorite) {
+            Spacer()
+            actionButton(icon: isFavorite ? "heart.fill" : "heart", active: isFavorite) {
                 toggleFavorite()
             }
-            Spacer()
         }
+        .padding(.horizontal, 36)
+        .padding(.vertical, 2)
     }
 
-    private func actionButton(icon: String, label: String, active: Bool = false, action: @escaping () -> Void) -> some View {
+    private func actionButton(icon: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: 3) {
-                Image(systemName: icon)
-                    .font(.system(size: 21))
-                    .foregroundStyle(active ? .red : .primary)
-                Text(label).font(.caption2).foregroundStyle(.secondary)
-            }
-            .frame(width: 64)
+            Image(systemName: icon)
+                .font(.system(size: 25))
+                .foregroundStyle(active ? Color.purple : Color(red: 0.52, green: 0.50, blue: 0.62))
         }
         .buttonStyle(.plain)
     }
@@ -238,9 +309,9 @@ struct DetailView: View {
                                             .overlay(Image(systemName: "person.fill").foregroundStyle(.secondary))
                                     }
                                 }
-                                .frame(width: 92, height: 92)
+                                .frame(width: 92, height: 115)
                                 .clipShape(RoundedRectangle(cornerRadius: 16))
-                                Text(person.Name).font(.caption.weight(.medium)).lineLimit(2)
+                                Text(person.Name).font(.subheadline.weight(.medium)).lineLimit(2)
                                 if let role = person.Role {
                                     Text(role).font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                                 }
@@ -269,23 +340,38 @@ struct DetailView: View {
     private var seriesSection: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text(current.type == "Episode" ? (current.SeriesName ?? "选集") : current.Name)
-                    .font(.title3.bold())
-                if seasons.count > 1 {
-                    Menu {
-                        ForEach(seasons) { season in
-                            Button(season.Name) { selectedSeasonID = season.Id }
-                        }
-                    } label: {
-                        HStack(spacing: 3) {
-                            Text(seasons.first(where: { $0.Id == selectedSeasonID })?.Name ?? "")
-                                .font(.subheadline)
-                            Image(systemName: "chevron.down").font(.caption2.bold())
-                        }
-                        .foregroundStyle(.secondary)
+                Menu {
+                    ForEach(seasons) { season in
+                        Button(season.Name) { selectedSeasonID = season.Id }
                     }
+                } label: {
+                    HStack(spacing: 5) {
+                        Text(current.type == "Episode" ? (current.SeriesName ?? "选集") : current.Name)
+                            .font(.title3.bold())
+                            .lineLimit(1)
+                        if seasons.count > 1 {
+                            Image(systemName: "chevron.down").font(.system(size: 12, weight: .bold))
+                        }
+                    }
+                    .foregroundStyle(.primary)
                 }
                 Spacer()
+                if episodeRanges.count > 1 {
+                    Button { episodeRange = max(0, episodeRange - 1) } label: {
+                        Image(systemName: "backward.end")
+                            .font(.system(size: 16))
+                            .foregroundStyle(episodeRange == 0 ? Color.secondary.opacity(0.4) : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(episodeRange == 0)
+                    Button { episodeRange = min(episodeRanges.count - 1, episodeRange + 1) } label: {
+                        Image(systemName: "forward.end")
+                            .font(.system(size: 16))
+                            .foregroundStyle(episodeRange == episodeRanges.count - 1 ? Color.secondary.opacity(0.4) : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(episodeRange == episodeRanges.count - 1)
+                }
             }
             if episodeRanges.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -294,9 +380,10 @@ struct DetailView: View {
                             Button { episodeRange = index } label: {
                                 Text("\(range.lowerBound + 1)-\(range.upperBound)")
                                     .font(.subheadline.weight(episodeRange == index ? .semibold : .regular))
+                                    .foregroundStyle(episodeRange == index ? Color.primary : Color.secondary)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 7)
-                                    .background(episodeRange == index ? Color(.systemGray4) : Color(.systemGray6), in: Capsule())
+                                    .background(Color(.systemBackground).opacity(0.55), in: Capsule())
                             }
                             .buttonStyle(.plain)
                         }
@@ -307,13 +394,10 @@ struct DetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 14) {
                         ForEach(displayedEpisodes) { episode in
-                            Button {
-                                playRequest = PlayRequest(item: episode, startSeconds: episode.resumeSeconds)
-                            } label: {
-                                VStack(alignment: .leading, spacing: 6) {
-                                    ItemImage(item: episode, client: client)
-                                        .frame(width: 236, height: 133)
-                                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                            VStack(alignment: .leading, spacing: 6) {
+                                ItemImage(item: episode, client: client)
+                                    .frame(width: 212, height: 119)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14))
                                         .overlay(alignment: .bottom) {
                                             if episode.durationSeconds > 0, episode.resumeSeconds > 0 {
                                                 GeometryReader { geo in
@@ -328,15 +412,28 @@ struct DetailView: View {
                                                 .padding(.bottom, 6)
                                             }
                                         }
+                                        .overlay(alignment: .bottomTrailing) {
+                                            if let rating = episode.CommunityRating {
+                                                Text(String(format: "%.1f", rating))
+                                                    .font(.caption2.weight(.semibold))
+                                                    .foregroundStyle(.white)
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(.black.opacity(0.55), in: Capsule())
+                                                    .padding(6)
+                                            }
+                                        }
                                     Text(episodeTitle(episode))
                                         .font(.subheadline.weight(.medium)).lineLimit(1)
                                     if let overview = episode.Overview {
                                         Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                     }
                                 }
-                                .frame(width: 236)
+                            .frame(width: 212)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                playRequest = PlayRequest(item: episode, startSeconds: episode.resumeSeconds)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -420,9 +517,9 @@ struct DetailView: View {
                 .font(.subheadline)
             }
         }
-        .padding(14)
+        .padding(16)
         .frame(width: 262, alignment: .leading)
-        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 20))
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 22))
     }
 
     private func sourceSummary(_ source: EmbyMediaSource) -> String {
@@ -462,6 +559,11 @@ struct DetailView: View {
         guard let client = store.client(), let seriesID else { return }
         episodes = (try? await client.episodes(seriesID: seriesID, seasonID: seasonID)) ?? []
     }
+}
+
+func formatHMS(_ seconds: Double) -> String {
+    let total = Int(seconds)
+    return String(format: "%02d:%02d:%02d", total / 3600, (total % 3600) / 60, total % 60)
 }
 
 func formatDuration(_ seconds: Double) -> String {

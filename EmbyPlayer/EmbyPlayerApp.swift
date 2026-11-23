@@ -27,52 +27,55 @@ struct RootView: View {
 /// SenPlayer-style shell: five tabs, each with its own navigation stack,
 /// under one floating glass capsule bar. The capsule only shows on tab
 /// roots (it hides while a detail/library page is pushed).
+/// Tracks how deep the visible tab is navigated, so the capsule bar can
+/// hide on pushed pages. Destination-style NavigationLinks do not update a
+/// bound NavigationPath, so pushed pages report themselves instead.
+@MainActor
+@Observable
+final class ShellState {
+    var pushedCount = 0
+    var searchRequested = false
+}
+
 struct MainView: View {
     @State private var tab = 0
-    @State private var path0 = NavigationPath()
-    @State private var path1 = NavigationPath()
-    @State private var path2 = NavigationPath()
-    @State private var path3 = NavigationPath()
-    @State private var path4 = NavigationPath()
-
-    private var activeDepth: Int {
-        switch tab {
-        case 0: return path0.count
-        case 1: return path1.count
-        case 2: return path2.count
-        case 3: return path3.count
-        default: return path4.count
-        }
-    }
+    @State private var shell = ShellState()
 
     var body: some View {
         ZStack(alignment: .bottom) {
             ZStack {
-                NavigationStack(path: $path0) { HomeView() }
+                NavigationStack { HomeView() }
                     .opacity(tab == 0 ? 1 : 0)
                     .allowsHitTesting(tab == 0)
-                NavigationStack(path: $path1) { LibrariesTabView() }
+                NavigationStack { LibrariesTabView() }
                     .opacity(tab == 1 ? 1 : 0)
                     .allowsHitTesting(tab == 1)
-                NavigationStack(path: $path2) { RecordsView() }
+                NavigationStack { RecordsView() }
                     .opacity(tab == 2 ? 1 : 0)
                     .allowsHitTesting(tab == 2)
-                NavigationStack(path: $path3) { SettingsView() }
+                NavigationStack { SettingsView() }
                     .opacity(tab == 3 ? 1 : 0)
                     .allowsHitTesting(tab == 3)
-                NavigationStack(path: $path4) { SearchTabView() }
+                NavigationStack { SearchTabView() }
                     .opacity(tab == 4 ? 1 : 0)
                     .allowsHitTesting(tab == 4)
             }
 
-            if activeDepth == 0 {
+            if shell.pushedCount == 0 {
                 CapsuleTabBar(tab: $tab)
                     .padding(.horizontal, 14)
                     .padding(.bottom, 6)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.easeInOut(duration: 0.22), value: activeDepth == 0)
+        .environment(shell)
+        .animation(.easeInOut(duration: 0.22), value: shell.pushedCount == 0)
+        .onChange(of: shell.searchRequested) { _, requested in
+            if requested {
+                shell.searchRequested = false
+                tab = 4
+            }
+        }
     }
 }
 

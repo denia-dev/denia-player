@@ -128,9 +128,12 @@ struct EmbyMediaStream: Decodable {
         case type = "Type"
         case Codec, Language, DisplayTitle, IsDefault, IsExternal, IsTextSubtitleStream, DeliveryUrl
         case Width, Height, BitRate, Channels, SampleRate
+        case AverageFrameRate, RealFrameRate
     }
     let Width: Int?
     let Height: Int?
+    let AverageFrameRate: Double?
+    let RealFrameRate: Double?
     let BitRate: Int?
     let Channels: Int?
     let SampleRate: Int?

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibraryView: View {
     @Environment(AppStore.self) private var store
+    @Environment(ShellState.self) private var shell
     let library: EmbyItem
     @State private var items: [EmbyItem] = []
     @State private var searchText = ""
@@ -31,6 +32,8 @@ struct LibraryView: View {
             Task { await runSearch(term) }
         }
         .task { await load() }
+        .onAppear { shell.pushedCount += 1 }
+        .onDisappear { shell.pushedCount -= 1 }
     }
 
     private var displayed: [EmbyItem] { searchText.isEmpty ? items : searchResults }
