@@ -452,7 +452,7 @@ struct VideoPrefsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
                     prefsToggleRow("系统画中画（MPV）", isOn: $pictureInPicture)
-                    Text("下次打开视频时生效。播放后点小窗按钮即可离开 App 继续观看。使用 VLC 或开启应用锁时不可用。")
+                    Text("下次打开视频时生效。播放后点小窗按钮即可离开 App 继续观看。PGS 影片可在 VLC 更多菜单切换至 MPV。开启应用锁时不可用。")
                         .font(.footnote).foregroundStyle(.secondary)
                     prefsDivider
                     prefsMenuRow("首选解码模式", value: decodeLabel) {
