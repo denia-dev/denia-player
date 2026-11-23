@@ -24,107 +24,89 @@ struct RootView: View {
     }
 }
 
-/// SenPlayer-style shell: five tabs, each with its own navigation stack,
-/// under one floating glass capsule bar. The capsule only shows on tab
-/// roots (it hides while a detail/library page is pushed).
-/// Tracks how deep the visible tab is navigated, so the capsule bar can
-/// hide on pushed pages. Destination-style NavigationLinks do not update a
-/// bound NavigationPath, so pushed pages report themselves instead.
+/// Cross-tab signals (the detail page's search capsule asks the shell
+/// to switch to the search tab).
 @MainActor
 @Observable
 final class ShellState {
-    var pushedCount = 0
     var searchRequested = false
 }
 
-struct MainView: View {
-    @State private var tab = 0
-    @State private var shell = ShellState()
+/// Value-based navigation routes. Every tab stack registers the same
+/// destinations; the pop closure belongs to the owning stack, so a
+/// detail page's back button removes exactly its own stack's last
+/// entry - no reliance on the dismiss environment, which did not pop
+/// inside the old hand-rolled shell.
+enum Route: Hashable {
+    case detail(EmbyItem)
+    case library(EmbyItem)
+}
 
-    var body: some View {
-        ZStack(alignment: .bottom) {
-            ZStack {
-                NavigationStack { HomeView() }
-                    .opacity(tab == 0 ? 1 : 0)
-                    .allowsHitTesting(tab == 0)
-                NavigationStack { LibrariesTabView() }
-                    .opacity(tab == 1 ? 1 : 0)
-                    .allowsHitTesting(tab == 1)
-                NavigationStack { RecordsView() }
-                    .opacity(tab == 2 ? 1 : 0)
-                    .allowsHitTesting(tab == 2)
-                NavigationStack { SettingsView() }
-                    .opacity(tab == 3 ? 1 : 0)
-                    .allowsHitTesting(tab == 3)
-                NavigationStack { SearchTabView() }
-                    .opacity(tab == 4 ? 1 : 0)
-                    .allowsHitTesting(tab == 4)
-            }
-
-            if shell.pushedCount == 0 {
-                CapsuleTabBar(tab: $tab)
-                    .padding(.horizontal, 14)
-                    .padding(.bottom, 6)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
-            }
-        }
-        .environment(shell)
-        .animation(.easeInOut(duration: 0.22), value: shell.pushedCount == 0)
-        .onChange(of: shell.searchRequested) { _, requested in
-            if requested {
-                shell.searchRequested = false
-                tab = 4
+extension View {
+    func routeDestinations(onPop: @escaping () -> Void) -> some View {
+        navigationDestination(for: Route.self) { route in
+            switch route {
+            case .detail(let item):
+                DetailView(item: item, onBack: onPop)
+            case .library(let item):
+                LibraryView(library: item)
             }
         }
     }
 }
 
-struct CapsuleTabBar: View {
-    @Binding var tab: Int
-    @Namespace private var glassNamespace
-
-    private let items: [(icon: String, filled: String, label: String)] = [
-        ("play.rectangle", "play.rectangle.fill", "首页"),
-        ("externaldrive", "externaldrive.fill", "资源库"),
-        ("person.text.rectangle", "person.text.rectangle.fill", "记录"),
-        ("gearshape", "gearshape.fill", "设置"),
-        ("magnifyingglass", "magnifyingglass", "搜索"),
-    ]
+/// The shell is a plain TabView - the same approach as JM Reader. On
+/// iOS 26 the system tab bar IS the floating liquid-glass bar with the
+/// sliding selection indicator, and it stays reliable where the
+/// hand-rolled glass bar did not. Pushed pages hide it with
+/// .toolbar(.hidden, for: .tabBar).
+struct MainView: View {
+    @State private var tab = 0
+    @State private var shell = ShellState()
+    @State private var path0 = NavigationPath()
+    @State private var path1 = NavigationPath()
+    @State private var path2 = NavigationPath()
+    @State private var path3 = NavigationPath()
+    @State private var path4 = NavigationPath()
 
     var body: some View {
-        GlassEffectContainer(spacing: 4) {
-            HStack(spacing: 4) {
-                ForEach(items.indices, id: \.self) { index in
-                    let selected = tab == index
-                    Button {
-                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
-                            tab = index
-                        }
-                    } label: {
-                        VStack(spacing: 2) {
-                            Image(systemName: selected ? items[index].filled : items[index].icon)
-                                .font(.system(size: 20))
-                            Text(items[index].label)
-                                .font(.system(size: 10))
-                        }
-                        .foregroundStyle(selected ? Color.blue : Color.primary)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 8)
-                        .background {
-                            if selected {
-                                Color.clear
-                                    .glassEffect(.regular.tint(Color(.systemGray5).opacity(0.6)), in: Capsule())
-                                    .glassEffectID("tabSelection", in: glassNamespace)
-                            }
-                        }
-                    }
-                    .buttonStyle(.plain)
-                }
+        TabView(selection: $tab) {
+            NavigationStack(path: $path0) {
+                HomeView().routeDestinations { if !path0.isEmpty { path0.removeLast() } }
             }
-            .padding(5)
-            .background {
-                Color.clear
-                    .glassEffect(.regular, in: Capsule())
+            .tabItem { Label("首页", systemImage: "play.rectangle") }
+            .tag(0)
+
+            NavigationStack(path: $path1) {
+                LibrariesTabView().routeDestinations { if !path1.isEmpty { path1.removeLast() } }
+            }
+            .tabItem { Label("资源库", systemImage: "externaldrive") }
+            .tag(1)
+
+            NavigationStack(path: $path2) {
+                RecordsView().routeDestinations { if !path2.isEmpty { path2.removeLast() } }
+            }
+            .tabItem { Label("记录", systemImage: "person.text.rectangle") }
+            .tag(2)
+
+            NavigationStack(path: $path3) {
+                SettingsView().routeDestinations { if !path3.isEmpty { path3.removeLast() } }
+            }
+            .tabItem { Label("设置", systemImage: "gearshape") }
+            .tag(3)
+
+            NavigationStack(path: $path4) {
+                SearchTabView().routeDestinations { if !path4.isEmpty { path4.removeLast() } }
+            }
+            .tabItem { Label("搜索", systemImage: "magnifyingglass") }
+            .tag(4)
+        }
+        .tint(.blue)
+        .environment(shell)
+        .onChange(of: shell.searchRequested) { _, requested in
+            if requested {
+                shell.searchRequested = false
+                tab = 4
             }
         }
     }

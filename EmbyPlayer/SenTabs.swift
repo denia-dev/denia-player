@@ -130,7 +130,7 @@ struct LibrariesTabView: View {
                 LazyVGrid(columns: columns, spacing: 14) {
                     serverCard
                     ForEach(Array(libraries.enumerated()), id: \.element.Id) { index, library in
-                        NavigationLink { LibraryView(library: library) } label: {
+                        NavigationLink(value: Route.library(library)) {
                             libraryCard(library, index: index)
                         }
                         .buttonStyle(.plain)
@@ -139,7 +139,7 @@ struct LibrariesTabView: View {
             }
             .padding(.horizontal)
             .padding(.top, 10)
-            .padding(.bottom, 92)
+            .padding(.bottom, 32)
         }
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
@@ -284,7 +284,7 @@ struct RecordsView: View {
                             }
                             LazyVGrid(columns: wideColumns, spacing: 18) {
                                 ForEach(resume) { item in
-                                    NavigationLink { DetailView(item: item) } label: {
+                                    NavigationLink(value: Route.detail(item)) {
                                         WideCard(item: item, client: client)
                                     }
                                     .buttonStyle(.plain)
@@ -298,7 +298,7 @@ struct RecordsView: View {
                         }
                         LazyVGrid(columns: posterColumns, spacing: 16) {
                             ForEach(favorites) { item in
-                                NavigationLink { DetailView(item: item) } label: {
+                                NavigationLink(value: Route.detail(item)) {
                                     PosterCell(item: item, client: client)
                                 }
                                 .buttonStyle(.plain)
@@ -311,7 +311,7 @@ struct RecordsView: View {
                         }
                         LazyVGrid(columns: wideColumns, spacing: 18) {
                             ForEach(history) { item in
-                                NavigationLink { DetailView(item: item) } label: {
+                                NavigationLink(value: Route.detail(item)) {
                                     WideCard(item: item, client: client)
                                 }
                                 .buttonStyle(.plain)
@@ -402,7 +402,7 @@ struct SettingsView: View {
             }
             .padding(.horizontal)
             .padding(.top, 10)
-            .padding(.bottom, 92)
+            .padding(.bottom, 32)
         }
         .background(Color(.systemGroupedBackground))
         .toolbar(.hidden, for: .navigationBar)
@@ -506,14 +506,14 @@ struct SearchTabView: View {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 16) {
                             ForEach(results) { item in
-                                NavigationLink { DetailView(item: item) } label: {
+                                NavigationLink(value: Route.detail(item)) {
                                     PosterCell(item: item, client: client)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
                         .padding(.horizontal)
-                        .padding(.bottom, 92)
+                        .padding(.bottom, 32)
                     }
                 }
             }

@@ -2,7 +2,6 @@ import SwiftUI
 
 struct LibraryView: View {
     @Environment(AppStore.self) private var store
-    @Environment(ShellState.self) private var shell
     let library: EmbyItem
     @State private var items: [EmbyItem] = []
     @State private var searchText = ""
@@ -18,7 +17,7 @@ struct LibraryView: View {
             }
             LazyVGrid(columns: columns, spacing: 16) {
                 ForEach(displayed) { item in
-                    NavigationLink { DetailView(item: item) } label: {
+                    NavigationLink(value: Route.detail(item)) {
                         gridCell(item)
                     }
                     .buttonStyle(.plain)
@@ -32,8 +31,7 @@ struct LibraryView: View {
             Task { await runSearch(term) }
         }
         .task { await load() }
-        .onAppear { shell.pushedCount += 1 }
-        .onDisappear { shell.pushedCount -= 1 }
+        .toolbar(.hidden, for: .tabBar)
     }
 
     private var displayed: [EmbyItem] { searchText.isEmpty ? items : searchResults }

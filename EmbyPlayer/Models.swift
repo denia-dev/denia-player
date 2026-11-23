@@ -150,3 +150,9 @@ struct EmbyPlaybackInfo: Decodable {
     let MediaSources: [EmbyMediaSource]
     let PlaySessionId: String?
 }
+
+/// Identity-based hashing so items can drive value-based navigation.
+extension EmbyItem: Hashable {
+    func hash(into hasher: inout Hasher) { hasher.combine(Id) }
+    static func == (lhs: EmbyItem, rhs: EmbyItem) -> Bool { lhs.Id == rhs.Id }
+}

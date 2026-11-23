@@ -46,7 +46,7 @@ struct HomeView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 14) {
                             ForEach(resume) { item in
-                                NavigationLink { DetailView(item: item) } label: {
+                                NavigationLink(value: Route.detail(item)) {
                                     WideCard(item: item, client: client)
                                         .frame(width: 292)
                                 }
@@ -61,7 +61,7 @@ struct HomeView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 12) {
                             ForEach(libraries) { library in
-                                NavigationLink { LibraryView(library: library) } label: {
+                                NavigationLink(value: Route.library(library)) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         ItemImage(item: library, client: client)
                                             .frame(width: 104, height: 156)
@@ -81,7 +81,7 @@ struct HomeView: View {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 12) {
                             ForEach(latest) { item in
-                                NavigationLink { DetailView(item: item) } label: {
+                                NavigationLink(value: Route.detail(item)) {
                                     PosterCell(item: item, client: client, width: 104)
                                 }
                                 .buttonStyle(.plain)
@@ -91,7 +91,7 @@ struct HomeView: View {
                     }
                 }
             }
-            .padding(.bottom, 92)
+            .padding(.bottom, 32)
         }
         .ignoresSafeArea(edges: .top)
         .toolbar(.hidden, for: .navigationBar)
@@ -108,7 +108,7 @@ struct HomeView: View {
             if let client = store.client(), !heroItems.isEmpty {
                 TabView(selection: $heroIndex) {
                     ForEach(Array(heroItems.enumerated()), id: \.element.Id) { index, item in
-                        NavigationLink { DetailView(item: item) } label: {
+                        NavigationLink(value: Route.detail(item)) {
                             heroCell(item, client: client)
                         }
                         .buttonStyle(.plain)
@@ -158,14 +158,7 @@ struct HomeView: View {
     }
 
     private func heroCell(_ item: EmbyItem, client: EmbyClient) -> some View {
-        ZStack(alignment: .bottom) {
-            ItemImage(item: item, client: client, kind: wideImageKind(item))
-                .frame(maxWidth: .infinity)
-                .frame(height: 496)
-                .clipped()
-            LinearGradient(colors: [.clear, .clear, Color(.systemBackground).opacity(0.75), Color(.systemBackground)],
-                           startPoint: .top, endPoint: .bottom)
-            VStack(spacing: 8) {
+        VStack(spacing: 8) {
                 if item.ImageTags?["Logo"] != nil {
                     AsyncImage(url: client.imageURL(itemID: item.Id, kind: "Logo")) { phase in
                         if case .success(let image) = phase {
@@ -196,9 +189,20 @@ struct HomeView: View {
                         .multilineTextAlignment(.center)
                 }
             }
-            .padding(.horizontal, 28)
-            .padding(.bottom, 30)
+        .padding(.horizontal, 28)
+        .padding(.bottom, 30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .background {
+            ZStack {
+                ItemImage(item: item, client: client, kind: wideImageKind(item))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                LinearGradient(colors: [.clear, .clear, Color(.systemBackground).opacity(0.75), Color(.systemBackground)],
+                               startPoint: .top, endPoint: .bottom)
+            }
         }
+        .frame(height: 496)
+        .clipped()
     }
 
     private func sectionHeader(_ title: String, count: Int?) -> some View {

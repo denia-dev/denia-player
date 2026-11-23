@@ -8,9 +8,9 @@ struct PlayRequest: Identifiable {
 
 struct DetailView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     @Environment(ShellState.self) private var shell
     let item: EmbyItem
+    let onBack: () -> Void
     @State private var detail: EmbyItem?
     @State private var seasons: [EmbyItem] = []
     @State private var selectedSeasonID: String?
@@ -33,7 +33,6 @@ struct DetailView: View {
     private var isPlayed: Bool { playedOverride ?? (current.UserData?.Played ?? false) }
 
     var body: some View {
-        GeometryReader { geo in
         ZStack(alignment: .top) {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -68,16 +67,16 @@ struct DetailView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 40)
             }
-            .frame(width: geo.size.width)
-        }
-        .background { ambientBackground }
-        topOverlay
-            .padding(.top, max(geo.safeAreaInsets.top, 47) + 14)
-            .padding(.horizontal)
-        }
+            .containerRelativeFrame(.horizontal)
         }
         .ignoresSafeArea(edges: .top)
+        .background { ambientBackground }
+        topOverlay
+            .padding(.top, 20)
+            .padding(.horizontal)
+        }
         .toolbar(.hidden, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
         .task { await load() }
         .onChange(of: selectedSeasonID) { _, seasonID in
             episodeRange = 0
@@ -86,8 +85,6 @@ struct DetailView: View {
         .fullScreenCover(item: $playRequest) { request in
             PlayerView(item: request.item, startSeconds: request.startSeconds)
         }
-        .onAppear { shell.pushedCount += 1 }
-        .onDisappear { shell.pushedCount -= 1 }
     }
 
     /// The backdrop, washed out, behind the whole page (SenPlayer's
@@ -98,8 +95,10 @@ struct DetailView: View {
                 ItemImage(item: current, client: client, kind: "Backdrop")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+                    .blur(radius: 50)
+                    .scaleEffect(1.25)
             }
-            Color(.systemBackground).opacity(0.8)
+            Color(.systemBackground).opacity(0.86)
         }
         .ignoresSafeArea()
     }
@@ -109,7 +108,7 @@ struct DetailView: View {
     /// the ScrollView so it can never scroll away.
     private var topOverlay: some View {
         HStack(alignment: .top) {
-            Button { dismiss() } label: {
+            Button { onBack() } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.primary)
@@ -121,7 +120,7 @@ struct DetailView: View {
             HStack(spacing: 22) {
                 Button {
                     shell.searchRequested = true
-                    dismiss()
+                    onBack()
                 } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 17, weight: .medium))
@@ -155,17 +154,7 @@ struct DetailView: View {
     // MARK: - hero
 
     private var hero: some View {
-        ZStack(alignment: .bottom) {
-            if let client = store.client() {
-                ItemImage(item: current, client: client, kind: wideImageKind(current))
-                    .frame(maxWidth: .infinity)
-                    .frame(height: 478)
-                    .clipped()
-            }
-            LinearGradient(colors: [.black.opacity(0.25), .clear, Color(.systemBackground).opacity(0.45), Color(.systemBackground).opacity(0.8)],
-                           startPoint: .top, endPoint: .bottom)
-
-            VStack(spacing: 10) {
+        VStack(spacing: 10) {
                 if current.ImageTags?["Logo"] != nil, let client = store.client() {
                     AsyncImage(url: client.imageURL(itemID: current.Id, kind: "Logo")) { phase in
                         if case .success(let image) = phase { image.resizable().scaledToFit() }
@@ -173,7 +162,7 @@ struct DetailView: View {
                     .frame(maxWidth: 290, maxHeight: 88)
                 } else {
                     Text(current.Name)
-                        .font(.system(size: 26, weight: .bold))
+                        .font(.system(size: 24, weight: .bold))
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                 }
@@ -189,11 +178,22 @@ struct DetailView: View {
                 }
                 playCapsule
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 6)
-
+        .padding(.horizontal, 24)
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .background {
+            ZStack {
+                if let client = store.client() {
+                    ItemImage(item: current, client: client, kind: wideImageKind(current))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                }
+                LinearGradient(colors: [.black.opacity(0.25), .clear, Color(.systemBackground).opacity(0.45), Color(.systemBackground).opacity(0.8)],
+                               startPoint: .top, endPoint: .bottom)
+            }
         }
         .frame(height: 478)
+        .clipped()
     }
 
     private var metaParts: [String] {
