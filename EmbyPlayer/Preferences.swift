@@ -70,6 +70,7 @@ enum Prefs {
     }
 
     // Video (mpv configuration; applied when the player is created)
+    static var pictureInPicture: Bool { d.bool(forKey: "prefs.pictureInPicture") }
     static var decodeMode: String { d.string(forKey: "prefs.decodeMode") ?? "hardware" }
     static var softwareThreads: Int {
         d.object(forKey: "prefs.softwareThreads") == nil ? 8 : d.integer(forKey: "prefs.softwareThreads")
@@ -441,6 +442,7 @@ struct GesturePrefsView: View {
 // MARK: - 视频设置
 
 struct VideoPrefsView: View {
+    @AppStorage("prefs.pictureInPicture") private var pictureInPicture = false
     @AppStorage("prefs.decodeMode") private var decodeMode = "hardware"
     @AppStorage("prefs.softwareThreads") private var threads = 8
     @AppStorage("prefs.dvP7Convert") private var p7Convert = true
@@ -449,6 +451,10 @@ struct VideoPrefsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
+                    prefsToggleRow("系统画中画（MPV）", isOn: $pictureInPicture)
+                    Text("下次打开视频时生效。播放后点小窗按钮即可离开 App 继续观看。使用 VLC 或开启应用锁时不可用。")
+                        .font(.footnote).foregroundStyle(.secondary)
+                    prefsDivider
                     prefsMenuRow("首选解码模式", value: decodeLabel) {
                         Button("自动") { decodeMode = "auto" }
                         Button("硬解码 (HW/GPU)") { decodeMode = "hardware" }
