@@ -32,15 +32,21 @@ struct EmbyPlayerApp: App {
 struct RootView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.scenePhase) private var scenePhase
-    @State private var locked = false
+    @State private var locked = Prefs.appLock
+    @State private var authentication: LAContext?
+    @State private var lockMessage: String?
 
     var body: some View {
         ZStack {
-            if store.activeServer?.isLoggedIn == true {
-                MainView()
-            } else {
-                ServersView()
+            Group {
+                if store.activeServer?.isLoggedIn == true {
+                    MainView()
+                } else {
+                    ServersView()
+                }
             }
+            .allowsHitTesting(!locked)
+            .accessibilityHidden(locked)
             if locked {
                 lockScreen
             }
@@ -49,8 +55,13 @@ struct RootView: View {
             if Prefs.appLock { locked = true; authenticate() }
         }
         .onChange(of: scenePhase) { _, phase in
-            if phase == .background, Prefs.appLock { locked = true }
-            if phase == .active, locked { authenticate() }
+            if phase == .background, Prefs.appLock {
+                locked = true
+                authentication?.invalidate()
+                authentication = nil
+                lockMessage = nil
+            }
+            if phase == .active, locked, lockMessage == nil { authenticate() }
         }
     }
 
@@ -63,6 +74,7 @@ struct RootView: View {
                     .frame(width: 72, height: 72)
                     .overlay(Image(systemName: "play.fill").font(.title).foregroundStyle(.white))
                 Text("EmbyPlayer 已锁定").font(.headline)
+                if let lockMessage { Text(lockMessage).font(.footnote).multilineTextAlignment(.center) }
                 Button("解锁") { authenticate() }
                     .buttonStyle(.borderedProminent)
             }
@@ -70,14 +82,22 @@ struct RootView: View {
     }
 
     private func authenticate() {
+        guard scenePhase == .active, authentication == nil else { return }
+        lockMessage = nil
         let context = LAContext()
         var authError: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &authError) else {
-            locked = false
+            lockMessage = authError?.localizedDescription ?? "设备认证不可用，请检查系统密码设置后重试。"
             return
         }
-        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "解锁 EmbyPlayer") { success, _ in
-            Task { @MainActor in if success { locked = false } }
+        authentication = context
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "解锁 EmbyPlayer") { success, error in
+            Task { @MainActor in
+                guard authentication === context else { return }
+                authentication = nil
+                if success { locked = false }
+                else { lockMessage = error?.localizedDescription ?? "未能解锁，请重试。" }
+            }
         }
     }
 }

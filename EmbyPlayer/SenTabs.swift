@@ -568,7 +568,6 @@ struct SearchTabView: View {
     @State private var text = ""
     @State private var results: [EmbyItem] = []
     @State private var searched = false
-    @State private var searchTask: Task<Void, Never>?
     @State private var history: [String] = UserDefaults.standard.stringArray(forKey: "prefs.searchHistory") ?? []
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
@@ -619,16 +618,16 @@ struct SearchTabView: View {
             }
         }
         .toolbar(.hidden, for: .navigationBar)
-        .onChange(of: text) { _, term in
-            searchTask?.cancel()
-            let trimmed = term.trimmingCharacters(in: .whitespaces)
+        .task(id: text) {
+            let term = text
+            let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmed.isEmpty else { results = []; searched = false; return }
-            searchTask = Task {
-                try? await Task.sleep(for: .milliseconds(350))
-                guard !Task.isCancelled, let client = store.client() else { return }
-                results = (try? await client.search(term: trimmed)) ?? []
-                searched = true
-            }
+            do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+            guard let client = store.client() else { return }
+            let matches = (try? await client.search(term: trimmed)) ?? []
+            guard !Task.isCancelled, text == term else { return }
+            results = matches
+            searched = true
         }
     }
 }
