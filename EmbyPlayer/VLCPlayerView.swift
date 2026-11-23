@@ -563,7 +563,21 @@ struct VLCPlayerView: View {
         .onChange(of: controller.position) { _, position in
             updateActiveSegment(position: position)
         }
-        .sheet(isPresented: $showEpisodePicker) { episodePicker }
+        .overlay(alignment: .trailing) {
+            if showEpisodePicker {
+                GeometryReader { geo in
+                    HStack(spacing: 0) {
+                        Color.clear
+                            .contentShape(Rectangle())
+                            .onTapGesture { showEpisodePicker = false }
+                        episodePanel
+                            .frame(width: geo.size.width * 0.44)
+                    }
+                }
+                .transition(.move(edge: .trailing))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: showEpisodePicker)
         .sheet(isPresented: $showChapters) { chaptersSheet }
         .onDisappear {
             hideTask?.cancel()
@@ -896,50 +910,64 @@ struct VLCPlayerView: View {
         if gestureHint?.hasSuffix("快进中") == true { gestureHint = nil }
     }
 
-    private var episodePicker: some View {
-        NavigationStack {
-            List(seasonEpisodes) { episode in
-                Button {
-                    showEpisodePicker = false
-                    if episode.Id != item.Id { onPlayNext?(episode) }
-                } label: {
-                    HStack(spacing: 12) {
-                        if let client = store.client() {
-                            ItemImage(item: episode, client: client, kind: "Primary")
-                                .frame(width: 96, height: 54)
-                                .clipShape(RoundedRectangle(cornerRadius: 8))
+    /// Episode picker docked to the right side of the player: the video
+    /// keeps playing on the left while he browses (his request).
+    private var episodePanel: some View {
+        VStack(spacing: 0) {
+            HStack {
+                Text(item.SeriesName ?? "选集").font(.headline).foregroundStyle(.white)
+                Spacer()
+                Button { showEpisodePicker = false } label: {
+                    Image(systemName: "xmark").font(.subheadline.bold()).foregroundStyle(.white)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(seasonEpisodes) { episode in
+                        Button {
+                            showEpisodePicker = false
+                            if episode.Id != item.Id { onPlayNext?(episode) }
+                        } label: {
+                            HStack(spacing: 10) {
+                                if let client = store.client() {
+                                    ItemImage(item: episode, client: client, kind: "Primary")
+                                        .frame(width: 72, height: 41)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                                }
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("第 \(episode.IndexNumber ?? 0) 集")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(episode.Id == item.Id ? Color.accentColor : .white)
+                                    Text(episode.Name).font(.caption2)
+                                        .foregroundStyle(.white.opacity(0.6)).lineLimit(1)
+                                }
+                                Spacer()
+                                if episode.Id == item.Id {
+                                    Image(systemName: "play.fill").font(.caption)
+                                        .foregroundStyle(Color.accentColor)
+                                } else if episode.resumeSeconds > 5 {
+                                    Text(formatDuration(episode.resumeSeconds))
+                                        .font(.caption2).foregroundStyle(.white.opacity(0.6))
+                                }
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(episode.Id == item.Id ? Color.white.opacity(0.12) : Color.clear,
+                                        in: RoundedRectangle(cornerRadius: 8))
                         }
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("第 \(episode.IndexNumber ?? 0) 集").font(.subheadline.bold())
-                                .foregroundStyle(.primary)
-                            Text(episode.Name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer()
-                        if episode.Id == item.Id {
-                            Image(systemName: "play.fill").foregroundStyle(Color.accentColor)
-                        } else if episode.resumeSeconds > 5 {
-                            Text(formatDuration(episode.resumeSeconds))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
+                        .buttonStyle(.plain)
                     }
                 }
-                .buttonStyle(.plain)
-            }
-            .navigationTitle(item.SeriesName ?? "选集")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("关闭") { showEpisodePicker = false }
-                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 10)
             }
         }
-        .presentationDetents([.medium, .large])
+        .frame(maxHeight: .infinity)
+        .background(Color.black.opacity(0.85))
     }
 
-    private func fetchSegments() {
-        guard let client = store.client() else { return }
-        Task { segments = await client.mediaSegments(itemID: item.Id) }
-    }
 
     private func updateActiveSegment(position: Double) {
         guard Prefs.skipSegments else {
