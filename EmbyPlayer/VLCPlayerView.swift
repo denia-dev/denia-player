@@ -445,6 +445,10 @@ struct VLCPlayerView: View {
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
     @State private var sleepTask: Task<Void, Never>?
+    // Build 50 layout probe (temporary): real laid-out sizes, read from a
+    // screenshot to localize the torn-chrome bug.
+    @State private var probeRoot: CGSize = .zero
+    @State private var probeBottom: CGSize = .zero
 
     private enum DragMode { case scrub, brightness, volume }
 
@@ -501,6 +505,19 @@ struct VLCPlayerView: View {
             .animation(.easeInOut(duration: 0.25), value: chromeVisible)
             .allowsHitTesting(chromeVisible)
 
+            // Build 50 layout probe label (temporary).
+            VStack {
+                Text("VLC root \(Int(probeRoot.width))x\(Int(probeRoot.height)) bottom \(Int(probeBottom.width))x\(Int(probeBottom.height)) screen \(Int(UIScreen.main.bounds.width))x\(Int(UIScreen.main.bounds.height))")
+                    .font(.caption2.monospaced())
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.red.opacity(0.85), in: Capsule())
+                    .foregroundStyle(.white)
+                Spacer()
+            }
+            .padding(.top, 56)
+            .zIndex(50)
+            .allowsHitTesting(false)
+
             // Loading backdrop (see PlayerView): pretty glass from
             // the first second instead of glass over black.
             Group {
@@ -547,6 +564,13 @@ struct VLCPlayerView: View {
                 }
                 .foregroundStyle(.white)
                 .padding()
+            }
+        }
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { probeRoot = geo.size }
+                    .onChange(of: geo.size) { _, v in probeRoot = v }
             }
         }
         .statusBarHidden(true)
@@ -763,6 +787,13 @@ struct VLCPlayerView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(.white)
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { probeBottom = geo.size }
+                    .onChange(of: geo.size) { _, v in probeBottom = v }
+            }
+        }
     }
 
     private var transportButtons: some View {

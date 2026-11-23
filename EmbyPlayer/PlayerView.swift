@@ -320,6 +320,9 @@ struct MPVPlayerScreen: View {
     @State private var showChapters = false
     @State private var endWatchTask: Task<Void, Never>?
     @State private var sleepTask: Task<Void, Never>?
+    // Build 50 layout probe (temporary).
+    @State private var probeRoot: CGSize = .zero
+    @State private var probeChrome: CGSize = .zero
 
     var body: some View {
         ZStack {
@@ -338,6 +341,26 @@ struct MPVPlayerScreen: View {
                 .opacity(chromeVisible ? 1 : 0)
                 .animation(.easeInOut(duration: 0.25), value: chromeVisible)
                 .allowsHitTesting(chromeVisible)
+                .background {
+                    GeometryReader { geo in
+                        Color.clear
+                            .onAppear { probeChrome = geo.size }
+                            .onChange(of: geo.size) { _, v in probeChrome = v }
+                    }
+                }
+
+            // Build 50 layout probe label (temporary).
+            VStack {
+                Text("MPV root \(Int(probeRoot.width))x\(Int(probeRoot.height)) chrome \(Int(probeChrome.width))x\(Int(probeChrome.height)) screen \(Int(UIScreen.main.bounds.width))x\(Int(UIScreen.main.bounds.height))")
+                    .font(.caption2.monospaced())
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(Color.red.opacity(0.85), in: Capsule())
+                    .foregroundStyle(.white)
+                Spacer()
+            }
+            .padding(.top, 56)
+            .zIndex(50)
+            .allowsHitTesting(false)
 
             if let gestureHint {
                 Text(gestureHint)
@@ -417,6 +440,13 @@ struct MPVPlayerScreen: View {
                 }
                 .foregroundStyle(.white)
                 .padding()
+            }
+        }
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { probeRoot = geo.size }
+                    .onChange(of: geo.size) { _, v in probeRoot = v }
             }
         }
         .statusBarHidden(true)
