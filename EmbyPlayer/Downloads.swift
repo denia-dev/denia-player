@@ -192,7 +192,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         liveActivityLastUpdate[itemID] = now
         downloadSpeeds[itemID] = speed
         guard let activity = liveActivities[itemID] else { return }
-        let fraction = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : 0 = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : 0
+        let fraction = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : 0
         let remaining = speed > 0 && total > bytes ? Int(Double(total - bytes) / speed) : 0
         let state = DownloadActivityAttributes.ContentState(progress: fraction, downloadedBytes: bytes,
             totalBytes: total, bytesPerSecond: speed, remainingSeconds: remaining, status: status)
