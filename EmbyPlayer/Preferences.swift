@@ -383,7 +383,7 @@ struct GesturePrefsView: View {
                     prefsDivider
                     prefsToggleRow("长按倍速播放", isOn: $boost)
                     prefsDivider
-                    prefsMenuRow("长按倍速", value: "\(boostRate, specifier: "%g")×") {
+                    prefsMenuRow("长按倍速", value: String(format: "%g×", boostRate)) {
                         Button("1.5×") { boostRate = 1.5 }
                         Button("2×") { boostRate = 2.0 }
                         Button("3×") { boostRate = 3.0 }

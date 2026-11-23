@@ -734,7 +734,7 @@ struct VLCPlayerView: View {
         guard Prefs.longPressBoost, boostSavedRate == nil, controller.isPlaying else { return }
         boostSavedRate = controller.rate
         controller.setRate(Float(Prefs.boostRate))
-        gestureHint = "\(Prefs.boostRate, specifier: "%g")× 快进中"
+        gestureHint = String(format: "%g× 快进中", Prefs.boostRate)
     }
 
     private func endBoost() {

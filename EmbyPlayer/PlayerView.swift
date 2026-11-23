@@ -485,7 +485,7 @@ struct PlayerView: View {
         guard Prefs.longPressBoost, boostSavedRate == nil, !player.isPaused else { return }
         boostSavedRate = currentRate
         player.setPlaybackRate(Prefs.boostRate)
-        gestureHint = "\(Prefs.boostRate, specifier: "%g")× 快进中"
+        gestureHint = String(format: "%g× 快进中", Prefs.boostRate)
     }
 
     private func endBoost() {
