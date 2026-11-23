@@ -58,6 +58,15 @@ final class DownloadsManager: NSObject, ObservableObject {
     private var session: URLSession!
     private var tasks: [Int: String] = [:]            // taskIdentifier -> itemID
     @Published private(set) var pending: [String: DownloadRecord] = [:] // itemID -> active download skeleton
+    /// Stored snapshot of `pending` for the downloads list. The list reads
+    /// ONLY this array: a plain stored @Published value cannot be lost the
+    /// way a computed view over the dictionary apparently can (build 68
+    /// showed a blank list mid-download while the data was provably there).
+    @Published private(set) var activeList: [DownloadRecord] = []
+
+    func syncActiveList() {
+        activeList = pending.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
     private var pendingContainer: [String: String] = [:]
 
     private var root: URL {
@@ -96,6 +105,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         config.isDiscretionary = false
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 60 * 60 * 12
+        syncActiveList()
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         session.getAllTasks { [weak self] restoredTasks in
             Task { @MainActor in
@@ -186,6 +196,7 @@ final class DownloadsManager: NSObject, ObservableObject {
             fileName: "", posterFileName: nil, sizeBytes: 0, hasPGS: false,
             audioLabels: [], subtitleLabels: [], downloadedAt: Date())
         pending[item.Id] = placeholder
+        syncActiveList()
         // Start the Live Activity NOW, synchronously with the tap, while the
         // app is certainly active. Waiting until the media source resolves
         // lets the request land after the user has locked the phone, where
@@ -225,6 +236,7 @@ final class DownloadsManager: NSObject, ObservableObject {
                     downloadedAt: Date())
                 await MainActor.run {
                     self.pending[item.Id] = skeleton
+                    self.syncActiveList()
                     self.pendingContainer[item.Id] = source.Container ?? "mkv"
                     let task = self.session.downloadTask(with: url)
                     self.tasks[task.taskIdentifier] = item.Id
@@ -245,6 +257,7 @@ final class DownloadsManager: NSObject, ObservableObject {
                         try? data.write(to: self.posterDir.appendingPathComponent(name))
                         await MainActor.run {
                             self.pending[item.Id]?.posterFileName = name
+                            self.syncActiveList()
                             if var existing = self.record(for: item.Id) {
                                 existing.posterFileName = name
                                 self.replace(existing)
@@ -285,6 +298,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
+        syncActiveList()
         pendingContainer[itemID] = nil
         tasks = tasks.filter { $0.value != itemID }
         recoveries[itemID] = nil
@@ -325,6 +339,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
+        syncActiveList()
         pendingContainer[itemID] = nil
         tasks[taskID] = nil
         recoveries[itemID] = nil
@@ -452,9 +467,9 @@ struct DownloadsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if !manager.activeDownloads.isEmpty {
+            if !manager.activeList.isEmpty {
                 Text("正在下载").font(.headline)
-                ForEach(manager.activeDownloads) { record in activeRow(record) }
+                ForEach(manager.activeList) { record in activeRow(record) }
             }
             if manager.records.isEmpty && manager.activeIDs.isEmpty {
                 Text("还没有下载。在详情页点下载按钮，影片会存到本地，没网也能看。")
@@ -474,6 +489,10 @@ struct DownloadsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .padding(.top, 6)
             }
+            // Temporary diagnostic (build 69): what this view actually sees.
+            Text("诊断 A\(manager.activeIDs.count) P\(manager.pending.count) L\(manager.activeList.count) R\(manager.records.count)")
+                .font(.caption2).foregroundStyle(.tertiary)
+                .padding(.top, 10)
         }
         .fullScreenCover(item: $playing) { record in
             PlayerView(item: record.asItem,
