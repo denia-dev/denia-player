@@ -81,6 +81,27 @@ struct EmbyClient {
         try? JSONSerialization.data(withJSONObject: object)
     }
 
+    /// Only reads the server-generated index; never downloads or decodes the media.
+    func seekArchive(itemID: String) async throws -> SeekBIF? {
+        let limit = 24 * 1024 * 1024
+        var req = try makeRequest(path: "/Videos/\(itemID)/index.bif",
+                                  query: [URLQueryItem(name: "Width", value: "320")])
+        req.timeoutInterval = 15
+        req.networkServiceType = .background
+        req.setValue("bytes=0-\(limit - 1)", forHTTPHeaderField: "Range")
+        let (url, response) = try await URLSession.shared.download(for: req)
+        defer { try? FileManager.default.removeItem(at: url) }
+        guard let http = response as? HTTPURLResponse, [200, 206].contains(http.statusCode),
+              let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size >= 72, size <= limit else { return nil }
+        if http.statusCode == 206 {
+            guard let range = http.value(forHTTPHeaderField: "Content-Range"),
+                  range.lowercased() == "bytes 0-\(size - 1)/\(size)" else { return nil }
+        }
+        try Task.checkCancellation()
+        return SeekBIF(try Data(contentsOf: url, options: .mappedIfSafe))
+    }
+
     // MARK: - address normalization
 
     /// Turns whatever the user typed into candidate base URLs, best first.

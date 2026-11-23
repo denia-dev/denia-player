@@ -588,6 +588,12 @@ struct VLCPlayerView: View {
         .onChange(of: controller.position) { _, position in
             updateActiveSegment(position: position)
         }
+        .overlay(alignment: .center) {
+            SeekPreview(itemID: item.Id, client: route.isLocal ? nil : store.client(),
+                        scrubbing: scrubbing, seconds: scrubValue, label: formatDuration(scrubValue))
+                .id(item.Id)
+                .allowsHitTesting(false)
+        }
         .overlay(alignment: .trailing) {
             if showEpisodePicker {
                 GeometryReader { geo in
@@ -752,7 +758,7 @@ struct VLCPlayerView: View {
                             get: { scrubbing ? scrubValue : controller.position },
                             set: { scrubValue = $0 }
                         ), in: 0...max(controller.duration, 1)) { editing in
-                            if editing { scrubbing = true; scrubValue = controller.position }
+                            if editing { hideTask?.cancel(); scrubbing = true; scrubValue = controller.position }
                             else {
                                 controller.seek(to: scrubValue)
                                 scrubbing = false
