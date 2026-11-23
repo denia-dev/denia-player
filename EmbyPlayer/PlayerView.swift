@@ -522,6 +522,12 @@ struct MPVPlayerScreen: View {
         .onAppear {
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
+        .overlay(alignment: .center) {
+            SeekPreview(itemID: item.Id, client: localFileURL != nil ? nil : store.client(),
+                        scrubbing: scrubbing, seconds: scrubValue, label: formatDuration(scrubValue))
+                .id(item.Id)
+                .allowsHitTesting(false)
+        }
         .overlay(alignment: .trailing) {
             if showEpisodePicker {
                 GeometryReader { geo in
@@ -1129,7 +1135,7 @@ struct MPVPlayerScreen: View {
                                 get: { scrubbing ? scrubValue : player.position.secondsValue },
                                 set: { scrubValue = $0 }
                             ), in: 0...max(player.duration.secondsValue, 1)) { editing in
-                                if editing { scrubbing = true; scrubValue = player.position.secondsValue }
+                                if editing { hideTask?.cancel(); scrubbing = true; scrubValue = player.position.secondsValue }
                                 else {
                                     player.seek(to: .seconds(scrubValue))
                                     scrubbing = false
