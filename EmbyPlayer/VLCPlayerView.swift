@@ -1,3 +1,4 @@
+import AVKit
 import AVFoundation
 import MobileVLCKit
 import SwiftUI
@@ -427,6 +428,9 @@ struct VLCPlayerView: View {
     let route: VLCRoute
     let startSeconds: Double
     var onPlayNext: ((EmbyItem) -> Void)?
+    var switchToMPV: ((Double) -> Void)?
+    @State private var confirmHandoff = false
+    @State private var handingOff = false
 
     @StateObject private var controller = VLCPlayerController()
     @State private var chromeVisible = true
@@ -600,11 +604,24 @@ struct VLCPlayerView: View {
         }
         .animation(.easeInOut(duration: 0.25), value: showEpisodePicker)
         .sheet(isPresented: $showChapters) { chaptersSheet }
+        .alert("切换到画中画模式？", isPresented: $confirmHandoff) {
+            Button("继续使用 VLC", role: .cancel) {}
+            Button("切换到 MPV") {
+                guard !handingOff, !Prefs.appLock, Prefs.pictureInPicture, let switchToMPV else { return }
+                let position = controller.directPosition()
+                handingOff = true
+                switchToMPV(position.isFinite && position >= 0 ? position : startSeconds)
+            }
+        } message: {
+            Text("将从当前位置重新打开影片。PGS 图形字幕可能不显示；如有文本字幕，可在字幕菜单中选择。小窗按钮出现后再点它。退出并重开此片即可恢复 VLC。")
+        }
         .onDisappear {
             hideTask?.cancel()
             sleepTask?.cancel()
             let position = controller.directPosition()
-            if route.isLocal {
+            if handingOff {
+                // MPV takes over this same URL and Emby play session.
+            } else if route.isLocal {
                 DownloadsManager.savePosition(position, for: item.Id)
             } else {
                 let client = store.client()
@@ -848,6 +865,9 @@ struct VLCPlayerView: View {
                 } label: { circleLabel("captions.bubble") }
             }
             Menu {
+                if switchToMPV != nil && Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported() {
+                    Button { confirmHandoff = true } label: { Label("用画中画模式播放", systemImage: "pip.enter") }
+                }
                 if let nextEpisode {
                     Button("下一集") { onPlayNext?(nextEpisode) }
                 }

@@ -48,6 +48,8 @@ struct PlayerView: View {
     var localSubtitleLabels: [String] = []
 
     @State private var decision: PlayerDecision?
+    @State private var handoffLaunch: MPVLaunch?
+    @State private var handoffPosition: Double?
     @State private var resolveError: String?
     /// False until the view has actually been laid out in landscape.
     /// The cover presents in portrait and the geometry update rotates a
@@ -76,13 +78,17 @@ struct PlayerView: View {
             } else if let decision {
                 switch decision {
                 case .vlc(let route):
-                    VLCPlayerView(item: item, route: route, startSeconds: startSeconds, onPlayNext: onPlayNext)
-                        .transition(.opacity)
+                    VLCPlayerView(item: item, route: route, startSeconds: startSeconds, onPlayNext: onPlayNext,
+                                  switchToMPV: { position in
+                        guard let launch = handoffLaunch else { return }
+                        handoffPosition = position
+                        decision = .mpv(launch)
+                    })
                 case .mpv(let launch):
-                    MPVPlayerScreen(item: item, startSeconds: startSeconds, onPlayNext: onPlayNext,
+                    MPVPlayerScreen(item: item, startSeconds: handoffPosition ?? startSeconds, onPlayNext: onPlayNext,
                                     localFileURL: localFileURL, localHasPGS: localHasPGS,
                                     localAudioLabels: localAudioLabels, localSubtitleLabels: localSubtitleLabels,
-                                    launch: launch)
+                                    launch: launch, continuingVLCSession: handoffPosition != nil)
                         .transition(.opacity)
                 }
             } else {
@@ -176,6 +182,7 @@ struct PlayerView: View {
     private func resolve() async {
         guard decision == nil else { return }
         if let localFileURL {
+            handoffLaunch = MPVLaunch(url: localFileURL, source: nil, sessionID: nil)
             decision = localHasPGS
                 ? .vlc(VLCRoute(url: localFileURL, sourceID: "", sessionID: nil,
                                 preferredAudioOrdinal: nil,
@@ -204,6 +211,7 @@ struct PlayerView: View {
                 $0.type == "Subtitle" && ($0.Codec ?? "").lowercased().contains("pgs")
             }
             if hasPGS {
+                handoffLaunch = MPVLaunch(url: url, source: source, sessionID: info.PlaySessionId)
                 let audios = (source.MediaStreams ?? [])
                     .filter { $0.type == "Audio" }
                     .sorted { $0.Index < $1.Index }
@@ -310,6 +318,7 @@ struct MPVPlayerScreen: View {
     /// Playback context resolved by the container before this screen
     /// exists, so it never has to ask the server again.
     let launch: MPVLaunch
+    var continuingVLCSession = false
 
     @State private var player = MPVPlayerScreen.makePlayer(videoOutput:
         Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
@@ -547,7 +556,7 @@ struct MPVPlayerScreen: View {
                 let position = player.position.secondsValue
                 Task { await client?.reportStopped(itemID: item.Id, sourceID: session.sourceID, sessionID: session.sessionID, positionSeconds: position) }
             }
-            if localFileURL != nil && !localHasPGS {
+            if localFileURL != nil {
                 DownloadsManager.savePosition(player.position.secondsValue, for: item.Id)
             }
             player.pictureInPicture.stop()
@@ -559,9 +568,7 @@ struct MPVPlayerScreen: View {
 
     private func startPlayback() async {
         if let localFileURL {
-            // Local PGS items never reach this screen (the container
-            // routed them to VLC); a local file here is mpv-playable.
-            player.load(localFileURL, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
+            player.load(localFileURL, startTime: startSeconds > 0 ? .seconds(startSeconds) : nil)
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
             currentRate = Prefs.defaultRate
@@ -579,14 +586,16 @@ struct MPVPlayerScreen: View {
         session = (source.Id, launch.sessionID)
         currentStreamURL = launch.url
         currentSource = source
-        player.load(launch.url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
+        player.load(launch.url, startTime: startSeconds > 0 ? .seconds(startSeconds) : nil)
         player.requestVideoFeatures([.nativeSubtitles])
         player.setSubtitlesVisible(true)
         currentRate = Prefs.defaultRate
         if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
         Task { await prepareSubtitles() }
         Task { await prepareAudio() }
-        await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: launch.sessionID, positionSeconds: startSeconds)
+        if !continuingVLCSession {
+            await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: launch.sessionID, positionSeconds: startSeconds)
+        }
         scheduleHide()
         startSleepTimer()
         fetchNextEpisode()
