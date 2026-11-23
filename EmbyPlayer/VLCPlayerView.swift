@@ -969,6 +969,11 @@ struct VLCPlayerView: View {
     }
 
 
+    private func fetchSegments() {
+        guard let client = store.client() else { return }
+        Task { segments = await client.mediaSegments(itemID: item.Id) }
+    }
+
     private func updateActiveSegment(position: Double) {
         guard Prefs.skipSegments else {
             if activeSegment != nil { activeSegment = nil }

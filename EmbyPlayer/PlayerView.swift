@@ -682,6 +682,42 @@ struct PlayerView: View {
     }
 
 
+    private var chaptersSheet: some View {
+        NavigationStack {
+            List(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                Button {
+                    showChapters = false
+                    player.seek(to: .seconds(chapter.startSeconds))
+                    pokeChrome()
+                } label: {
+                    HStack {
+                        Text(chapter.Name ?? "章节 \(index + 1)").lineLimit(1)
+                        Spacer()
+                        Text(formatDuration(chapter.startSeconds)).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("章节")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") { showChapters = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func fetchChapters() {
+        guard let client = store.client() else { return }
+        Task {
+            guard let full = try? await client.item(id: item.Id) else { return }
+            let list = (full.Chapters ?? []).filter { $0.MarkerType == nil || $0.MarkerType == "Chapter" }
+            if list.count > 1 { chapters = list }
+        }
+    }
+
     private func fetchNextEpisode() {
         guard item.type == "Episode", let seriesID = item.SeriesId,
               let seasonID = item.SeasonId, let client = store.client() else { return }
