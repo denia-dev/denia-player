@@ -52,6 +52,22 @@ enum Prefs {
     static var showSubtitleButton: Bool {
         d.object(forKey: "prefs.showSubtitleButton") == nil ? true : d.bool(forKey: "prefs.showSubtitleButton")
     }
+    /// Seek distance of the centre-cluster and double-tap shortcuts.
+    static var seekStepSeconds: Double {
+        d.object(forKey: "prefs.seekStepSeconds") == nil ? 15 : d.double(forKey: "prefs.seekStepSeconds")
+    }
+    static var defaultRate: Double {
+        d.object(forKey: "prefs.defaultRate") == nil ? 1.0 : d.double(forKey: "prefs.defaultRate")
+    }
+    static var gestureBrightness: Bool {
+        d.object(forKey: "prefs.gestureBrightness") == nil ? true : d.bool(forKey: "prefs.gestureBrightness")
+    }
+    static var gestureVolume: Bool {
+        d.object(forKey: "prefs.gestureVolume") == nil ? true : d.bool(forKey: "prefs.gestureVolume")
+    }
+    static var gestureScrub: Bool {
+        d.object(forKey: "prefs.gestureScrub") == nil ? true : d.bool(forKey: "prefs.gestureScrub")
+    }
 }
 
 // MARK: - Shared settings-page building blocks (SenPlayer-style cards)
@@ -241,6 +257,77 @@ struct ButtonPrefsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("自定义播放器按钮")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 播放设置
+
+struct PlaybackPrefsView: View {
+    @AppStorage("prefs.seekStepSeconds") private var seekStep = 15.0
+    @AppStorage("prefs.defaultRate") private var defaultRate = 1.0
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsMenuRow("快进 / 快退秒数", value: "\(Int(seekStep)) 秒") {
+                        Button("10 秒") { seekStep = 10 }
+                        Button("15 秒") { seekStep = 15 }
+                        Button("30 秒") { seekStep = 30 }
+                    }
+                    prefsDivider
+                    prefsMenuRow("默认播放速度", value: rateLabel) {
+                        Button("0.75×") { defaultRate = 0.75 }
+                        Button("1×") { defaultRate = 1.0 }
+                        Button("1.25×") { defaultRate = 1.25 }
+                        Button("1.5×") { defaultRate = 1.5 }
+                        Button("2×") { defaultRate = 2.0 }
+                    }
+                }
+                Text("快进 / 快退秒数同时作用于播放器中央按钮与双击快进；默认播放速度在每次打开播放器时生效。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("播放设置")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var rateLabel: String {
+        defaultRate == 1.0 ? "1×" : String(format: "%g×", defaultRate)
+    }
+}
+
+// MARK: - 播放手势
+
+struct GesturePrefsView: View {
+    @AppStorage("prefs.gestureBrightness") private var brightness = true
+    @AppStorage("prefs.gestureVolume") private var volume = true
+    @AppStorage("prefs.gestureScrub") private var scrub = true
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsToggleRow("亮度手势（左半屏上下滑）", isOn: $brightness)
+                    prefsDivider
+                    prefsToggleRow("音量手势（右半屏上下滑）", isOn: $volume)
+                    prefsDivider
+                    prefsToggleRow("进度手势（左右滑）", isOn: $scrub)
+                }
+                Text("单击画面显示 / 隐藏控制栏、双击快进快退不受这些开关影响。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("播放手势")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

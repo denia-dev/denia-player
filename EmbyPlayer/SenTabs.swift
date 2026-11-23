@@ -366,12 +366,6 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
 
                 settingsGroup("通用") {
-                    NavigationLink(value: Route.interfacePrefs) {
-                        SettingRowContent(icon: "slider.horizontal.3", color: .indigo, title: "界面偏好",
-                                          value: nil, chevron: true)
-                    }
-                    .buttonStyle(.plain)
-                    Divider().padding(.leading, 58)
                     SettingRow(icon: "server.rack", color: .blue, title: "服务器管理") {
                         showServers = true
                     }
@@ -398,6 +392,26 @@ struct SettingsView: View {
                         URLCache.shared.removeAllCachedResponses()
                         cacheNote = "已清除"
                     }
+                }
+
+                settingsGroup("播放") {
+                    NavigationLink(value: Route.playbackPrefs) {
+                        SettingRowContent(icon: "play.fill", color: .red, title: "播放设置",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.interfacePrefs) {
+                        SettingRowContent(icon: "display", color: .orange, title: "界面偏好",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.gesturePrefs) {
+                        SettingRowContent(icon: "hand.tap.fill", color: .blue, title: "播放手势",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 settingsGroup("关于") {

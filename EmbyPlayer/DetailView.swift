@@ -17,11 +17,6 @@ struct DetailView: View {
     @State private var episodes: [EmbyItem] = []
     @State private var episodeRange = 0
     @State private var playRequest: PlayRequest?
-    // Temporary back-navigation diagnostics (build 26): the badge and
-    // the in-content readout show whether taps reach the action and
-    // what the pop did to the owning stack's depth.
-    @State private var backTaps = 0
-    @State private var lastPopCount: Int?
     @State private var errorText: String?
     @State private var favOverride: Bool?
     @State private var playedOverride: Bool?
@@ -38,7 +33,6 @@ struct DetailView: View {
     private var isPlayed: Bool { playedOverride ?? (current.UserData?.Played ?? false) }
 
     var body: some View {
-        ZStack(alignment: .top) {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 hero
@@ -47,25 +41,6 @@ struct DetailView: View {
                         Text(errorText).foregroundStyle(.red).font(.footnote)
                     }
                     actionsRow
-
-            // Temporary diagnostics (build 26) - removed once the
-            // back button is proven working.
-            VStack(alignment: .leading, spacing: 6) {
-                Text("诊断：返回已点击 \(backTaps) 次 · 弹栈后路径计数 \(lastPopCount.map(String.init) ?? "-")")
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                Button {
-                    backTaps += 1
-                    lastPopCount = onBack()
-                } label: {
-                    Text("返回上一页（诊断按钮）")
-                        .font(.footnote.weight(.semibold))
-                        .padding(.horizontal, 14)
-                        .padding(.vertical, 8)
-                        .background(Color.accentColor.opacity(0.15), in: Capsule())
-                }
-                .buttonStyle(.plain)
-            }
                     if let overview = current.Overview, !overview.isEmpty {
                         Text(overview)
                             .font(.subheadline)
@@ -95,12 +70,35 @@ struct DetailView: View {
         }
         .ignoresSafeArea(edges: .top)
         .background { ambientBackground }
-        topOverlay
-            .padding(.top, 20)
-            .padding(.horizontal)
-        }
-        .toolbar(.hidden, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbar {
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    shell.searchRequested = true
+                    _ = onBack()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                Menu {
+                    Button { togglePlayed() } label: {
+                        Label(isPlayed ? "取消已看" : "标记已看", systemImage: "checkmark.circle")
+                    }
+                    Button { toggleFavorite() } label: {
+                        Label(isFavorite ? "取消收藏" : "收藏", systemImage: "heart")
+                    }
+                    if let target = playTarget {
+                        Button {
+                            playRequest = PlayRequest(item: target, startSeconds: 0)
+                        } label: {
+                            Label("从头播", systemImage: "arrow.counterclockwise")
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                }
+            }
+        }
         .task { await load() }
         .onChange(of: selectedSeasonID) { _, seasonID in
             episodeRange = 0
@@ -130,63 +128,6 @@ struct DetailView: View {
     /// Fixed SenPlayer-style top chrome: a glass back circle on the left,
     /// a glass capsule with search + more on the right. It lives outside
     /// the ScrollView so it can never scroll away.
-    private var topOverlay: some View {
-        HStack(alignment: .top) {
-            Button {
-                backTaps += 1
-                lastPopCount = onBack()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundStyle(.primary)
-                    .frame(width: 40, height: 40)
-                    .glassEffect(.regular.interactive(), in: Circle())
-                    .overlay(alignment: .topTrailing) {
-                        if backTaps > 0 {
-                            Text("\(backTaps)")
-                                .font(.caption2.bold())
-                                .foregroundStyle(.white)
-                                .padding(4)
-                                .background(Color.red, in: Circle())
-                                .offset(x: 5, y: -5)
-                        }
-                    }
-            }
-            .buttonStyle(.plain)
-            Spacer()
-            HStack(spacing: 22) {
-                Button {
-                    shell.searchRequested = true
-                    _ = onBack()
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                        .font(.system(size: 17, weight: .medium))
-                }
-                Menu {
-                    Button { togglePlayed() } label: {
-                        Label(isPlayed ? "取消已看" : "标记已看", systemImage: "checkmark.circle")
-                    }
-                    Button { toggleFavorite() } label: {
-                        Label(isFavorite ? "取消收藏" : "收藏", systemImage: "heart")
-                    }
-                    if let target = playTarget {
-                        Button {
-                            playRequest = PlayRequest(item: target, startSeconds: 0)
-                        } label: {
-                            Label("从头播", systemImage: "arrow.counterclockwise")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 17, weight: .medium))
-                }
-            }
-            .foregroundStyle(.primary)
-            .padding(.horizontal, 18)
-            .padding(.vertical, 11)
-            .glassEffect(.regular.interactive(), in: Capsule())
-        }
-    }
 
     // MARK: - hero
 

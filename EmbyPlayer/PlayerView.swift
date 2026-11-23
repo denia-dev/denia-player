@@ -165,7 +165,7 @@ struct PlayerView: View {
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .onDisappear {
-            if Prefs.playerOrientation != .auto { requestOrientation(.portrait) }
+            requestOrientation(.portrait)
             hideTask?.cancel()
             if Prefs.independentBrightness {
                 Prefs.playerBrightness = Double(UIScreen.main.brightness)
@@ -232,6 +232,7 @@ struct PlayerView: View {
             player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
+            if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
             Task { await prepareSubtitles() }
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
             scheduleHide()
@@ -295,10 +296,14 @@ struct PlayerView: View {
     }
 
     private func requestOrientation(_ mask: UIInterfaceOrientationMask) {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else { return }
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask))
+        AppDelegate.orientationMask = mask
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first else { return }
         scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        guard mask != .all else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
+            AppDelegate.lastOrientationError = "\(error)"
+        }
     }
 
     private func progressLoop() async {
@@ -325,11 +330,11 @@ struct PlayerView: View {
             .overlay {
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { seekBy(-10) }
+                        .onTapGesture(count: 2) { seekBy(-Prefs.seekStepSeconds) }
                     Color.clear.contentShape(Rectangle())
                         .onTapGesture(count: 2) { player.togglePlayback() }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { seekBy(10) }
+                        .onTapGesture(count: 2) { seekBy(Prefs.seekStepSeconds) }
                 }
             }
             .onTapGesture { toggleChrome() }
@@ -345,16 +350,21 @@ struct PlayerView: View {
         let dx = value.translation.width, dy = value.translation.height
         if dragMode == nil {
             if abs(dx) > abs(dy) {
-                dragMode = .scrub
-                dragStartPosition = player.position.secondsValue
-                scrubbing = true
+                if Prefs.gestureScrub {
+                    dragMode = .scrub
+                    dragStartPosition = player.position.secondsValue
+                    scrubbing = true
+                }
             } else {
                 let startX = value.startLocation.x
                 let width = UIScreen.main.bounds.width
-                dragMode = startX < width / 2 ? .brightness : .volume
-                dragStartLevel = dragMode == .brightness
-                    ? Double(UIScreen.main.brightness)
-                    : player.volume / 100
+                let mode: DragMode = startX < width / 2 ? .brightness : .volume
+                if (mode == .brightness && Prefs.gestureBrightness) || (mode == .volume && Prefs.gestureVolume) {
+                    dragMode = mode
+                    dragStartLevel = mode == .brightness
+                        ? Double(UIScreen.main.brightness)
+                        : player.volume / 100
+                }
             }
         }
         switch dragMode {
@@ -473,16 +483,16 @@ struct PlayerView: View {
 
     private var centerCluster: some View {
         HStack(spacing: 30) {
-            clusterButton(icon: "gobackward.15", size: 56) {
-                player.seek(to: .seconds(max(0, player.position.secondsValue - 15)))
+            clusterButton(icon: "gobackward.\(Int(Prefs.seekStepSeconds))", size: 56) {
+                player.seek(to: .seconds(max(0, player.position.secondsValue - Prefs.seekStepSeconds)))
                 pokeChrome()
             }
             clusterButton(icon: player.isPaused ? "play.fill" : "pause.fill", size: 78) {
                 player.togglePlayback()
                 pokeChrome()
             }
-            clusterButton(icon: "goforward.15", size: 56) {
-                player.seek(to: .seconds(min(player.duration.secondsValue, player.position.secondsValue + 15)))
+            clusterButton(icon: "goforward.\(Int(Prefs.seekStepSeconds))", size: 56) {
+                player.seek(to: .seconds(min(player.duration.secondsValue, player.position.secondsValue + Prefs.seekStepSeconds)))
                 pokeChrome()
             }
         }
@@ -566,6 +576,7 @@ struct PlayerView: View {
         lines.append("dropped: decoder=\(diag.decoderDroppedFrames ?? -1) output=\(diag.outputDroppedFrames ?? -1)")
         lines.append("featureResult: \(String(describing: player.videoFeatureRequestResult))")
         lines.append("media: \(String(describing: player.mediaInformation))")
+        lines.append("orientation: pref=\(Prefs.playerOrientation.rawValue) side=\(Prefs.landscapeSide.rawValue) mask=\(AppDelegate.orientationMask.rawValue) error=\(AppDelegate.lastOrientationError ?? "-")")
         for track in player.subtitleTracks {
             lines.append("sub #\(track.mpvID): codec=\(track.codec ?? "-") lang=\(track.language ?? "-") selected=\(track.isSelected) external=\(track.isExternal)")
         }

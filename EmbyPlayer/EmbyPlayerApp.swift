@@ -1,7 +1,23 @@
 import SwiftUI
+import UIKit
+
+/// Owns the app-wide orientation mask. The player widens it on entry
+/// and restores portrait on exit. Routing the mask through the
+/// delegate is what makes rotation stick even when the device's
+/// portrait lock is on - a bare geometry update is refused under
+/// the lock (broken since build 5, reported again on build 26).
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    static var orientationMask: UIInterfaceOrientationMask = .portrait
+    static var lastOrientationError: String?
+
+    func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
+        AppDelegate.orientationMask
+    }
+}
 
 @main
 struct EmbyPlayerApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store = AppStore()
 
     var body: some Scene {
@@ -43,6 +59,8 @@ enum Route: Hashable {
     case interfacePrefs
     case osdPrefs
     case buttonPrefs
+    case playbackPrefs
+    case gesturePrefs
 }
 
 /// The five tab stacks' navigation paths, held in a reference-type
@@ -84,6 +102,10 @@ extension View {
                 OSDPrefsView()
             case .buttonPrefs:
                 ButtonPrefsView()
+            case .playbackPrefs:
+                PlaybackPrefsView()
+            case .gesturePrefs:
+                GesturePrefsView()
             }
         }
     }

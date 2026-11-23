@@ -469,6 +469,7 @@ struct VLCPlayerView: View {
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try? AVAudioSession.sharedInstance().setActive(true)
             controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal)
+            if Prefs.defaultRate != 1.0 { controller.setRate(Float(Prefs.defaultRate)) }
             scheduleHide()
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
@@ -578,16 +579,16 @@ struct VLCPlayerView: View {
 
     private var centerCluster: some View {
         HStack(spacing: 30) {
-            clusterButton(icon: "gobackward.15", size: 56) {
-                controller.seek(to: max(0, controller.position - 15))
+            clusterButton(icon: "gobackward.\(Int(Prefs.seekStepSeconds))", size: 56) {
+                controller.seek(to: max(0, controller.position - Prefs.seekStepSeconds))
                 pokeChrome()
             }
             clusterButton(icon: controller.isPlaying ? "pause.fill" : "play.fill", size: 78) {
                 controller.togglePlay()
                 pokeChrome()
             }
-            clusterButton(icon: "goforward.15", size: 56) {
-                controller.seek(to: min(controller.duration, controller.position + 15))
+            clusterButton(icon: "goforward.\(Int(Prefs.seekStepSeconds))", size: 56) {
+                controller.seek(to: min(controller.duration, controller.position + Prefs.seekStepSeconds))
                 pokeChrome()
             }
         }
@@ -683,11 +684,11 @@ struct VLCPlayerView: View {
             .overlay {
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { controller.seekBy(-10); pokeChrome() }
+                        .onTapGesture(count: 2) { controller.seekBy(-Prefs.seekStepSeconds); pokeChrome() }
                     Color.clear.contentShape(Rectangle())
                         .onTapGesture(count: 2) { controller.togglePlay(); pokeChrome() }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { controller.seekBy(10); pokeChrome() }
+                        .onTapGesture(count: 2) { controller.seekBy(Prefs.seekStepSeconds); pokeChrome() }
                 }
             }
             .onTapGesture { toggleChrome() }
@@ -697,16 +698,21 @@ struct VLCPlayerView: View {
         let dx = value.translation.width, dy = value.translation.height
         if dragMode == nil {
             if abs(dx) > abs(dy) {
-                dragMode = .scrub
-                dragStartPosition = controller.position
-                scrubbing = true
+                if Prefs.gestureScrub {
+                    dragMode = .scrub
+                    dragStartPosition = controller.position
+                    scrubbing = true
+                }
             } else {
                 let startX = value.startLocation.x
                 let width = UIScreen.main.bounds.width
-                dragMode = startX < width / 2 ? .brightness : .volume
-                dragStartLevel = dragMode == .brightness
-                    ? Double(UIScreen.main.brightness)
-                    : controller.volumeLevel
+                let mode: DragMode = startX < width / 2 ? .brightness : .volume
+                if (mode == .brightness && Prefs.gestureBrightness) || (mode == .volume && Prefs.gestureVolume) {
+                    dragMode = mode
+                    dragStartLevel = mode == .brightness
+                        ? Double(UIScreen.main.brightness)
+                        : controller.volumeLevel
+                }
             }
         }
         switch dragMode {
