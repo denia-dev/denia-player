@@ -414,7 +414,9 @@ struct VLCPlayerView: View {
     @StateObject private var controller = VLCPlayerController()
     @State private var chromeVisible = true
     @State private var controlsLocked = false
-    @State private var boostArmTask: Task<Void, Never>?
+    @State private var pressStart: Date?
+    @State private var pressBoosted = false
+    @State private var pressTask: Task<Void, Never>?
     @State private var hideTask: Task<Void, Never>?
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
@@ -425,7 +427,6 @@ struct VLCPlayerView: View {
     @State private var dragStartPosition: Double = 0
     @State private var dragStartLevel: Double = 0
     @State private var boostSavedRate: Float?
-    @GestureState private var boostPressing = false
     @State private var nextEpisode: EmbyItem?
     @State private var segments: [MediaSegment] = []
     @State private var activeSegment: MediaSegment?
@@ -798,34 +799,41 @@ struct VLCPlayerView: View {
                     .onEnded { _ in if !controlsLocked { handleDragEnd() } }
             )
             .onTapGesture { toggleChrome() }
-            .simultaneousGesture(boostGesture)
-            .onChange(of: boostPressing) { _, pressing in
-                // The gesture's value means "a finger is down", NOT
-                // "the hold time was met" - it flips true at
-                // touch-down, which is why taps flashed the boost
-                // hint (builds 33-38). The arm timer is the real
-                // gate: boost engages only after a continuous
-                // 2-second press, by construction.
-                boostArmTask?.cancel()
-                if pressing {
-                    boostArmTask = Task { @MainActor in
-                        try? await Task.sleep(for: .seconds(2.0))
-                        guard !Task.isCancelled else { return }
-                        startBoost()
-                    }
-                } else {
-                    endBoost()
-                }
-            }
+            .simultaneousGesture(pressTracker)
     }
 
-    // Press-and-hold boost via @GestureState: the state resets when
-    // the gesture ends, fails or is cancelled, so the rate can never
-    // stick (build 30's onEnded was skipped when a drag attempt
-    // failed the press mid-way, leaving the boost on forever).
-    private var boostGesture: some Gesture {
-        LongPressGesture(minimumDuration: 2.0, maximumDistance: 12)
-            .updating($boostPressing) { value, state, _ in state = value }
+    // Press-and-hold boost, tracked from the raw touch stream: a
+    // zero-distance drag sees every touch, and a 2-second timer
+    // started at touch-down is the only path to engaging. Movement
+    // past 10pt (a real drag) or lifting the finger cancels the
+    // timer and restores the rate. The LongPressGesture machinery
+    // this replaces fired on taps in builds 33-38 and then never
+    // fired at all in build 39 - its state resets in this gesture
+    // composition for reasons outside our control, so it is gone.
+    private var pressTracker: some Gesture {
+        DragGesture(minimumDistance: 0, coordinateSpace: .local)
+            .onChanged { value in
+                if pressStart == nil {
+                    pressStart = value.time
+                    pressTask?.cancel()
+                    pressTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(2.0))
+                        guard !Task.isCancelled, pressStart != nil, !pressBoosted else { return }
+                        pressBoosted = true
+                        startBoost()
+                    }
+                }
+                if abs(value.translation.width) + abs(value.translation.height) > 10 {
+                    pressTask?.cancel()
+                    pressStart = nil
+                    if pressBoosted { pressBoosted = false; endBoost() }
+                }
+            }
+            .onEnded { _ in
+                pressTask?.cancel()
+                pressStart = nil
+                if pressBoosted { pressBoosted = false; endBoost() }
+            }
     }
 
     private func startBoost() {

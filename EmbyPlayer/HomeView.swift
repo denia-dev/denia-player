@@ -120,11 +120,12 @@ struct HomeView: View {
 
                 HStack(spacing: 6) {
                     ForEach(heroItems.indices, id: \.self) { index in
-                        Circle()
-                            .fill(index == heroIndex ? Color.primary : Color.secondary.opacity(0.35))
-                            .frame(width: 7, height: 7)
+                        Capsule()
+                            .fill(index == heroIndex ? Color.accentColor : Color.secondary.opacity(0.35))
+                            .frame(width: index == heroIndex ? 18 : 7, height: 7)
                     }
                 }
+                .animation(.easeInOut(duration: 0.25), value: heroIndex)
                 .padding(.horizontal, 9)
                 .padding(.vertical, 5)
                 .glassEffect(.regular, in: Capsule())
