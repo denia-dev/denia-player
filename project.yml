@@ -19,6 +19,7 @@ targets:
     info:
       path: Info.plist
       properties:
+        UIBackgroundModes: [audio]
         NSFaceIDUsageDescription: 用于验证身份并解锁 Denia Player。
         CFBundleDisplayName: Denia Player
         CFBundleShortVersionString: "$(MARKETING_VERSION)"

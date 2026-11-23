@@ -1,3 +1,4 @@
+import AVKit
 import MPVUI
 import SwiftUI
 import UIKit
@@ -310,7 +311,10 @@ struct MPVPlayerScreen: View {
     /// exists, so it never has to ask the server again.
     let launch: MPVLaunch
 
-    @State private var player = MPVPlayerScreen.makePlayer(videoOutput: .metal)
+    @State private var player = MPVPlayerScreen.makePlayer(videoOutput:
+        Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
+            ? .sampleBuffer : .metal)
+    @Environment(\.scenePhase) private var playbackScenePhase
     @State private var playerGeneration = 0
     @State private var currentStreamURL: URL?
     @State private var currentSource: EmbyMediaSource?
@@ -412,6 +416,16 @@ struct MPVPlayerScreen: View {
                             .glassEffect(.regular.interactive(), in: Circle())
                             .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
                     }
+                    if player.pictureInPicture.isPossible && !Prefs.appLock {
+                        Button { player.pictureInPicture.start() } label: {
+                            Image(systemName: "pip.enter")
+                                .frame(width: 44, height: 44)
+                                .foregroundStyle(.white)
+                                .glassEffect(.regular.interactive(), in: Circle())
+                        }
+                        .accessibilityLabel("进入画中画")
+                        .disabled(player.pictureInPicture.isActive || player.pictureInPicture.isTransitioning)
+                    }
                     Spacer()
                 }
                 Spacer()
@@ -494,6 +508,15 @@ struct MPVPlayerScreen: View {
                 }
             }
         }
+        // Keep the full-screen cover and the same player mounted during PiP.
+        // MPVUI restores the attached surface; only an actual dismissal tears it down.
+        .onChange(of: playbackScenePhase) { _, phase in
+            if phase == .background, !player.pictureInPicture.isActive,
+               !player.pictureInPicture.isTransitioning { player.pause() }
+        }
+        .onChange(of: player.pictureInPicture.isActive) { wasActive, active in
+            if wasActive && !active && playbackScenePhase == .background { player.pause() }
+        }
         .task { await startPlayback() }
         .task { await progressLoop() }
         .onAppear {
@@ -527,6 +550,7 @@ struct MPVPlayerScreen: View {
             if localFileURL != nil && !localHasPGS {
                 DownloadsManager.savePosition(player.position.secondsValue, for: item.Id)
             }
+            player.pictureInPicture.stop()
             player.stop()
         }
     }
