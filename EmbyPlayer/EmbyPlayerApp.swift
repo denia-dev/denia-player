@@ -10,6 +10,17 @@ import LocalAuthentication
 final class AppDelegate: NSObject, UIApplicationDelegate {
     static var orientationMask: UIInterfaceOrientationMask = .portrait
     static var lastOrientationError: String?
+    private var backgroundSessionCompletion: ((String, () -> Void))?
+
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        guard identifier == "com.denia.embyplayer.media-downloads" else { completionHandler(); return }
+        backgroundSessionCompletion = (identifier, completionHandler)
+        DownloadsManager.shared.handleBackgroundEvents { [weak self] in
+            self?.backgroundSessionCompletion?.1()
+            self?.backgroundSessionCompletion = nil
+        }
+    }
 
     func application(_ application: UIApplication, supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         AppDelegate.orientationMask

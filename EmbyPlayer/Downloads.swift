@@ -31,6 +31,13 @@ struct DownloadRecord: Codable, Identifiable, Hashable {
     }
 }
 
+struct DownloadRecovery: Codable {
+    var itemID: String
+    var skeleton: DownloadRecord
+    var container: String?
+    var taskID: Int
+}
+
 @MainActor
 final class DownloadsManager: NSObject, ObservableObject {
     static let shared = DownloadsManager()
@@ -38,11 +45,17 @@ final class DownloadsManager: NSObject, ObservableObject {
     @Published private(set) var records: [DownloadRecord] = []
     @Published private(set) var progress: [String: Double] = [:]
     @Published private(set) var activeIDs: Set<String> = []
+    @Published private(set) var failures: [String: String] = [:]
+
+    private let failuresKey = "denia.download.failures.v1"
+    private let recoveriesKey = "denia.download.recoveries.v1"
+    private var recoveries: [String: DownloadRecovery] = [:]
+    private var backgroundEventsCompletion: (() -> Void)?
 
     private var session: URLSession!
     private var tasks: [Int: String] = [:]            // taskIdentifier -> itemID
     private var pending: [String: DownloadRecord] = [:] // itemID -> record skeleton
-    private var pendingSource: [String: EmbyMediaSource] = [:]
+    private var pendingContainer: [String: String] = [:]
 
     private var root: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -62,10 +75,34 @@ final class DownloadsManager: NSObject, ObservableObject {
             // Drop records whose media file vanished.
             records = saved.filter { FileManager.default.fileExists(atPath: mediaDir.appendingPathComponent($0.fileName).path) }
         }
-        let config = URLSessionConfiguration.default
+        failures = UserDefaults.standard.dictionary(forKey: failuresKey) as? [String: String] ?? [:]
+        if let data = UserDefaults.standard.data(forKey: recoveriesKey),
+           let saved = try? JSONDecoder().decode([DownloadRecovery].self, from: data) {
+            for recovery in saved where !isDownloaded(recovery.itemID) {
+                recoveries[recovery.itemID] = recovery
+                pending[recovery.itemID] = recovery.skeleton
+                pendingContainer[recovery.itemID] = recovery.container ?? "mkv"
+                tasks[recovery.taskID] = recovery.itemID
+                activeIDs.insert(recovery.itemID)
+                progress[recovery.itemID] = 0
+            }
+        }
+        cleanupOrphans()
+        let config = URLSessionConfiguration.background(withIdentifier: "com.denia.embyplayer.media-downloads")
+        config.sessionSendsLaunchEvents = true
+        config.isDiscretionary = false
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 60 * 60 * 12
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        session.getAllTasks { [weak self] restoredTasks in
+            Task { @MainActor in
+                guard let self else { return }
+                let live = Set(restoredTasks.map(\.taskIdentifier))
+                for (itemID, recovery) in self.recoveries where !live.contains(recovery.taskID) {
+                    self.finishWithFailure(itemID, message: "下载中断；点下载按钮可重新开始。")
+                }
+            }
+        }
     }
 
     // MARK: lookups
@@ -88,18 +125,55 @@ final class DownloadsManager: NSObject, ObservableObject {
 
     // MARK: enqueue / cancel / delete
 
-    /// Resolves the same direct-play source the player would use, then
-    /// downloads it. Safe to call for items already downloaded/downloading.
+    private func cleanupOrphans() {
+        let indexed = Set(records.map(\.fileName))
+        guard let files = try? FileManager.default.contentsOfDirectory(at: mediaDir, includingPropertiesForKeys: nil) else { return }
+        for file in files where !indexed.contains(file.lastPathComponent) {
+            try? FileManager.default.removeItem(at: file)
+        }
+    }
+
+    func handleBackgroundEvents(completion: @escaping () -> Void) {
+        backgroundEventsCompletion = completion
+    }
+
+    fileprivate func backgroundEventsFinished() {
+        backgroundEventsCompletion?()
+        backgroundEventsCompletion = nil
+    }
+
+    private func saveRecoveries() {
+        let data = try? JSONEncoder().encode(Array(recoveries.values))
+        UserDefaults.standard.set(data, forKey: recoveriesKey)
+    }
+
+    private func saveFailures() {
+        UserDefaults.standard.set(failures, forKey: failuresKey)
+    }
+
+    func failure(for itemID: String) -> String? { failures[itemID] }
+
+    /// Resolves the media source first; refuses to start if it would leave
+    /// less than 512 MiB free. The error remains visible and retryable.
     func enqueue(item: EmbyItem, client: EmbyClient) {
         guard !isDownloaded(item.Id), !isDownloading(item.Id) else { return }
         activeIDs.insert(item.Id)
+        failures[item.Id] = nil
+        saveFailures()
         progress[item.Id] = 0
         Task {
             do {
                 let info = try await client.playbackInfo(itemID: item.Id, startSeconds: 0)
+                guard self.activeIDs.contains(item.Id), !Task.isCancelled else { return }
                 guard let source = info.MediaSources.first(where: { $0.SupportsDirectPlay == true }) ?? info.MediaSources.first,
                       let url = client.directStreamURL(itemID: item.Id, source: source, sessionID: info.PlaySessionId) else {
-                    await MainActor.run { self.finishWithFailure(item.Id) }
+                    await MainActor.run { self.finishWithFailure(item.Id, message: "无法取得可下载的媒体源，请检查服务器连接后重试。") }
+                    return
+                }
+                if let expected = source.Size, expected > 0,
+                   let available = try? root.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage,
+                   expected > available - 512 * 1024 * 1024 {
+                    finishWithFailure(item.Id, message: "空间不足：影片约需 \(ByteCountFormatter.string(fromByteCount: expected, countStyle: .file))，设备需至少保留 512 MB 空间。清理后点此重试。")
                     return
                 }
                 let streams = source.MediaStreams ?? []
@@ -121,9 +195,13 @@ final class DownloadsManager: NSObject, ObservableObject {
                     downloadedAt: Date())
                 await MainActor.run {
                     self.pending[item.Id] = skeleton
-                    self.pendingSource[item.Id] = source
+                    self.pendingContainer[item.Id] = source.Container ?? "mkv"
                     let task = self.session.downloadTask(with: url)
                     self.tasks[task.taskIdentifier] = item.Id
+                    let recovery = DownloadRecovery(itemID: item.Id, skeleton: skeleton,
+                                                    container: source.Container ?? "mkv", taskID: task.taskIdentifier)
+                    self.recoveries[item.Id] = recovery
+                    self.saveRecoveries()
                     task.resume()
                 }
                 // Poster alongside, best effort.
@@ -141,7 +219,7 @@ final class DownloadsManager: NSObject, ObservableObject {
                     }
                 }
             } catch {
-                await MainActor.run { self.finishWithFailure(item.Id) }
+                await MainActor.run { self.finishWithFailure(item.Id, message: error.localizedDescription) }
             }
         }
     }
@@ -150,25 +228,31 @@ final class DownloadsManager: NSObject, ObservableObject {
         for (tid, id) in tasks where id == itemID {
             session.getAllTasks { all in all.first { $0.taskIdentifier == tid }?.cancel() }
         }
-        finishWithFailure(itemID)
+        finishWithFailure(itemID, message: nil)
     }
 
     func delete(_ record: DownloadRecord) {
         try? FileManager.default.removeItem(at: localURL(for: record))
         if let poster = posterURL(for: record) { try? FileManager.default.removeItem(at: poster) }
         records.removeAll { $0.id == record.id }
+        failures[record.id] = nil
+        saveFailures()
         UserDefaults.standard.removeObject(forKey: "dl.pos.\(record.id)")
         persist()
     }
 
     // MARK: internals
 
-    private func finishWithFailure(_ itemID: String) {
+    private func finishWithFailure(_ itemID: String, message: String? = "下载失败，请检查网络后重试。") {
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
-        pendingSource[itemID] = nil
+        pendingContainer[itemID] = nil
         tasks = tasks.filter { $0.value != itemID }
+        recoveries[itemID] = nil
+        saveRecoveries()
+        failures[itemID] = message
+        saveFailures()
     }
 
     private func replace(_ record: DownloadRecord) {
@@ -185,7 +269,7 @@ final class DownloadsManager: NSObject, ObservableObject {
     fileprivate func downloadFinished(taskID: Int, tempURL: URL) {
         defer { try? FileManager.default.removeItem(at: tempURL) }
         guard let itemID = tasks[taskID], var skeleton = pending[itemID] else { return }
-        let ext = pendingSource[itemID]?.Container ?? "mkv"
+        let ext = pendingContainer[itemID] ?? "mkv"
         let fileName = itemID + "." + ext
         let destination = mediaDir.appendingPathComponent(fileName)
         try? FileManager.default.removeItem(at: destination)
@@ -201,8 +285,12 @@ final class DownloadsManager: NSObject, ObservableObject {
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
-        pendingSource[itemID] = nil
+        pendingContainer[itemID] = nil
         tasks[taskID] = nil
+        recoveries[itemID] = nil
+        saveRecoveries()
+        failures[itemID] = nil
+        saveFailures()
     }
 
     fileprivate func downloadFailed(taskID: Int) {
@@ -217,6 +305,10 @@ final class DownloadsManager: NSObject, ObservableObject {
 }
 
 extension DownloadsManager: URLSessionDownloadDelegate {
+    nonisolated func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        Task { @MainActor in self.backgroundEventsFinished() }
+    }
+
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didFinishDownloadingTo location: URL) {
         let tid = downloadTask.taskIdentifier
@@ -258,6 +350,7 @@ struct DownloadButton: View {
     var mini: Bool = false
     @Environment(AppStore.self) private var store
     @ObservedObject private var manager = DownloadsManager.shared
+    @State private var showFailure = false
 
     var body: some View {
         Group {
@@ -274,6 +367,10 @@ struct DownloadButton: View {
                     Image(systemName: "stop.fill").font(.system(size: 7)).foregroundStyle(.white)
                 }
                 .onTapGesture { manager.cancel(itemID: item.Id) }
+            } else if manager.failure(for: item.Id) != nil {
+                Button { showFailure = true } label: {
+                    Image(systemName: "exclamationmark.arrow.circlepath").foregroundStyle(.orange)
+                }
             } else {
                 Button {
                     if let client = store.client() { manager.enqueue(item: item, client: client) }
@@ -286,6 +383,12 @@ struct DownloadButton: View {
         .frame(width: mini ? 28 : 44, height: mini ? 28 : 44)
         .background(mini ? Color.black.opacity(0.45) : Color.primary.opacity(0.06), in: Circle())
         .foregroundStyle(mini ? .white : .primary)
+        .alert("下载未完成", isPresented: $showFailure) {
+            Button("稍后", role: .cancel) {}
+            Button("重试下载") { if let client = store.client() { manager.enqueue(item: item, client: client) } }
+        } message: {
+            Text(manager.failure(for: item.Id) ?? "下载失败，请检查连接后重试。")
+        }
     }
 }
 
