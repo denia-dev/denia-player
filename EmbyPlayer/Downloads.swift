@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import ActivityKit
 
 // MARK: - offline downloads
 //
@@ -46,11 +47,15 @@ final class DownloadsManager: NSObject, ObservableObject {
     @Published private(set) var progress: [String: Double] = [:]
     @Published private(set) var activeIDs: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
+    @Published private(set) var downloadSpeeds: [String: Double] = [:]
 
     private let failuresKey = "denia.download.failures.v1"
     private let recoveriesKey = "denia.download.recoveries.v1"
     private var recoveries: [String: DownloadRecovery] = [:]
     private var backgroundEventsCompletion: (() -> Void)?
+    private var liveActivities: [String: Activity<DownloadActivityAttributes>] = [:]
+    private var liveActivityLastUpdate: [String: Date] = [:]
+    private var liveActivityByteSample: [String: (date: Date, bytes: Int64)] = [:]
 
     private var session: URLSession!
     private var tasks: [Int: String] = [:]            // taskIdentifier -> itemID
@@ -94,10 +99,16 @@ final class DownloadsManager: NSObject, ObservableObject {
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 60 * 60 * 12
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        for activity in Activity<DownloadActivityAttributes>.activities {
+            liveActivities[activity.attributes.itemID] = activity
+        }
         session.getAllTasks { [weak self] restoredTasks in
             Task { @MainActor in
                 guard let self else { return }
                 let live = Set(restoredTasks.map(\.taskIdentifier))
+                for task in restoredTasks {
+                    if self.tasks[task.taskIdentifier] != nil { task.resume() }
+                }
                 for (itemID, recovery) in self.recoveries where !live.contains(recovery.taskID) {
                     self.finishWithFailure(itemID, message: "下载中断；点下载按钮可重新开始。")
                 }
@@ -115,6 +126,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         record.posterFileName.map { posterDir.appendingPathComponent($0) }
     }
     var totalBytes: Int64 { records.reduce(0) { $0 + $1.sizeBytes } }
+    var activeDownloads: [DownloadRecord] { pending.values.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } }
 
     static func savedPosition(for itemID: String) -> Double {
         UserDefaults.standard.double(forKey: "dl.pos.\(itemID)")
@@ -153,6 +165,55 @@ final class DownloadsManager: NSObject, ObservableObject {
 
     func failure(for itemID: String) -> String? { failures[itemID] }
 
+    private func beginLiveActivity(for recovery: DownloadRecovery) async {
+        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let activity: Activity<DownloadActivityAttributes>
+        if let existing = Activity<DownloadActivityAttributes>.activities.first(where: { $0.attributes.itemID == recovery.itemID }) {
+            activity = existing
+        } else {
+            let attributes = DownloadActivityAttributes(itemID: recovery.itemID, title: recovery.skeleton.episodeTitle)
+            let state = DownloadActivityAttributes.ContentState(progress: 0, downloadedBytes: 0,
+                totalBytes: recovery.skeleton.sizeBytes, bytesPerSecond: 0, remainingSeconds: 0, status: "下载中")
+            do {
+                activity = try Activity.request(attributes: attributes,
+                    content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60)), pushType: nil)
+            } catch { return }
+        }
+        liveActivities[recovery.itemID] = activity
+    }
+
+    private func updateLiveActivity(itemID: String, bytes: Int64, total: Int64, status: String = "下载中") {
+        let now = Date()
+        guard status != "下载中" || now.timeIntervalSince(liveActivityLastUpdate[itemID] ?? .distantPast) >= 1 else { return }
+        let sample = liveActivityByteSample[itemID]
+        let elapsed = sample.map { now.timeIntervalSince($0.date) } ?? 0
+        let speed = elapsed > 0.25 ? Double(max(0, bytes - (sample?.bytes ?? bytes))) / elapsed : 0
+        liveActivityByteSample[itemID] = (now, bytes)
+        liveActivityLastUpdate[itemID] = now
+        downloadSpeeds[itemID] = speed
+        guard let activity = liveActivities[itemID] else { return }
+        let fraction = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : 0 = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : 0
+        let remaining = speed > 0 && total > bytes ? Int(Double(total - bytes) / speed) : 0
+        let state = DownloadActivityAttributes.ContentState(progress: fraction, downloadedBytes: bytes,
+            totalBytes: total, bytesPerSecond: speed, remainingSeconds: remaining, status: status)
+        Task { await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60))) }
+    }
+
+    private func endLiveActivity(itemID: String, status: String, bytes: Int64 = 0, total: Int64 = 0) {
+        let activity = liveActivities.removeValue(forKey: itemID)
+            ?? Activity<DownloadActivityAttributes>.activities.first { $0.attributes.itemID == itemID }
+        guard let activity else { return }
+        let fraction = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : (status == "已完成" ? 1 : 0)
+        let state = DownloadActivityAttributes.ContentState(progress: fraction, downloadedBytes: bytes,
+            totalBytes: total, bytesPerSecond: 0, remainingSeconds: 0, status: status)
+        liveActivityByteSample[itemID] = nil
+        liveActivityLastUpdate[itemID] = nil
+        Task {
+            await activity.end(ActivityContent(state: state, staleDate: nil),
+                dismissalPolicy: .after(Date().addingTimeInterval(status == "已完成" ? 300 : 900)))
+        }
+    }
+
     /// Resolves the media source first; refuses to start if it would leave
     /// less than 512 MiB free. The error remains visible and retryable.
     func enqueue(item: EmbyItem, client: EmbyClient) {
@@ -186,7 +247,7 @@ final class DownloadsManager: NSObject, ObservableObject {
                     indexNumber: item.IndexNumber,
                     overview: item.Overview,
                     runtimeSeconds: item.RunTimeTicks.map { Double($0) / 10_000_000 } ?? 0,
-                    fileName: "", posterFileName: nil, sizeBytes: 0,
+                    fileName: "", posterFileName: nil, sizeBytes: source.Size ?? 0,
                     hasPGS: streams.contains { $0.type == "Subtitle" && ($0.Codec ?? "").lowercased().contains("pgs") },
                     audioLabels: streams.filter { $0.type == "Audio" }.sorted { $0.Index < $1.Index }
                         .map { $0.DisplayTitle ?? $0.Codec ?? "音轨" },
@@ -202,7 +263,10 @@ final class DownloadsManager: NSObject, ObservableObject {
                                                     container: source.Container ?? "mkv", taskID: task.taskIdentifier)
                     self.recoveries[item.Id] = recovery
                     self.saveRecoveries()
-                    task.resume()
+                    Task {
+                        await self.beginLiveActivity(for: recovery)
+                        task.resume()
+                    }
                 }
                 // Poster alongside, best effort.
                 if let poster = client.imageURL(itemID: item.Id, kind: "Primary", maxHeight: 480) {
@@ -244,6 +308,11 @@ final class DownloadsManager: NSObject, ObservableObject {
     // MARK: internals
 
     private func finishWithFailure(_ itemID: String, message: String? = "下载失败，请检查网络后重试。") {
+        let downloaded = liveActivityByteSample[itemID]?.bytes ?? 0
+        let expected = pending[itemID]?.sizeBytes ?? 0
+        endLiveActivity(itemID: itemID, status: message == nil ? "已取消" : "失败",
+                        bytes: downloaded, total: expected)
+        downloadSpeeds[itemID] = nil
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
@@ -282,6 +351,8 @@ final class DownloadsManager: NSObject, ObservableObject {
         records.removeAll { $0.id == itemID }
         records.append(skeleton)
         persist()
+        endLiveActivity(itemID: itemID, status: "已完成", bytes: skeleton.sizeBytes, total: skeleton.sizeBytes)
+        downloadSpeeds[itemID] = nil
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
@@ -298,9 +369,11 @@ final class DownloadsManager: NSObject, ObservableObject {
         finishWithFailure(itemID)
     }
 
-    fileprivate func downloadProgress(taskID: Int, fraction: Double) {
+    fileprivate func downloadProgress(taskID: Int, fraction: Double, bytes: Int64, expected: Int64) {
         guard let itemID = tasks[taskID] else { return }
         progress[itemID] = fraction
+        let total = expected > 0 ? expected : (pending[itemID]?.sizeBytes ?? 0)
+        updateLiveActivity(itemID: itemID, bytes: bytes, total: total)
     }
 }
 
@@ -330,10 +403,12 @@ extension DownloadsManager: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didWriteData bytesWritten: Int64, totalBytesWritten: Int64,
                                 totalBytesExpectedToWrite: Int64) {
-        guard totalBytesExpectedToWrite > 0 else { return }
-        let fraction = Double(totalBytesWritten) / Double(totalBytesExpectedToWrite)
+        let fraction = totalBytesExpectedToWrite > 0 ? Double(totalBytesWritten) / Double(totalBytesExpectedToWrite) : 0
         let tid = downloadTask.taskIdentifier
-        Task { @MainActor in self.downloadProgress(taskID: tid, fraction: fraction) }
+        Task { @MainActor in
+            self.downloadProgress(taskID: tid, fraction: fraction,
+                                  bytes: totalBytesWritten, expected: totalBytesExpectedToWrite)
+        }
     }
 
     nonisolated func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
@@ -407,6 +482,10 @@ struct DownloadsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
+            if !manager.activeDownloads.isEmpty {
+                Text("正在下载").font(.headline)
+                ForEach(manager.activeDownloads) { record in activeRow(record) }
+            }
             if manager.records.isEmpty && manager.activeIDs.isEmpty {
                 Text("还没有下载。在详情页点下载按钮，影片会存到本地，没网也能看。")
                     .font(.subheadline).foregroundStyle(.secondary)
@@ -454,6 +533,34 @@ struct DownloadsView: View {
             }
             Button(role: .destructive) { manager.delete(record) } label: {
                 Image(systemName: "trash").font(.body)
+            }
+        }
+        .padding(10)
+        .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private func activeRow(_ record: DownloadRecord) -> some View {
+        let fraction = manager.progress[record.id] ?? 0
+        let speed = manager.downloadSpeeds[record.id] ?? 0
+        return HStack(spacing: 12) {
+            poster(record).frame(width: 96, height: 54)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(record.episodeTitle).font(.subheadline.weight(.medium)).lineLimit(1)
+                ProgressView(value: fraction > 0 ? fraction : nil)
+                HStack {
+                    Text(record.sizeBytes > 0
+                         ? "\(Int(fraction * 100))% · \(ByteCountFormatter.string(fromByteCount: Int64(Double(record.sizeBytes) * fraction), countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: record.sizeBytes, countStyle: .file))"
+                         : "正在接收数据…")
+                    Spacer(minLength: 4)
+                    if speed > 0 {
+                        let remaining = record.sizeBytes > 0 ? Int(Double(record.sizeBytes) * (1 - fraction) / speed) : 0
+                        Text(remaining > 0 ? "剩余 \(formatDLTime(Double(remaining)))" : "\(ByteCountFormatter.string(fromByteCount: Int64(speed), countStyle: .file))/秒")
+                    }
+                }.font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Button(role: .destructive) { manager.cancel(itemID: record.id) } label: {
+                Image(systemName: "xmark.circle.fill").font(.title3)
             }
         }
         .padding(10)
