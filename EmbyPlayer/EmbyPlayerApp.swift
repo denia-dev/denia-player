@@ -24,22 +24,98 @@ struct RootView: View {
     }
 }
 
+/// SenPlayer-style shell: five tabs, each with its own navigation stack,
+/// under one floating glass capsule bar. The capsule only shows on tab
+/// roots (it hides while a detail/library page is pushed).
 struct MainView: View {
-    @Environment(AppStore.self) private var store
-    @State private var showServers = false
+    @State private var tab = 0
+    @State private var path0 = NavigationPath()
+    @State private var path1 = NavigationPath()
+    @State private var path2 = NavigationPath()
+    @State private var path3 = NavigationPath()
+    @State private var path4 = NavigationPath()
+
+    private var activeDepth: Int {
+        switch tab {
+        case 0: return path0.count
+        case 1: return path1.count
+        case 2: return path2.count
+        case 3: return path3.count
+        default: return path4.count
+        }
+    }
 
     var body: some View {
-        NavigationStack {
-            HomeView()
-                .navigationTitle(store.activeServer?.name ?? "EmbyPlayer")
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button { showServers = true } label: {
-                            Image(systemName: "server.rack")
+        ZStack(alignment: .bottom) {
+            ZStack {
+                NavigationStack(path: $path0) { HomeView() }
+                    .opacity(tab == 0 ? 1 : 0)
+                    .allowsHitTesting(tab == 0)
+                NavigationStack(path: $path1) { LibrariesTabView() }
+                    .opacity(tab == 1 ? 1 : 0)
+                    .allowsHitTesting(tab == 1)
+                NavigationStack(path: $path2) { RecordsView() }
+                    .opacity(tab == 2 ? 1 : 0)
+                    .allowsHitTesting(tab == 2)
+                NavigationStack(path: $path3) { SettingsView() }
+                    .opacity(tab == 3 ? 1 : 0)
+                    .allowsHitTesting(tab == 3)
+                NavigationStack(path: $path4) { SearchTabView() }
+                    .opacity(tab == 4 ? 1 : 0)
+                    .allowsHitTesting(tab == 4)
+            }
+
+            if activeDepth == 0 {
+                CapsuleTabBar(tab: $tab)
+                    .padding(.horizontal, 14)
+                    .padding(.bottom, 6)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.22), value: activeDepth == 0)
+    }
+}
+
+struct CapsuleTabBar: View {
+    @Binding var tab: Int
+
+    private let items: [(icon: String, filled: String, label: String)] = [
+        ("play.rectangle", "play.rectangle.fill", "首页"),
+        ("externaldrive", "externaldrive.fill", "资源库"),
+        ("person.text.rectangle", "person.text.rectangle.fill", "记录"),
+        ("gearshape", "gearshape.fill", "设置"),
+        ("magnifyingglass", "magnifyingglass", "搜索"),
+    ]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(items.indices, id: \.self) { index in
+                let selected = tab == index
+                Button {
+                    tab = index
+                } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: selected ? items[index].filled : items[index].icon)
+                            .font(.system(size: 20))
+                        Text(items[index].label)
+                            .font(.system(size: 10))
+                    }
+                    .foregroundStyle(selected ? Color.blue : Color.primary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 7)
+                    .background {
+                        if selected {
+                            Capsule().fill(Color(.systemGray5))
                         }
                     }
                 }
-                .sheet(isPresented: $showServers) { ServersView() }
+                .buttonStyle(.plain)
+            }
         }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .background(.ultraThinMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+        .shadow(color: .black.opacity(0.13), radius: 16, y: 6)
     }
 }

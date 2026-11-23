@@ -535,11 +535,11 @@ struct VLCPlayerView: View {
 
             Spacer()
 
-            HStack(spacing: 14) {
-                Button { controller.togglePlay(); pokeChrome() } label: {
-                    Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title2)
-                }
+            centerCluster
+
+            Spacer()
+
+            HStack(spacing: 10) {
                 Text(formatDuration(scrubbing ? scrubValue : controller.position))
                     .font(.caption.monospacedDigit())
                 Slider(value: Binding(
@@ -557,7 +557,11 @@ struct VLCPlayerView: View {
                 Text(formatDuration(controller.duration))
                     .font(.caption.monospacedDigit())
             }
-            .padding(.horizontal)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 9)
+            .background(.ultraThinMaterial, in: Capsule())
+            .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+            .padding(.horizontal, 12)
             .padding(.bottom, 10)
         }
         .foregroundStyle(.white)
@@ -566,6 +570,36 @@ struct VLCPlayerView: View {
                            startPoint: .top, endPoint: .bottom)
                 .allowsHitTesting(false)
         )
+    }
+
+    private var centerCluster: some View {
+        HStack(spacing: 30) {
+            clusterButton(icon: "gobackward.15", size: 56) {
+                controller.seek(to: max(0, controller.position - 15))
+                pokeChrome()
+            }
+            clusterButton(icon: controller.isPlaying ? "pause.fill" : "play.fill", size: 78) {
+                controller.togglePlay()
+                pokeChrome()
+            }
+            clusterButton(icon: "goforward.15", size: 56) {
+                controller.seek(to: min(controller.duration, controller.position + 15))
+                pokeChrome()
+            }
+        }
+    }
+
+    private func clusterButton(icon: String, size: CGFloat, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: size * 0.38, weight: .semibold))
+                .foregroundStyle(.white)
+                .frame(width: size, height: size)
+                .background(.ultraThinMaterial, in: Circle())
+                .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+        }
+        .buttonStyle(.plain)
     }
 
     private var trackMenus: some View {

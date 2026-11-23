@@ -56,6 +56,10 @@ struct EmbyItem: Decodable, Identifiable {
     let ProductionYear: Int?
     let RunTimeTicks: Int64?
     let ChildCount: Int?
+    let Genres: [String]?
+    let CommunityRating: Double?
+    let PremiereDate: String?
+    let People: [EmbyPerson]?
     let ImageTags: [String: String]?
     let BackdropImageTags: [String]?
     let UserData: EmbyUserData?
@@ -75,6 +79,19 @@ struct EmbyItem: Decodable, Identifiable {
         let s = ParentIndexNumber ?? 0
         let e = IndexNumber ?? 0
         return "S\(s) E\(e)"
+    }
+}
+
+struct EmbyPerson: Decodable, Identifiable {
+    let Id: String
+    var id: String { Id }
+    let Name: String
+    let Role: String?
+    let type: String?
+
+    enum CodingKeys: String, CodingKey {
+        case Id, Name, Role
+        case type = "Type"
     }
 }
 
@@ -109,7 +126,13 @@ struct EmbyMediaStream: Decodable {
         case Index
         case type = "Type"
         case Codec, Language, DisplayTitle, IsDefault, IsExternal, IsTextSubtitleStream, DeliveryUrl
+        case Width, Height, BitRate, Channels, SampleRate
     }
+    let Width: Int?
+    let Height: Int?
+    let BitRate: Int?
+    let Channels: Int?
+    let SampleRate: Int?
     let Codec: String?
     let Language: String?
     let DisplayTitle: String?

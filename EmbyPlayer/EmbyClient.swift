@@ -218,6 +218,54 @@ struct EmbyClient {
         return response.Items
     }
 
+    func latestItems() async throws -> [EmbyItem] {
+        let query = [
+            URLQueryItem(name: "Limit", value: "12"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
+            URLQueryItem(name: "Fields", value: "Overview"),
+            URLQueryItem(name: "EnableUserData", value: "true"),
+        ]
+        return try await send(makeRequest(path: "/Users/\(server.userID)/Items/Latest", query: query))
+    }
+
+    func favoriteItems() async throws -> [EmbyItem] {
+        let query = [
+            URLQueryItem(name: "IsFavorite", value: "true"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series,Episode"),
+            URLQueryItem(name: "Limit", value: "60"),
+            URLQueryItem(name: "Fields", value: "Overview"),
+        ]
+        let response: EmbyItemsResponse = try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+        return response.Items
+    }
+
+    func historyItems() async throws -> [EmbyItem] {
+        let query = [
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Filters", value: "IsPlayed"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Episode"),
+            URLQueryItem(name: "SortBy", value: "DatePlayed"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "Limit", value: "24"),
+            URLQueryItem(name: "Fields", value: "Overview"),
+        ]
+        let response: EmbyItemsResponse = try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+        return response.Items
+    }
+
+    func setFavorite(itemID: String, _ favorite: Bool) async {
+        let request = try? makeRequest(path: "/Users/\(server.userID)/FavoriteItems/\(itemID)",
+                                       method: favorite ? "POST" : "DELETE")
+        if let request { try? await sendVoid(request) }
+    }
+
+    func setPlayed(itemID: String, _ played: Bool) async {
+        let request = try? makeRequest(path: "/Users/\(server.userID)/PlayedItems/\(itemID)",
+                                       method: played ? "POST" : "DELETE")
+        if let request { try? await sendVoid(request) }
+    }
+
     // MARK: - images
 
     func imageURL(itemID: String, kind: String = "Primary", maxHeight: Int = 640) -> URL? {

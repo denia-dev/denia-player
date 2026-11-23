@@ -18,79 +18,208 @@ struct ItemImage: View {
     }
 }
 
+/// Backdrop when the item has one, poster otherwise (wide cards).
+func wideImageKind(_ item: EmbyItem) -> String {
+    (item.BackdropImageTags?.isEmpty == false) ? "Backdrop" : "Primary"
+}
+
 struct HomeView: View {
     @Environment(AppStore.self) private var store
     @State private var libraries: [EmbyItem] = []
     @State private var resume: [EmbyItem] = []
+    @State private var latest: [EmbyItem] = []
+    @State private var heroIndex = 0
+    @State private var showServers = false
     @State private var errorText: String?
+
+    private var heroItems: [EmbyItem] { latest.isEmpty ? resume : latest }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
+            VStack(alignment: .leading, spacing: 26) {
+                hero
                 if let errorText {
                     Text(errorText).foregroundStyle(.red).font(.footnote).padding(.horizontal)
                 }
                 if !resume.isEmpty, let client = store.client() {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("继续观看").font(.title3.bold()).padding(.horizontal)
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(alignment: .top, spacing: 12) {
-                                ForEach(resume) { item in
-                                    NavigationLink { DetailView(item: item) } label: {
-                                        VStack(alignment: .leading, spacing: 6) {
-                                            ItemImage(item: item, client: client)
-                                                .frame(width: 150, height: 84)
-                                                .clipShape(RoundedRectangle(cornerRadius: 10))
-                                                .overlay(alignment: .bottom) {
-                                                    if item.durationSeconds > 0 {
-                                                        ProgressView(value: item.resumeSeconds, total: item.durationSeconds)
-                                                            .tint(.white)
-                                                            .padding(.horizontal, 6)
-                                                            .padding(.bottom, 4)
-                                                    }
-                                                }
-                                            Text(item.Name).font(.caption).lineLimit(1).frame(width: 150, alignment: .leading)
-                                            if let series = item.SeriesName {
-                                                Text(series).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                                            }
-                                        }
-                                    }
-                                    .buttonStyle(.plain)
-                                }
-                            }
-                            .padding(.horizontal)
-                        }
-                    }
-                }
-                if let client = store.client() {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("媒体库").font(.title3.bold()).padding(.horizontal)
-                        LazyVStack(spacing: 10) {
-                            ForEach(libraries) { library in
-                                NavigationLink { LibraryView(library: library) } label: {
-                                    HStack(spacing: 14) {
-                                        ItemImage(item: library, client: client)
-                                            .frame(width: 64, height: 64)
-                                            .clipShape(RoundedRectangle(cornerRadius: 12))
-                                        Text(library.Name).font(.headline)
-                                        Spacer()
-                                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                                    }
-                                    .padding(.horizontal)
-                                    .padding(.vertical, 6)
-                                    .background(RoundedRectangle(cornerRadius: 16).fill(.quaternary.opacity(0.5)))
-                                    .padding(.horizontal)
+                    sectionHeader("继续观看", count: resume.count)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 14) {
+                            ForEach(resume) { item in
+                                NavigationLink { DetailView(item: item) } label: {
+                                    WideCard(item: item, client: client)
+                                        .frame(width: 292)
                                 }
                                 .buttonStyle(.plain)
                             }
                         }
+                        .padding(.horizontal)
+                    }
+                }
+                if !libraries.isEmpty, let client = store.client() {
+                    sectionHeader("我的媒体库", count: nil)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(libraries) { library in
+                                NavigationLink { LibraryView(library: library) } label: {
+                                    VStack(alignment: .leading, spacing: 6) {
+                                        ItemImage(item: library, client: client)
+                                            .frame(width: 104, height: 156)
+                                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                                        Text(library.Name).font(.caption).lineLimit(1)
+                                            .frame(width: 104, alignment: .leading)
+                                    }
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal)
+                    }
+                }
+                if !latest.isEmpty, let client = store.client() {
+                    sectionHeader("最新添加", count: nil)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(alignment: .top, spacing: 12) {
+                            ForEach(latest) { item in
+                                NavigationLink { DetailView(item: item) } label: {
+                                    PosterCell(item: item, client: client, width: 104)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        .padding(.horizontal)
                     }
                 }
             }
-            .padding(.vertical)
+            .padding(.bottom, 92)
         }
+        .ignoresSafeArea(edges: .top)
+        .toolbar(.hidden, for: .navigationBar)
         .refreshable { await load() }
         .task { await load() }
+        .task { await heroAutoAdvance() }
+        .sheet(isPresented: $showServers) { ServersView() }
+    }
+
+    // MARK: - hero
+
+    private var hero: some View {
+        ZStack(alignment: .bottom) {
+            if let client = store.client(), !heroItems.isEmpty {
+                TabView(selection: $heroIndex) {
+                    ForEach(Array(heroItems.enumerated()), id: \.element.Id) { index, item in
+                        NavigationLink { DetailView(item: item) } label: {
+                            heroCell(item, client: client)
+                        }
+                        .buttonStyle(.plain)
+                        .tag(index)
+                    }
+                }
+                .tabViewStyle(.page(indexDisplayMode: .never))
+                .frame(height: 496)
+
+                HStack(spacing: 6) {
+                    ForEach(heroItems.indices, id: \.self) { index in
+                        Circle()
+                            .fill(index == heroIndex ? Color.primary : Color.secondary.opacity(0.35))
+                            .frame(width: 7, height: 7)
+                    }
+                }
+                .padding(.bottom, 10)
+            } else {
+                Rectangle().fill(.quaternary).frame(height: 300)
+            }
+
+            VStack {
+                HStack {
+                    Button { showServers = true } label: {
+                        HStack(spacing: 8) {
+                            RoundedRectangle(cornerRadius: 7)
+                                .fill(Color.green)
+                                .frame(width: 30, height: 30)
+                                .overlay(Image(systemName: "play.fill").font(.system(size: 13)).foregroundStyle(.white))
+                            Text(store.activeServer?.name ?? "")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.primary)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(.ultraThinMaterial, in: Capsule())
+                        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                }
+                Spacer()
+            }
+            .padding(.horizontal)
+            .padding(.top, 58)
+        }
+        .frame(height: 496)
+    }
+
+    private func heroCell(_ item: EmbyItem, client: EmbyClient) -> some View {
+        ZStack(alignment: .bottom) {
+            ItemImage(item: item, client: client, kind: wideImageKind(item))
+                .frame(maxWidth: .infinity)
+                .frame(height: 496)
+                .clipped()
+            LinearGradient(colors: [.clear, .clear, Color(.systemBackground).opacity(0.75), Color(.systemBackground)],
+                           startPoint: .top, endPoint: .bottom)
+            VStack(spacing: 8) {
+                if item.ImageTags?["Logo"] != nil {
+                    AsyncImage(url: client.imageURL(itemID: item.Id, kind: "Logo")) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFit()
+                        }
+                    }
+                    .frame(maxWidth: 280, maxHeight: 84)
+                } else {
+                    Text(item.Name)
+                        .font(.system(size: 27, weight: .bold))
+                        .multilineTextAlignment(.center)
+                        .lineLimit(2)
+                }
+                HStack(spacing: 8) {
+                    if let year = item.ProductionYear { Text(String(year)) }
+                    Text(item.type == "Series" ? "剧集" : "电影")
+                    if let rating = item.CommunityRating {
+                        Label(String(format: "%.1f", rating), systemImage: "star.fill")
+                    }
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(.secondary)
+                if let overview = item.Overview, !overview.isEmpty {
+                    Text(overview)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.center)
+                }
+            }
+            .padding(.horizontal, 28)
+            .padding(.bottom, 30)
+        }
+    }
+
+    private func sectionHeader(_ title: String, count: Int?) -> some View {
+        HStack {
+            Text(title).font(.title3.bold())
+            Spacer()
+            if let count {
+                Text("\(count)").foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.footnote.bold()).foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal)
+    }
+
+    private func heroAutoAdvance() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(6))
+            guard !heroItems.isEmpty else { continue }
+            withAnimation { heroIndex = (heroIndex + 1) % heroItems.count }
+        }
     }
 
     private func load() async {
@@ -99,6 +228,7 @@ struct HomeView: View {
         do {
             libraries = try await client.libraries()
             resume = try await client.resumeItems()
+            latest = (try? await client.latestItems()) ?? []
         } catch {
             errorText = error.localizedDescription
         }
