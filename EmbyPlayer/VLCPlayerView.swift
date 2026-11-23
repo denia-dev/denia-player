@@ -149,8 +149,8 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         let stalled = Date().timeIntervalSince(lastAdvanceAt) > 1.0
         isBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
         isPlaying = !userPaused && state != .ended && state != .error
-        if state == .ended { hasEnded = true }
             && (state == .playing || !stalled || state == .buffering)
+        if state == .ended { hasEnded = true }
         postReloadMaintenance(state: state)
         let sampleAudio = player.currentAudioTrackIndex
         let sampleSub = player.currentVideoSubTitleIndex
