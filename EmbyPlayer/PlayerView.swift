@@ -79,11 +79,7 @@ struct PlayerView: View {
                 switch decision {
                 case .vlc(let route):
                     VLCPlayerView(item: item, route: route, startSeconds: startSeconds, onPlayNext: onPlayNext,
-                                  switchToMPV: { position in
-                        guard let launch = handoffLaunch else { return }
-                        handoffPosition = position
-                        decision = .mpv(launch)
-                    })
+                                  switchToMPV: { position in performHandoff(position) })
                 case .mpv(let launch):
                     MPVPlayerScreen(item: item, startSeconds: handoffPosition ?? startSeconds, onPlayNext: onPlayNext,
                                     localFileURL: localFileURL, localHasPGS: localHasPGS,
@@ -179,6 +175,16 @@ struct PlayerView: View {
     }
 
     /// Decide the engine before any surface exists.
+    /// VLC → MPV handoff for PiP (GPT's branch had this inline in the
+    /// switch closure, where `decision` is the shadowed `if let` constant
+    /// and cannot be assigned - CI build 63 caught it). The MPV screen
+    /// inherits the position and the same Emby play session.
+    private func performHandoff(_ position: Double) {
+        guard let launch = handoffLaunch else { return }
+        handoffPosition = position
+        decision = .mpv(launch)
+    }
+
     private func resolve() async {
         guard decision == nil else { return }
         if let localFileURL {
