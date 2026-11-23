@@ -97,7 +97,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         session.getAllTasks { [weak self] restoredTasks in
             Task { @MainActor in
                 guard let self else { return }
-                let live = Set(restoredTasks.map(\\.taskIdentifier))
+                let live = Set(restoredTasks.map(\.taskIdentifier))
                 for (itemID, recovery) in self.recoveries where !live.contains(recovery.taskID) {
                     self.finishWithFailure(itemID, message: "下载中断；点下载按钮可重新开始。")
                 }
