@@ -101,6 +101,7 @@ struct EmbyUserData: Decodable {
     let PlayedPercentage: Double?
     let Played: Bool?
     let IsFavorite: Bool?
+    let UnplayedItemCount: Int?
 }
 
 struct EmbyMediaSource: Decodable, Identifiable {

@@ -69,9 +69,20 @@ struct PosterCell: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            ItemImage(item: item, client: client)
-                .modifier(PosterFrame(width: width))
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+            ZStack(alignment: .topTrailing) {
+                ItemImage(item: item, client: client)
+                    .modifier(PosterFrame(width: width))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                if item.type == "Series", let unplayed = item.UserData?.UnplayedItemCount, unplayed > 0 {
+                    Text("\(unplayed) 集未看")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.accentColor, in: Capsule())
+                        .padding(6)
+                }
+            }
             Text(item.Name).font(.caption).lineLimit(1)
                 .frame(width: width, alignment: .leading)
             if let year = item.ProductionYear {

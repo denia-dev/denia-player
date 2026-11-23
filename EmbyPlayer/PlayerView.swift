@@ -62,6 +62,7 @@ struct PlayerView: View {
     }
 
     @State private var chromeVisible = true
+    @State private var controlsLocked = false
     @State private var hideTask: Task<Void, Never>?
     @State private var loadError: String?
     @State private var session: (sourceID: String, sessionID: String?)?
@@ -509,17 +510,17 @@ struct PlayerView: View {
             .overlay {
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { seekBy(-Prefs.seekStepSeconds) }
+                        .onTapGesture(count: 2) { if !controlsLocked { seekBy(-Prefs.seekStepSeconds) } }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { player.togglePlayback() }
+                        .onTapGesture(count: 2) { if !controlsLocked { player.togglePlayback() } }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { seekBy(Prefs.seekStepSeconds) }
+                        .onTapGesture(count: 2) { if !controlsLocked { seekBy(Prefs.seekStepSeconds) } }
                 }
             }
             .gesture(
                 DragGesture(minimumDistance: 12)
-                    .onChanged { value in handleDrag(value) }
-                    .onEnded { value in handleDragEnd(value) }
+                    .onChanged { value in if !controlsLocked { handleDrag(value) } }
+                    .onEnded { value in if !controlsLocked { handleDragEnd(value) } }
             )
             .onTapGesture { toggleChrome() }
             .simultaneousGesture(boostGesture)
@@ -538,7 +539,7 @@ struct PlayerView: View {
     }
 
     private func startBoost() {
-        guard Prefs.longPressBoost, boostSavedRate == nil, !player.isPaused else { return }
+        guard Prefs.longPressBoost, boostSavedRate == nil, !player.isPaused, !controlsLocked else { return }
         boostSavedRate = currentRate
         player.setPlaybackRate(Prefs.boostRate)
         gestureHint = String(format: "%g× 快进中", Prefs.boostRate)
@@ -729,6 +730,12 @@ struct PlayerView: View {
             HStack(spacing: 14) {
                 // The always-on close button sits at the top-left; leave room.
                 Color.clear.frame(width: 34, height: 1)
+                if controlsLocked {
+                    Spacer()
+                    Button { controlsLocked = false; pokeChrome() } label: {
+                        Image(systemName: "lock.fill").font(.title3)
+                    }
+                } else {
                 if Prefs.showTitleInPlayer {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.Name).font(.subheadline.bold()).lineLimit(1)
@@ -744,12 +751,17 @@ struct PlayerView: View {
                 }
                 }
                 trackMenus
+                Button { controlsLocked = true; pokeChrome() } label: {
+                    Image(systemName: "lock.open").font(.title3)
+                }
+                }
             }
             .padding(.horizontal)
             .padding(.top, 8)
 
             Spacer()
 
+            if !controlsLocked {
             centerCluster
 
             Spacer()
@@ -785,6 +797,7 @@ struct PlayerView: View {
             }
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
+            }
         }
         .foregroundStyle(.white)
         .background(

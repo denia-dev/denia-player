@@ -413,6 +413,7 @@ struct VLCPlayerView: View {
 
     @StateObject private var controller = VLCPlayerController()
     @State private var chromeVisible = true
+    @State private var controlsLocked = false
     @State private var hideTask: Task<Void, Never>?
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
@@ -604,6 +605,12 @@ struct VLCPlayerView: View {
         VStack {
             HStack(spacing: 12) {
                 Spacer().frame(width: 34)
+                if controlsLocked {
+                    Spacer()
+                    Button { controlsLocked = false; pokeChrome() } label: {
+                        Image(systemName: "lock.fill").font(.title3)
+                    }
+                } else {
                 if Prefs.showTitleInPlayer {
                     Text(item.Name ?? "")
                         .font(.headline)
@@ -611,12 +618,17 @@ struct VLCPlayerView: View {
                 }
                 Spacer()
                 trackMenus
+                Button { controlsLocked = true; pokeChrome() } label: {
+                    Image(systemName: "lock.open").font(.title3)
+                }
+                }
             }
             .padding(.horizontal)
             .padding(.top, 10)
 
             Spacer()
 
+            if !controlsLocked {
             centerCluster
 
             Spacer()
@@ -647,6 +659,7 @@ struct VLCPlayerView: View {
             .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
+            }
         }
         .foregroundStyle(.white)
         .background(
@@ -771,17 +784,17 @@ struct VLCPlayerView: View {
             .overlay {
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { controller.seekBy(-Prefs.seekStepSeconds); pokeChrome() }
+                        .onTapGesture(count: 2) { if !controlsLocked { controller.seekBy(-Prefs.seekStepSeconds); pokeChrome() } }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { controller.togglePlay(); pokeChrome() }
+                        .onTapGesture(count: 2) { if !controlsLocked { controller.togglePlay(); pokeChrome() } }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { controller.seekBy(Prefs.seekStepSeconds); pokeChrome() }
+                        .onTapGesture(count: 2) { if !controlsLocked { controller.seekBy(Prefs.seekStepSeconds); pokeChrome() } }
                 }
             }
             .gesture(
                 DragGesture(minimumDistance: 12)
-                    .onChanged { value in handleDrag(value) }
-                    .onEnded { _ in handleDragEnd() }
+                    .onChanged { value in if !controlsLocked { handleDrag(value) } }
+                    .onEnded { _ in if !controlsLocked { handleDragEnd() } }
             )
             .onTapGesture { toggleChrome() }
             .simultaneousGesture(boostGesture)
@@ -800,7 +813,7 @@ struct VLCPlayerView: View {
     }
 
     private func startBoost() {
-        guard Prefs.longPressBoost, boostSavedRate == nil, controller.isPlaying else { return }
+        guard Prefs.longPressBoost, boostSavedRate == nil, controller.isPlaying, !controlsLocked else { return }
         boostSavedRate = controller.rate
         controller.setRate(Float(Prefs.boostRate))
         gestureHint = String(format: "%g× 快进中", Prefs.boostRate)
