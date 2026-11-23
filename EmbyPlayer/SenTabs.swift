@@ -452,6 +452,14 @@ struct SettingsView: View {
                     .buttonStyle(.plain)
                 }
 
+                settingsGroup("数据") {
+                    NavigationLink(value: Route.cachePrefs) {
+                        SettingRowContent(icon: "internaldrive.fill", color: .brown, title: "缓存管理",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                }
+
                 settingsGroup("关于") {
                     SettingRowContent(icon: "info.circle", color: .gray, title: "版本", value: "1.0", chevron: false)
                     Divider().padding(.leading, 58)

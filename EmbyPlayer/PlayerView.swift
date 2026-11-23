@@ -74,6 +74,8 @@ struct PlayerView: View {
     @State private var boostSavedRate: Double?
     @GestureState private var boostPressing = false
     @State private var nextEpisode: EmbyItem?
+    @State private var seasonEpisodes: [EmbyItem] = []
+    @State private var showEpisodePicker = false
     @State private var endWatchTask: Task<Void, Never>?
     @State private var sleepTask: Task<Void, Never>?
 
@@ -191,6 +193,7 @@ struct PlayerView: View {
             applyEntryOrientation()
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
+        .sheet(isPresented: $showEpisodePicker) { episodePicker }
         .onDisappear {
             requestOrientation(.portrait)
             hideTask?.cancel()
@@ -506,7 +509,7 @@ struct PlayerView: View {
     // stick (build 30's onEnded was skipped when a drag attempt
     // failed the press mid-way, leaving the boost on forever).
     private var boostGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.8, maximumDistance: 12)
+        LongPressGesture(minimumDuration: 2.0, maximumDistance: 12)
             .updating($boostPressing) { _, state, _ in state = true }
     }
 
@@ -524,12 +527,53 @@ struct PlayerView: View {
         if gestureHint?.hasSuffix("快进中") == true { gestureHint = nil }
     }
 
+    private var episodePicker: some View {
+        NavigationStack {
+            List(seasonEpisodes) { episode in
+                Button {
+                    showEpisodePicker = false
+                    if episode.Id != item.Id { onPlayNext?(episode) }
+                } label: {
+                    HStack(spacing: 12) {
+                        if let client = store.client() {
+                            ItemImage(item: episode, client: client, kind: "Primary")
+                                .frame(width: 96, height: 54)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("第 \(episode.IndexNumber ?? 0) 集").font(.subheadline.bold())
+                                .foregroundStyle(.primary)
+                            Text(episode.Name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        Spacer()
+                        if episode.Id == item.Id {
+                            Image(systemName: "play.fill").foregroundStyle(Color.accentColor)
+                        } else if episode.resumeSeconds > 5 {
+                            Text(formatDuration(episode.resumeSeconds))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle(item.SeriesName ?? "选集")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") { showEpisodePicker = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
     private func fetchNextEpisode() {
         guard item.type == "Episode", let seriesID = item.SeriesId,
               let seasonID = item.SeasonId, let client = store.client() else { return }
         Task {
             guard let episodes = try? await client.episodes(seriesID: seriesID, seasonID: seasonID) else { return }
             let sorted = episodes.sorted { ($0.IndexNumber ?? 0) < ($1.IndexNumber ?? 0) }
+            seasonEpisodes = sorted
             if let index = sorted.firstIndex(where: { $0.Id == item.Id }), index + 1 < sorted.count {
                 nextEpisode = sorted[index + 1]
             }
@@ -729,6 +773,11 @@ struct PlayerView: View {
 
     private var trackMenus: some View {
         HStack(spacing: 14) {
+            if seasonEpisodes.count > 1 {
+                Button { showEpisodePicker = true } label: {
+                    Image(systemName: "list.bullet").font(.title3)
+                }
+            }
             if let nextEpisode {
                 Button { onPlayNext?(nextEpisode) } label: {
                     Image(systemName: "forward.end.fill").font(.title3)

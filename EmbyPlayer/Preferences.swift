@@ -666,3 +666,56 @@ struct PrivacyPrefsView: View {
         .navigationBarTitleDisplayMode(.inline)
     }
 }
+
+
+// MARK: - 缓存管理
+
+struct CachePrefsView: View {
+    @State private var usageText = "计算中…"
+    @State private var cleared = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    HStack {
+                        Text("图片缓存")
+                        Spacer()
+                        Text(usageText).foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 54)
+                }
+                prefsCard {
+                    Button(role: .destructive) {
+                        URLCache.shared.removeAllCachedResponses()
+                        cleared = true
+                        refreshUsage()
+                    } label: {
+                        HStack { Spacer(); Text("清除图片缓存"); Spacer() }
+                            .padding(.horizontal, 20)
+                            .frame(minHeight: 54)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+                if cleared {
+                    Text("已清除，下次打开页面时会重新加载图片。")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                }
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("缓存管理")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { refreshUsage() }
+    }
+
+    private func refreshUsage() {
+        let bytes = URLCache.shared.currentDiskUsage + URLCache.shared.currentMemoryUsage
+        usageText = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+}
