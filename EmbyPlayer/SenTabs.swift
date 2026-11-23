@@ -124,8 +124,7 @@ struct LibrariesTabView: View {
                     .foregroundStyle(.primary)
                     .padding(.horizontal, 16)
                     .padding(.vertical, 9)
-                    .background(.ultraThinMaterial, in: Capsule())
-                    .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
+                    .glassEffect(.regular, in: Capsule())
                 }
 
                 LazyVGrid(columns: columns, spacing: 14) {
@@ -220,6 +219,7 @@ struct LibrariesTabView: View {
 
 struct RecordsView: View {
     @Environment(AppStore.self) private var store
+    @Namespace private var segmentGlass
     @State private var segment = 1
     @State private var resume: [EmbyItem] = []
     @State private var favorites: [EmbyItem] = []
@@ -232,23 +232,32 @@ struct RecordsView: View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
                 Spacer()
-                HStack(spacing: 2) {
-                    ForEach(Array(["通用", "观看", "收藏"].enumerated()), id: \.offset) { index, label in
-                        Button { segment = index } label: {
-                            Text(label)
-                                .font(.subheadline.weight(segment == index ? .semibold : .regular))
-                                .padding(.horizontal, 26)
-                                .padding(.vertical, 8)
-                                .background {
-                                    if segment == index { Capsule().fill(Color(.systemGray5)) }
-                                }
+                GlassEffectContainer(spacing: 2) {
+                    HStack(spacing: 2) {
+                        ForEach(Array(["通用", "观看", "收藏"].enumerated()), id: \.offset) { index, label in
+                            Button {
+                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { segment = index }
+                            } label: {
+                                Text(label)
+                                    .font(.subheadline.weight(segment == index ? .semibold : .regular))
+                                    .padding(.horizontal, 26)
+                                    .padding(.vertical, 8)
+                                    .background {
+                                        if segment == index {
+                                            Color.clear
+                                                .glassEffect(.regular.tint(Color(.systemGray5).opacity(0.6)), in: Capsule())
+                                                .glassEffectID("segmentSelection", in: segmentGlass)
+                                        }
+                                    }
+                            }
+                            .buttonStyle(.plain)
                         }
-                        .buttonStyle(.plain)
+                    }
+                    .padding(3)
+                    .background {
+                        Color.clear.glassEffect(.regular, in: Capsule())
                     }
                 }
-                .padding(3)
-                .background(.ultraThinMaterial, in: Capsule())
-                .shadow(color: .black.opacity(0.08), radius: 8, y: 3)
                 Spacer()
             }
             .padding(.top, 8)

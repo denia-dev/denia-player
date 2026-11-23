@@ -8,7 +8,6 @@ struct PlayRequest: Identifiable {
 
 struct DetailView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     let item: EmbyItem
     @State private var detail: EmbyItem?
     @State private var seasons: [EmbyItem] = []
@@ -63,7 +62,17 @@ struct DetailView: View {
             }
         }
         .ignoresSafeArea(edges: .top)
-        .toolbar(.hidden, for: .navigationBar)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbarBackground(.hidden, for: .navigationBar)
+        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { toggleFavorite() } label: {
+                    Image(systemName: isFavorite ? "heart.fill" : "heart")
+                        .foregroundStyle(isFavorite ? Color.red : Color.white)
+                }
+            }
+        }
         .task { await load() }
         .onChange(of: selectedSeasonID) { _, seasonID in
             episodeRange = 0
@@ -114,32 +123,6 @@ struct DetailView: View {
             .padding(.horizontal, 24)
             .padding(.bottom, 6)
 
-            VStack {
-                HStack {
-                    Button { dismiss() } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.primary)
-                            .frame(width: 38, height: 38)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                    Button { toggleFavorite() } label: {
-                        Image(systemName: isFavorite ? "heart.fill" : "heart")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(isFavorite ? .red : .primary)
-                            .frame(width: 38, height: 38)
-                            .background(.ultraThinMaterial, in: Circle())
-                            .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.top, 56)
         }
         .frame(height: 478)
     }

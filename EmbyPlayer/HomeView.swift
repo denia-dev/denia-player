@@ -144,8 +144,7 @@ struct HomeView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 7)
-                        .background(.ultraThinMaterial, in: Capsule())
-                        .shadow(color: .black.opacity(0.12), radius: 8, y: 3)
+                        .glassEffect(.regular.interactive(), in: Capsule())
                     }
                     .buttonStyle(.plain)
                     Spacer()

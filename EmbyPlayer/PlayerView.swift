@@ -434,8 +434,7 @@ struct PlayerView: View {
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
-                .background(.ultraThinMaterial, in: Capsule())
-                .overlay(Capsule().strokeBorder(.white.opacity(0.2), lineWidth: 0.5))
+                .glassEffect(.regular, in: Capsule())
                 if let error = player.lastError {
                     Text(String(describing: error)).font(.caption2).foregroundStyle(.red.opacity(0.9)).lineLimit(2)
                 }
@@ -474,9 +473,7 @@ struct PlayerView: View {
                 .font(.system(size: size * 0.38, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: size, height: size)
-                .background(.ultraThinMaterial, in: Circle())
-                .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.25), radius: 10, y: 4)
+                .glassEffect(.regular.interactive(), in: Circle())
         }
         .buttonStyle(.plain)
     }

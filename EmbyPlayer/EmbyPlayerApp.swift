@@ -78,6 +78,7 @@ struct MainView: View {
 
 struct CapsuleTabBar: View {
     @Binding var tab: Int
+    @Namespace private var glassNamespace
 
     private let items: [(icon: String, filled: String, label: String)] = [
         ("play.rectangle", "play.rectangle.fill", "首页"),
@@ -88,34 +89,40 @@ struct CapsuleTabBar: View {
     ]
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(items.indices, id: \.self) { index in
-                let selected = tab == index
-                Button {
-                    tab = index
-                } label: {
-                    VStack(spacing: 2) {
-                        Image(systemName: selected ? items[index].filled : items[index].icon)
-                            .font(.system(size: 20))
-                        Text(items[index].label)
-                            .font(.system(size: 10))
-                    }
-                    .foregroundStyle(selected ? Color.blue : Color.primary)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 7)
-                    .background {
-                        if selected {
-                            Capsule().fill(Color(.systemGray5))
+        GlassEffectContainer(spacing: 4) {
+            HStack(spacing: 4) {
+                ForEach(items.indices, id: \.self) { index in
+                    let selected = tab == index
+                    Button {
+                        withAnimation(.spring(response: 0.38, dampingFraction: 0.82)) {
+                            tab = index
+                        }
+                    } label: {
+                        VStack(spacing: 2) {
+                            Image(systemName: selected ? items[index].filled : items[index].icon)
+                                .font(.system(size: 20))
+                            Text(items[index].label)
+                                .font(.system(size: 10))
+                        }
+                        .foregroundStyle(selected ? Color.blue : Color.primary)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                        .background {
+                            if selected {
+                                Color.clear
+                                    .glassEffect(.regular.tint(Color(.systemGray5).opacity(0.6)), in: Capsule())
+                                    .glassEffectID("tabSelection", in: glassNamespace)
+                            }
                         }
                     }
+                    .buttonStyle(.plain)
                 }
-                .buttonStyle(.plain)
+            }
+            .padding(5)
+            .background {
+                Color.clear
+                    .glassEffect(.regular, in: Capsule())
             }
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
-        .background(.ultraThinMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
-        .shadow(color: .black.opacity(0.13), radius: 16, y: 6)
     }
 }
