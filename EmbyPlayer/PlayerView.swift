@@ -1383,11 +1383,10 @@ struct MPVPlayerScreen: View {
         lines.append("nativeOutputActive: \(diag.nativeOutputStatistics != nil)")
         lines.append("dropped: decoder=\(diag.decoderDroppedFrames ?? -1) output=\(diag.outputDroppedFrames ?? -1)")
         lines.append("featureResult: \(String(describing: player.videoFeatureRequestResult))")
-        if let media = player.mediaInformation {
-            // Keep this allowlist explicit: the model's sourceURL contains the Emby api_key.
-            let duration = media.duration.map { String(format: "%.1f", $0.secondsValue) } ?? "-"
-            lines.append("media container=\(media.container ?? "-") video=\(media.videoCodec ?? "-") audio=\(media.audioCodec ?? "-") size=\(media.fileSize.map { String($0) } ?? "-") dimensions=\(media.dimensions.map { "\($0.width)x\($0.height)" } ?? "-") fps=\(media.framesPerSecond.map { String(format: "%.3g", $0) } ?? "-") duration=\(duration)")
-        }
+        let media = player.mediaInformation
+        // Keep this allowlist explicit: the model's sourceURL contains the Emby api_key.
+        let duration = media.duration.map { String(format: "%.1f", $0.secondsValue) } ?? "-"
+        lines.append("media container=\(media.container ?? "-") video=\(media.videoCodec ?? "-") audio=\(media.audioCodec ?? "-") size=\(media.fileSize.map { String($0) } ?? "-") dimensions=\(media.dimensions.map { "\($0.width)x\($0.height)" } ?? "-") fps=\(media.framesPerSecond.map { String(format: "%.3g", $0) } ?? "-") duration=\(duration)")
         lines.append("orientation: pref=\(Prefs.playerOrientation.rawValue) side=\(Prefs.landscapeSide.rawValue) mask=\(AppDelegate.orientationMask.rawValue) error=\(AppDelegate.lastOrientationError ?? "-")")
         for track in player.subtitleTracks {
             lines.append("sub #\(track.mpvID): codec=\(track.codec ?? "-") lang=\(track.language ?? "-") selected=\(track.isSelected) external=\(track.isExternal)")
