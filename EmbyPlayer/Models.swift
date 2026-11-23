@@ -61,6 +61,7 @@ struct EmbyItem: Decodable, Identifiable {
     let CommunityRating: Double?
     let PremiereDate: String?
     let People: [EmbyPerson]?
+    let Chapters: [EmbyChapter]?
     let ImageTags: [String: String]?
     let BackdropImageTags: [String]?
     let UserData: EmbyUserData?
@@ -156,4 +157,26 @@ struct EmbyPlaybackInfo: Decodable {
 extension EmbyItem: Hashable {
     func hash(into hasher: inout Hasher) { hasher.combine(Id) }
     static func == (lhs: EmbyItem, rhs: EmbyItem) -> Bool { lhs.Id == rhs.Id }
+}
+
+
+/// One chapter marker from an item's Chapters array (Emby also stores
+/// intro/outro segment markers there - MarkerType tells them apart).
+struct EmbyChapter: Decodable {
+    let Name: String?
+    let StartPositionTicks: Int64
+    let MarkerType: String?
+
+    var startSeconds: Double { Double(StartPositionTicks) / 10_000_000 }
+}
+
+/// Human-readable channel layout for an Emby audio stream.
+func channelLayoutName(_ channels: Int) -> String {
+    switch channels {
+    case 1: return "单声道"
+    case 2: return "立体声"
+    case 6: return "5.1"
+    case 8: return "7.1"
+    default: return "\(channels) 声道"
+    }
 }

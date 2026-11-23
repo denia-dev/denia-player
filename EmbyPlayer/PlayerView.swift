@@ -81,6 +81,8 @@ struct PlayerView: View {
     @State private var activeSegment: MediaSegment?
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
+    @State private var chapters: [EmbyChapter] = []
+    @State private var showChapters = false
     @State private var endWatchTask: Task<Void, Never>?
     @State private var sleepTask: Task<Void, Never>?
 
@@ -220,6 +222,7 @@ struct PlayerView: View {
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .sheet(isPresented: $showEpisodePicker) { episodePicker }
+        .sheet(isPresented: $showChapters) { chaptersSheet }
         .onDisappear {
             requestOrientation(.portrait)
             hideTask?.cancel()
@@ -294,15 +297,28 @@ struct PlayerView: View {
                         ?? audios.first
                 }
                 let ordinal = preferredAudio.flatMap { pick in audios.firstIndex(where: { $0.Index == pick.Index }) }
-                let audioLabels = audios.map { $0.DisplayTitle ?? $0.Codec ?? "音轨" }
-                let subtitleLabels = (source.MediaStreams ?? [])
+                let audioLabels = audios.map { stream in
+                    let base = stream.DisplayTitle ?? stream.Codec ?? "音轨"
+                    return stream.Channels.map { base + " · " + channelLayoutName($0) } ?? base
+                }
+                let subtitleStreams = (source.MediaStreams ?? [])
                     .filter { $0.type == "Subtitle" }
                     .sorted { $0.Index < $1.Index }
-                    .map { $0.DisplayTitle ?? $0.Codec ?? "字幕" }
+                let subtitleLabels = subtitleStreams.map { $0.DisplayTitle ?? $0.Codec ?? "字幕" }
+                var preferredSubtitleOrdinal: Int? = nil
+                var subtitleOff = false
+                if Prefs.rememberSubtitleChoice,
+                   let rememberedSub = Prefs.rememberedSubtitleIndex(for: item.SeriesId ?? item.Id) {
+                    if rememberedSub < 0 { subtitleOff = true }
+                    else { preferredSubtitleOrdinal = subtitleStreams.firstIndex(where: { $0.Index == rememberedSub }) }
+                }
                 vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId,
                                     preferredAudioOrdinal: ordinal,
                                     audioLabels: audioLabels, subtitleLabels: subtitleLabels,
-                                    audioStreamIndexes: audios.map { $0.Index })
+                                    audioStreamIndexes: audios.map { $0.Index },
+                                    preferredSubtitleOrdinal: preferredSubtitleOrdinal,
+                                    subtitleOff: subtitleOff,
+                                    subtitleStreamIndexes: subtitleStreams.map { $0.Index })
                 return
             }
             session = (source.Id, info.PlaySessionId)
@@ -319,6 +335,7 @@ struct PlayerView: View {
             scheduleHide()
             startSleepTimer()
             fetchNextEpisode()
+            fetchChapters()
             fetchSegments()
             endWatchTask = Task { await watchForEnd() }
         } catch {
@@ -456,6 +473,21 @@ struct PlayerView: View {
             guard generation == playerGeneration, !Task.isCancelled else { return }
             let subs = player.subtitleTracks
             if subs.contains(where: { $0.isSelected }) { return }
+            if Prefs.rememberSubtitleChoice,
+               let remembered = Prefs.rememberedSubtitleIndex(for: item.SeriesId ?? item.Id) {
+                if remembered < 0 { return }
+                let streams = (currentSource?.MediaStreams ?? []).filter { $0.type == "Subtitle" }.sorted { $0.Index < $1.Index }
+                if let ordinal = streams.firstIndex(where: { $0.Index == remembered }), ordinal < subs.count {
+                    try? await Task.sleep(for: .seconds(1))
+                    guard generation == playerGeneration else { return }
+                    if !player.subtitleTracks.contains(where: { $0.isSelected }) {
+                        player.requestVideoFeatures([.nativeSubtitles])
+                        player.selectSubtitle(subs[ordinal].id)
+                        player.setSubtitlesVisible(true)
+                    }
+                    return
+                }
+            }
             if Prefs.subtitlePreference == .off { return }
             let scored = subs
                 .filter { subtitlePrefScore(language: $0.language, title: $0.title) != nil }
@@ -512,11 +544,11 @@ struct PlayerView: View {
             .overlay {
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { if !controlsLocked { seekBy(-Prefs.seekStepSeconds) } }
+                        .onTapGesture(count: 2) { if !controlsLocked { UIImpactFeedbackGenerator(style: .light).impactOccurred(); seekBy(-Prefs.seekStepSeconds) } }
                     Color.clear.contentShape(Rectangle())
                         .onTapGesture(count: 2) { if !controlsLocked { player.togglePlayback() } }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { if !controlsLocked { seekBy(Prefs.seekStepSeconds) } }
+                        .onTapGesture(count: 2) { if !controlsLocked { UIImpactFeedbackGenerator(style: .light).impactOccurred(); seekBy(Prefs.seekStepSeconds) } }
                 }
             }
             .gesture(
@@ -610,6 +642,42 @@ struct PlayerView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("关闭") { showEpisodePicker = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func fetchChapters() {
+        guard let client = store.client() else { return }
+        Task {
+            guard let full = try? await client.item(id: item.Id) else { return }
+            let list = (full.Chapters ?? []).filter { $0.MarkerType == nil || $0.MarkerType == "Chapter" }
+            if list.count > 1 { chapters = list }
+        }
+    }
+
+    private var chaptersSheet: some View {
+        NavigationStack {
+            List(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                Button {
+                    showChapters = false
+                    player.seek(to: .seconds(chapter.startSeconds))
+                    pokeChrome()
+                } label: {
+                    HStack {
+                        Text(chapter.Name ?? "章节 \(index + 1)").lineLimit(1)
+                        Spacer()
+                        Text(formatDuration(chapter.startSeconds)).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("章节")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") { showChapters = false }
                 }
             }
         }
@@ -866,6 +934,11 @@ struct PlayerView: View {
                     Image(systemName: "list.bullet").font(.title3)
                 }
             }
+            if chapters.count > 1 {
+                Button { showChapters = true } label: {
+                    Image(systemName: "bookmark").font(.title3)
+                }
+            }
             if let nextEpisode {
                 Button { onPlayNext?(nextEpisode) } label: {
                     Image(systemName: "forward.end.fill").font(.title3)
@@ -873,7 +946,7 @@ struct PlayerView: View {
             }
             if Prefs.showAudioButton, !player.audioTracks.isEmpty {
                 Menu {
-                    ForEach(player.audioTracks, id: \.mpvID) { track in
+                    ForEach(Array(player.audioTracks.enumerated()), id: \.element.mpvID) { ordinal, track in
                         Button {
                             player.selectTrack(track.id)
                             if Prefs.rememberAudioChoice,
@@ -883,7 +956,7 @@ struct PlayerView: View {
                                 Prefs.rememberAudio(index: streams[ordinal].Index, for: item.SeriesId ?? item.Id)
                             }
                         } label: {
-                            Label(trackLabel(track), systemImage: track.isSelected ? "checkmark" : "")
+                            Label(audioTrackLabel(track, ordinal: ordinal), systemImage: track.isSelected ? "checkmark" : "")
                         }
                     }
                 } label: {
@@ -892,13 +965,32 @@ struct PlayerView: View {
             }
             if Prefs.showSubtitleButton, !player.subtitleTracks.isEmpty {
                 Menu {
-                    Button("关闭字幕") { player.selectSubtitle(nil) }
+                    Button("关闭字幕") {
+                        player.selectSubtitle(nil)
+                        rememberSubtitlePick(streamIndex: -1)
+                    }
                     ForEach(player.subtitleTracks, id: \.mpvID) { track in
                         Button {
                             player.selectSubtitle(track.id)
                             player.setSubtitlesVisible(true)
+                            if let ordinal = player.subtitleTracks.firstIndex(where: { $0.id == track.id }) {
+                                rememberSubtitlePick(streamIndex: subtitleStreamIndex(ordinal: ordinal))
+                            }
                         } label: {
                             Label(trackLabel(track), systemImage: track.isSelected ? "checkmark" : "")
+                        }
+                    }
+                    if player.subtitleTracks.count > 1 {
+                        Section("副字幕（双字幕）") {
+                            Button("关闭副字幕") { player.selectSubtitle(nil, for: .secondary) }
+                            ForEach(player.subtitleTracks, id: \.mpvID) { track in
+                                Button {
+                                    player.selectSubtitle(track.id, for: .secondary)
+                                    player.setSubtitlesVisible(true)
+                                } label: {
+                                    Label(trackLabel(track), systemImage: track.subtitleRole == .secondary ? "checkmark" : "")
+                                }
+                            }
                         }
                     }
                 } label: {
@@ -913,6 +1005,25 @@ struct PlayerView: View {
                 Image(systemName: "gauge.with.dots.needle.33percent").font(.title3)
             }
         }
+    }
+
+    private func audioTrackLabel(_ track: MPVMediaTrack, ordinal: Int) -> String {
+        var label = trackLabel(track)
+        let streams = (currentSource?.MediaStreams ?? []).filter { $0.type == "Audio" }.sorted { $0.Index < $1.Index }
+        if ordinal < streams.count, let channels = streams[ordinal].Channels {
+            label += " · " + channelLayoutName(channels)
+        }
+        return label
+    }
+
+    private func subtitleStreamIndex(ordinal: Int) -> Int? {
+        let streams = (currentSource?.MediaStreams ?? []).filter { $0.type == "Subtitle" }.sorted { $0.Index < $1.Index }
+        return ordinal < streams.count ? streams[ordinal].Index : nil
+    }
+
+    private func rememberSubtitlePick(streamIndex: Int?) {
+        guard Prefs.rememberSubtitleChoice, let streamIndex else { return }
+        Prefs.rememberSubtitle(index: streamIndex, for: item.SeriesId ?? item.Id)
     }
 
     private func trackLabel(_ track: MPVMediaTrack) -> String {

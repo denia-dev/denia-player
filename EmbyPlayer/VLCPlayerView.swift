@@ -18,6 +18,10 @@ struct VLCRoute {
     /// Emby stream Index for each audio ordinal, so a manual pick in
     /// the menu can be remembered per series.
     let audioStreamIndexes: [Int]
+    /// Remembered per-series subtitle choice, carried like the audio one.
+    let preferredSubtitleOrdinal: Int?
+    let subtitleOff: Bool
+    let subtitleStreamIndexes: [Int]
 }
 
 // MARK: - controller
@@ -91,12 +95,14 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         return lines.joined(separator: "\n")
     }
 
-    func prepare(url: URL, startSeconds: Double, preferredAudioOrdinal: Int?) {
+    func prepare(url: URL, startSeconds: Double, preferredAudioOrdinal: Int?, preferredSubtitleOrdinal: Int? = nil, subtitleOff: Bool = false) {
         guard !mediaConfigured else { return }
         mediaConfigured = true
         currentURL = url
         self.startSeconds = startSeconds
         self.preferredAudioOrdinal = preferredAudioOrdinal
+        desiredSubtitleOrdinal = preferredSubtitleOrdinal
+        desiredSubtitleOff = subtitleOff
         loadDate = Date()
         let media = VLCMedia(url: url)
         media.addOption("network-caching=15000")
@@ -413,6 +419,8 @@ struct VLCPlayerView: View {
 
     @StateObject private var controller = VLCPlayerController()
     @State private var chromeVisible = true
+    @State private var chapters: [EmbyChapter] = []
+    @State private var showChapters = false
     @State private var controlsLocked = false
     @State private var pressStart: Date?
     @State private var pressBoosted = false
@@ -538,11 +546,12 @@ struct VLCPlayerView: View {
         .onAppear {
             try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
             try? AVAudioSession.sharedInstance().setActive(true)
-            controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal)
+            controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal, preferredSubtitleOrdinal: route.preferredSubtitleOrdinal, subtitleOff: route.subtitleOff)
             if Prefs.defaultRate != 1.0 { controller.setRate(Float(Prefs.defaultRate)) }
             scheduleHide()
             startSleepTimer()
             fetchNextEpisode()
+            fetchChapters()
             fetchSegments()
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
@@ -554,6 +563,7 @@ struct VLCPlayerView: View {
             updateActiveSegment(position: position)
         }
         .sheet(isPresented: $showEpisodePicker) { episodePicker }
+        .sheet(isPresented: $showChapters) { chaptersSheet }
         .onDisappear {
             hideTask?.cancel()
             sleepTask?.cancel()
@@ -706,6 +716,11 @@ struct VLCPlayerView: View {
                     Image(systemName: "list.bullet").font(.title3)
                 }
             }
+            if chapters.count > 1 {
+                Button { showChapters = true } label: {
+                    Image(systemName: "bookmark").font(.title3)
+                }
+            }
             if let nextEpisode {
                 Button { onPlayNext?(nextEpisode) } label: {
                     Image(systemName: "forward.end.fill").font(.title3)
@@ -741,12 +756,18 @@ struct VLCPlayerView: View {
                     Text("引擎：VLCKit（PGS 字幕）")
                     Button {
                         controller.selectSubtitle(-1)
+                        if Prefs.rememberSubtitleChoice {
+                            Prefs.rememberSubtitle(index: -1, for: item.SeriesId ?? item.Id)
+                        }
                     } label: {
                         Label("关闭字幕", systemImage: controller.selectedSubtitleID < 0 ? "checkmark" : "")
                     }
                     ForEach(Array(realSubtitleTracks.enumerated()), id: \.element.id) { ordinal, track in
                         Button {
                             controller.selectSubtitle(track.id)
+                            if Prefs.rememberSubtitleChoice, ordinal < route.subtitleStreamIndexes.count {
+                                Prefs.rememberSubtitle(index: route.subtitleStreamIndexes[ordinal], for: item.SeriesId ?? item.Id)
+                            }
                         } label: {
                             Label(menuLabel(route.subtitleLabels, ordinal, fallback: track.name),
                                   systemImage: controller.selectedSubtitleID == track.id ? "checkmark" : "")
@@ -786,11 +807,11 @@ struct VLCPlayerView: View {
             .overlay {
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { if !controlsLocked { controller.seekBy(-Prefs.seekStepSeconds); pokeChrome() } }
+                        .onTapGesture(count: 2) { if !controlsLocked { UIImpactFeedbackGenerator(style: .light).impactOccurred(); controller.seekBy(-Prefs.seekStepSeconds); pokeChrome() } }
                     Color.clear.contentShape(Rectangle())
                         .onTapGesture(count: 2) { if !controlsLocked { controller.togglePlay(); pokeChrome() } }
                     Color.clear.contentShape(Rectangle())
-                        .onTapGesture(count: 2) { if !controlsLocked { controller.seekBy(Prefs.seekStepSeconds); pokeChrome() } }
+                        .onTapGesture(count: 2) { if !controlsLocked { UIImpactFeedbackGenerator(style: .light).impactOccurred(); controller.seekBy(Prefs.seekStepSeconds); pokeChrome() } }
                 }
             }
             .gesture(
@@ -914,6 +935,42 @@ struct VLCPlayerView: View {
         } else {
             controller.seek(to: segment.endSeconds + 0.3)
         }
+    }
+
+    private func fetchChapters() {
+        guard let client = store.client() else { return }
+        Task {
+            guard let full = try? await client.item(id: item.Id) else { return }
+            let list = (full.Chapters ?? []).filter { $0.MarkerType == nil || $0.MarkerType == "Chapter" }
+            if list.count > 1 { chapters = list }
+        }
+    }
+
+    private var chaptersSheet: some View {
+        NavigationStack {
+            List(Array(chapters.enumerated()), id: \.offset) { index, chapter in
+                Button {
+                    showChapters = false
+                    controller.seek(to: chapter.startSeconds)
+                    pokeChrome()
+                } label: {
+                    HStack {
+                        Text(chapter.Name ?? "章节 \(index + 1)").lineLimit(1)
+                        Spacer()
+                        Text(formatDuration(chapter.startSeconds)).foregroundStyle(.secondary)
+                    }
+                }
+                .buttonStyle(.plain)
+            }
+            .navigationTitle("章节")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("关闭") { showChapters = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
     }
 
     private func fetchNextEpisode() {

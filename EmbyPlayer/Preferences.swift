@@ -94,6 +94,17 @@ enum Prefs {
         map[key] = index
         d.set(map, forKey: "prefs.rememberedAudio")
     }
+    static var rememberSubtitleChoice: Bool {
+        d.object(forKey: "prefs.rememberSubtitleChoice") == nil ? true : d.bool(forKey: "prefs.rememberSubtitleChoice")
+    }
+    static func rememberedSubtitleIndex(for key: String) -> Int? {
+        (d.dictionary(forKey: "prefs.rememberedSubtitle") as? [String: Int])?[key]
+    }
+    static func rememberSubtitle(index: Int, for key: String) {
+        var map = (d.dictionary(forKey: "prefs.rememberedSubtitle") as? [String: Int]) ?? [:]
+        map[key] = index
+        d.set(map, forKey: "prefs.rememberedSubtitle")
+    }
     static var sleepTimerMinutes: Int { d.integer(forKey: "prefs.sleepTimerMinutes") }
     static var longPressBoost: Bool {
         d.object(forKey: "prefs.longPressBoost") == nil ? true : d.bool(forKey: "prefs.longPressBoost")
@@ -527,6 +538,7 @@ struct AudioPrefsView: View {
 
 struct SubtitlePrefsView: View {
     @AppStorage("prefs.subtitlePreference") private var subtitlePreference = "zhHans"
+    @AppStorage("prefs.rememberSubtitleChoice") private var rememberSubtitleChoice = true
     @AppStorage("prefs.subScale") private var subScale = 1.0
     @AppStorage("prefs.subDelay") private var subDelay = 0.0
 
@@ -540,6 +552,9 @@ struct SubtitlePrefsView: View {
                         Button("英文") { subtitlePreference = "en" }
                         Button("关闭") { subtitlePreference = "off" }
                     }
+                }
+                prefsCard {
+                    prefsToggleRow("记住每部剧的字幕选择", isOn: $rememberSubtitleChoice)
                 }
                 prefsCard {
                     prefsMenuRow("字幕大小", value: subScaleLabel) {
