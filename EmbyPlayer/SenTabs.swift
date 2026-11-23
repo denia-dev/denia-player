@@ -287,8 +287,13 @@ struct RecordsView: View {
 
             ScrollView {
                 if segment == 3 {
-                    DownloadsView()
-                        .padding(.horizontal)
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("下载页标记 build70")
+                            .font(.caption2).foregroundStyle(.tertiary)
+                        DownloadsView()
+                    }
+                    .padding(.horizontal)
+                    .padding(.bottom, 92)
                 } else if let client = store.client() {
                     if segment == 1 {
                         VStack(alignment: .leading, spacing: 14) {
@@ -341,9 +346,10 @@ struct RecordsView: View {
                         }
                         .padding(.horizontal)
                     }
+                    Spacer(minLength: 92)
                 }
-                Spacer(minLength: 92)
             }
+            .id(segment)
         }
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
