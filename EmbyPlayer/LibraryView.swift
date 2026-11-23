@@ -40,8 +40,8 @@ struct LibraryView: View {
         }
         .navigationTitle(library.Name)
         .searchable(text: $searchText, prompt: "搜索影片/剧集")
-        .onChange(of: searchText) { _, term in
-            Task { await runSearch(term) }
+        .task(id: searchText) {
+            await runSearch(searchText)
         }
         .task { await load() }
         .toolbar(.hidden, for: .tabBar)
@@ -94,7 +94,11 @@ struct LibraryView: View {
     }
 
     private func runSearch(_ term: String) async {
-        guard let client = store.client(), !term.isEmpty else { searchResults = []; return }
-        searchResults = (try? await client.search(term: term)) ?? []
+        let query = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let client = store.client(), !query.isEmpty else { searchResults = []; return }
+        do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+        let matches = (try? await client.search(term: query)) ?? []
+        guard !Task.isCancelled, searchText == term else { return }
+        searchResults = matches
     }
 }

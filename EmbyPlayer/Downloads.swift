@@ -183,6 +183,7 @@ final class DownloadsManager: NSObject, ObservableObject {
     }
 
     fileprivate func downloadFinished(taskID: Int, tempURL: URL) {
+        defer { try? FileManager.default.removeItem(at: tempURL) }
         guard let itemID = tasks[taskID], var skeleton = pending[itemID] else { return }
         let ext = pendingSource[itemID]?.Container ?? "mkv"
         let fileName = itemID + "." + ext
@@ -218,14 +219,20 @@ final class DownloadsManager: NSObject, ObservableObject {
 extension DownloadsManager: URLSessionDownloadDelegate {
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                                 didFinishDownloadingTo location: URL) {
-        // The temp file is deleted when this returns: move it synchronously
-        // via a semaphore-free handoff - copy the bytes first.
-        let staging = FileManager.default.temporaryDirectory
-            .appendingPathComponent("dl-\(downloadTask.taskIdentifier).tmp")
-        try? FileManager.default.removeItem(at: staging)
-        try? FileManager.default.copyItem(at: location, to: staging)
         let tid = downloadTask.taskIdentifier
-        Task { @MainActor in self.downloadFinished(taskID: tid, tempURL: staging) }
+        guard let response = downloadTask.response as? HTTPURLResponse,
+              (200..<300).contains(response.statusCode) else {
+            Task { @MainActor in self.downloadFailed(taskID: tid) }
+            return
+        }
+        // Take ownership before the delegate returns and URLSession removes its file.
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        do {
+            try FileManager.default.moveItem(at: location, to: staging)
+            Task { @MainActor in self.downloadFinished(taskID: tid, tempURL: staging) }
+        } catch {
+            Task { @MainActor in self.downloadFailed(taskID: tid) }
+        }
     }
 
     nonisolated func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
