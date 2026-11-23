@@ -114,13 +114,54 @@ struct HomeView: View {
                 }
             }
             .padding(.bottom, 32)
+            .background { homeAmbientScrolling }
         }
         .ignoresSafeArea(edges: .top)
+        .background { homeAmbientFixed }
         .toolbar(.hidden, for: .navigationBar)
         .refreshable { await load() }
         .task { await load() }
         .task { await heroAutoAdvance() }
         .sheet(isPresented: $showServers) { ServersView() }
+    }
+
+    // MARK: - ambient background
+
+    /// The current hero item's art as the page's ambient wash - the
+    /// SenPlayer home treatment he pointed at on 2026-11-23: the hero
+    /// melts into a page background made of the same art, not into
+    /// solid white. Two copies of one layer: one attached to the
+    /// scroll content (the hero's melt fades into it and it continues
+    /// uninterrupted - no step, the build-58 detail lesson) and one
+    /// fixed behind the ScrollView for rubber-band regions. Both
+    /// crossfade when the carousel moves.
+    private var currentHeroItem: EmbyItem? {
+        heroItems.isEmpty ? nil : heroItems[min(heroIndex, heroItems.count - 1)]
+    }
+
+    @ViewBuilder
+    private func ambientLayer(scale: CGFloat) -> some View {
+        ZStack {
+            if let item = currentHeroItem, let client = store.client() {
+                ItemImage(item: item, client: client, kind: wideImageKind(item))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                    .blur(radius: 26)
+                    .scaleEffect(scale)
+                    .id(item.Id)
+                    .transition(.opacity)
+            }
+            Color(.systemBackground).opacity(0.55)
+        }
+        .animation(.easeInOut(duration: 0.45), value: heroIndex)
+    }
+
+    private var homeAmbientScrolling: some View {
+        ambientLayer(scale: 1.15).clipped()
+    }
+
+    private var homeAmbientFixed: some View {
+        ambientLayer(scale: 1.25).ignoresSafeArea()
     }
 
     // MARK: - hero
@@ -203,13 +244,9 @@ struct HomeView: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                 }
-                HStack(spacing: 6) {
-                    if let year = item.ProductionYear { Text(String(year)) }
-                    Text("·")
-                    Text(item.Genres?.first ?? (item.type == "Series" ? "剧集" : "电影"))
-                }
-                .font(.subheadline.weight(.medium))
-                .foregroundStyle(.secondary)
+                Text(heroMetaText(item))
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.secondary)
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)
@@ -246,12 +283,32 @@ struct HomeView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                     .zoomSource(id: item.Id, ns: zoomNS)
-                LinearGradient(colors: [.clear, .clear, Color(.systemBackground).opacity(0.75), Color(.systemBackground)],
-                               startPoint: .top, endPoint: .bottom)
+                LinearGradient(stops: [
+                    .init(color: .clear, location: 0),
+                    .init(color: .clear, location: 0.35),
+                    .init(color: Color(.systemBackground).opacity(0.45), location: 0.62),
+                    .init(color: Color(.systemBackground).opacity(0.55), location: 0.85),
+                    .init(color: Color(.systemBackground).opacity(0.55), location: 1.0),
+                ], startPoint: .top, endPoint: .bottom)
+            }
+            .mask {
+                LinearGradient(stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.62),
+                    .init(color: .clear, location: 0.98),
+                    .init(color: .clear, location: 1.0),
+                ], startPoint: .top, endPoint: .bottom)
             }
         }
         .frame(height: 540)
         .clipped()
+    }
+
+    private func heroMetaText(_ item: EmbyItem) -> String {
+        var parts: [String] = []
+        if let year = item.ProductionYear { parts.append(String(year)) }
+        parts.append(item.Genres?.first ?? (item.type == "Series" ? "剧集" : "电影"))
+        return parts.joined(separator: " · ")
     }
 
     private func sectionHeader(_ title: String, count: Int?, action: (() -> Void)? = nil) -> some View {
