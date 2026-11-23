@@ -45,6 +45,7 @@ func wideImageKind(_ item: EmbyItem) -> String {
 
 struct HomeView: View {
     @Environment(AppStore.self) private var store
+    @Environment(ShellState.self) private var shell
     @State private var libraries: [EmbyItem] = []
     @State private var resume: [EmbyItem] = []
     @State private var latest: [EmbyItem] = []
@@ -62,7 +63,7 @@ struct HomeView: View {
                     Text(errorText).foregroundStyle(.red).font(.footnote).padding(.horizontal)
                 }
                 if Prefs.showHomeResume, !resume.isEmpty, let client = store.client() {
-                    sectionHeader("继续观看", count: resume.count)
+                    sectionHeader("继续观看", count: resume.count) { shell.recordsRequest = 0 }
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 14) {
                             ForEach(resume) { item in
@@ -136,20 +137,17 @@ struct HomeView: View {
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .never))
-                .frame(height: 496)
+                .frame(height: 540)
 
                 HStack(spacing: 6) {
                     ForEach(heroItems.indices, id: \.self) { index in
-                        Capsule()
-                            .fill(index == heroIndex ? Color.accentColor : Color.secondary.opacity(0.35))
-                            .frame(width: index == heroIndex ? 18 : 7, height: 7)
+                        Circle()
+                            .fill(Color.white.opacity(index == heroIndex ? 0.95 : 0.4))
+                            .frame(width: 7, height: 7)
                     }
                 }
                 .animation(.easeInOut(duration: 0.25), value: heroIndex)
-                .padding(.horizontal, 9)
-                .padding(.vertical, 5)
-                .glassEffect(.regular, in: Capsule())
-                .padding(.bottom, 10)
+                .padding(.bottom, 12)
             } else {
                 Rectangle().fill(.quaternary).frame(height: 300)
             }
@@ -172,13 +170,21 @@ struct HomeView: View {
                     }
                     .buttonStyle(.plain)
                     Spacer()
+                    Button { shell.recordsRequest = 2 } label: {
+                        Image(systemName: "heart.fill")
+                            .font(.system(size: 17))
+                            .foregroundStyle(.red)
+                            .frame(width: 42, height: 42)
+                            .glassEffect(.regular.interactive(), in: Circle())
+                    }
+                    .buttonStyle(.plain)
                 }
                 Spacer()
             }
             .padding(.horizontal)
             .padding(.top, 58)
         }
-        .frame(height: 496)
+        .frame(height: 540)
     }
 
     private func heroCell(_ item: EmbyItem, client: EmbyClient) -> some View {
@@ -196,24 +202,38 @@ struct HomeView: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                 }
-                HStack(spacing: 8) {
+                HStack(spacing: 6) {
                     if let year = item.ProductionYear { Text(String(year)) }
-                    Text(item.type == "Series" ? "剧集" : "电影")
-                    if let rating = item.CommunityRating {
-                        Label(String(format: "%.1f", rating), systemImage: "star.fill")
-                    }
+                    Text("·")
+                    Text(item.Genres?.first ?? (item.type == "Series" ? "剧集" : "电影"))
                 }
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
-                .glassEffect(.regular, in: Capsule())
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
-                        .multilineTextAlignment(.center)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                if item.CommunityRating != nil || item.CriticRating != nil {
+                    HStack(spacing: 16) {
+                        Spacer()
+                        if let rating = item.CommunityRating {
+                            HStack(spacing: 5) {
+                                Image(systemName: "star.fill").foregroundStyle(.orange).font(.footnote)
+                                Text(String(format: "%.1f", rating)).font(.subheadline.weight(.semibold))
+                            }
+                        }
+                        if let critic = item.CriticRating {
+                            HStack(spacing: 5) {
+                                Image(systemName: "popcorn").foregroundStyle(.red).font(.footnote)
+                                Text("\(Int(critic.rounded()))%").font(.subheadline.weight(.semibold))
+                            }
+                        }
+                        Spacer()
+                    }
                 }
             }
         .padding(.horizontal, 28)
@@ -228,11 +248,11 @@ struct HomeView: View {
                                startPoint: .top, endPoint: .bottom)
             }
         }
-        .frame(height: 496)
+        .frame(height: 540)
         .clipped()
     }
 
-    private func sectionHeader(_ title: String, count: Int?) -> some View {
+    private func sectionHeader(_ title: String, count: Int?, action: (() -> Void)? = nil) -> some View {
         HStack {
             Text(title).font(.title3.bold())
             Spacer()
@@ -242,6 +262,8 @@ struct HomeView: View {
             }
         }
         .padding(.horizontal)
+        .contentShape(Rectangle())
+        .onTapGesture { action?() }
     }
 
     private func heroAutoAdvance() async {

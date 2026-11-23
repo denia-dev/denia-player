@@ -21,6 +21,7 @@ struct DetailView: View {
     @State private var favOverride: Bool?
     @State private var playedOverride: Bool?
     @State private var overviewExpanded = false
+    @State private var showAllEpisodes = false
 
     private var current: EmbyItem { detail ?? item }
     private var isSeries: Bool { current.type == "Series" }
@@ -48,19 +49,9 @@ struct DetailView: View {
                             .lineLimit(overviewExpanded ? nil : 3)
                             .onTapGesture { overviewExpanded.toggle() }
                     }
-                    if let rating = current.CommunityRating {
-                        HStack {
-                            Spacer()
-                            HStack(spacing: 6) {
-                                Image(systemName: "star.fill").foregroundStyle(.orange).font(.footnote)
-                                Text(String(format: "%.1f", rating)).font(.subheadline.weight(.semibold))
-                                Text("评分").foregroundStyle(.secondary).font(.subheadline)
-                            }
-                            Spacer()
-                        }
-                    }
-                    castSection
+                    ratingsRow
                     if seriesID != nil { seriesSection }
+                    castSection
                     mediaInfoSection
                 }
                 .padding(.horizontal)
@@ -109,19 +100,16 @@ struct DetailView: View {
                 playRequest = PlayRequest(item: next, startSeconds: 0)
             }
         }
+        .sheet(isPresented: $showAllEpisodes) { allEpisodesSheet }
     }
 
     /// The backdrop, washed out, behind the whole page (SenPlayer's
     /// ambient tint) instead of a hard white background.
     private var ambientBackground: some View {
         ZStack {
-            if let client = store.client() {
-                ItemImage(item: current, client: client, kind: "Backdrop")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                    .blur(radius: 50)
-                    .scaleEffect(1.25)
-            }
+            heroBackdrop
+                .blur(radius: 50)
+                .scaleEffect(1.25)
             Color(.systemBackground).opacity(0.86)
         }
         .ignoresSafeArea()
@@ -133,19 +121,66 @@ struct DetailView: View {
 
     // MARK: - hero
 
+    /// Episodes carry no logo of their own: borrow the series logo and
+    /// show the series name when even that is missing (SenPlayer does
+    /// the same - the hero brands the show, the meta describes the
+    /// episode).
+    private var heroLogoItemID: String {
+        current.type == "Episode" ? (current.SeriesId ?? current.Id) : current.Id
+    }
+
+    private var heroTitleText: some View {
+        Text(current.type == "Episode" ? (current.SeriesName ?? current.Name) : current.Name)
+            .font(.system(size: 24, weight: .bold))
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+    }
+
+    @ViewBuilder
+    private var heroLogo: some View {
+        if let client = store.client(),
+           current.type == "Episode" || current.ImageTags?["Logo"] != nil {
+            AsyncImage(url: client.imageURL(itemID: heroLogoItemID, kind: "Logo")) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().scaledToFit()
+                case .failure:
+                    heroTitleText
+                default:
+                    Color.clear.frame(height: 44)
+                }
+            }
+            .frame(maxWidth: 290, maxHeight: 88)
+        } else {
+            heroTitleText
+        }
+    }
+
+    /// Hero art: an episode without its own backdrop borrows the
+    /// series backdrop instead of falling back to a video still.
+    @ViewBuilder
+    private var heroBackdrop: some View {
+        if let client = store.client() {
+            if current.type == "Episode", let seriesID = current.SeriesId,
+               current.BackdropImageTags?.isEmpty != false {
+                AsyncImage(url: client.imageURL(itemID: seriesID, kind: "Backdrop")) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            } else {
+                ItemImage(item: current, client: client, kind: wideImageKind(current))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
+        }
+    }
+
     private var hero: some View {
         VStack(spacing: 10) {
-                if current.ImageTags?["Logo"] != nil, let client = store.client() {
-                    AsyncImage(url: client.imageURL(itemID: current.Id, kind: "Logo")) { phase in
-                        if case .success(let image) = phase { image.resizable().scaledToFit() }
-                    }
-                    .frame(maxWidth: 290, maxHeight: 88)
-                } else {
-                    Text(current.Name)
-                        .font(.system(size: 24, weight: .bold))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(2)
-                }
+                heroLogo
                 if !metaParts.isEmpty {
                     Text(metaParts.joined(separator: "  "))
                         .font(.subheadline.weight(.medium))
@@ -163,11 +198,7 @@ struct DetailView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .background {
             ZStack {
-                if let client = store.client() {
-                    ItemImage(item: current, client: client, kind: wideImageKind(current))
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                }
+                heroBackdrop
                 LinearGradient(colors: [.black.opacity(0.25), .clear, Color(.systemBackground).opacity(0.45), Color(.systemBackground).opacity(0.8)],
                                startPoint: .top, endPoint: .bottom)
             }
@@ -209,6 +240,31 @@ struct DetailView: View {
         return parts
     }
 
+    /// SenPlayer-style centered ratings strip: community score plus the
+    /// critic percentage when the server provides them. Nothing is
+    /// labelled with a brand the data did not come from.
+    @ViewBuilder
+    private var ratingsRow: some View {
+        if current.CommunityRating != nil || current.CriticRating != nil {
+            HStack(spacing: 18) {
+                Spacer()
+                if let rating = current.CommunityRating {
+                    HStack(spacing: 5) {
+                        Image(systemName: "star.fill").foregroundStyle(.orange).font(.footnote)
+                        Text(String(format: "%.1f", rating)).font(.subheadline.weight(.semibold))
+                    }
+                }
+                if let critic = current.CriticRating {
+                    HStack(spacing: 5) {
+                        Image(systemName: "popcorn").foregroundStyle(.red).font(.footnote)
+                        Text("\(Int(critic.rounded()))%").font(.subheadline.weight(.semibold))
+                    }
+                }
+                Spacer()
+            }
+        }
+    }
+
     private var playTarget: EmbyItem? {
         if current.isPlayable { return current }
         if isSeries {
@@ -227,13 +283,12 @@ struct DetailView: View {
                         Image(systemName: "play.fill")
                         Text("播放")
                         Text(formatHMS(target.resumeSeconds > 5 ? target.resumeSeconds : target.durationSeconds))
-                            .foregroundStyle(.secondary)
                     }
                     .font(.headline)
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 52)
-                    .background(Color.white, in: RoundedRectangle(cornerRadius: 20))
+                    .frame(height: 54)
+                    .background(Color.white, in: Capsule())
                     .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 }
                 .buttonStyle(.plain)
@@ -356,6 +411,10 @@ struct DetailView: View {
                     .buttonStyle(.plain)
                     .disabled(episodeRange == episodeRanges.count - 1)
                 }
+                Button { showAllEpisodes = true } label: {
+                    Text("更多").font(.subheadline.weight(.medium)).foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
             }
             if episodeRanges.count > 1 {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -364,10 +423,11 @@ struct DetailView: View {
                             Button { episodeRange = index } label: {
                                 Text("\(range.lowerBound + 1)-\(range.upperBound)")
                                     .font(.subheadline.weight(episodeRange == index ? .semibold : .regular))
-                                    .foregroundStyle(episodeRange == index ? Color.primary : Color.secondary)
+                                    .foregroundStyle(episodeRange == index ? Color.black : Color.secondary)
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 7)
-                                    .background(Color(.systemBackground).opacity(0.55), in: Capsule())
+                                    .background(episodeRange == index ? Color.white : Color(.systemBackground).opacity(0.55), in: Capsule())
+                                    .shadow(color: .black.opacity(episodeRange == index ? 0.12 : 0), radius: 6, y: 2)
                             }
                             .buttonStyle(.plain)
                         }
@@ -414,7 +474,7 @@ struct DetailView: View {
                                     Text(episodeTitle(episode))
                                         .font(.subheadline.weight(.medium)).lineLimit(1)
                                     if let overview = episode.Overview {
-                                        Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                        Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(3)
                                     }
                                 }
                             .frame(width: 212)
@@ -520,6 +580,51 @@ struct DetailView: View {
 
     // MARK: - actions & loading
 
+    /// "更多": every episode of the selected season in one list.
+    private var allEpisodesSheet: some View {
+        NavigationStack {
+            ScrollView {
+                LazyVStack(spacing: 14) {
+                    if let client = store.client() {
+                        ForEach(episodes) { episode in
+                            HStack(alignment: .top, spacing: 12) {
+                                ItemImage(item: episode, client: client)
+                                    .frame(width: 132, height: 74)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(episodeTitle(episode))
+                                        .font(.subheadline.weight(episode.Id == current.Id ? .bold : .medium))
+                                        .lineLimit(1)
+                                    if let overview = episode.Overview {
+                                        Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                                    }
+                                    if episode.durationSeconds > 0, episode.resumeSeconds > 0 {
+                                        ProgressView(value: min(episode.resumeSeconds / episode.durationSeconds, 1))
+                                            .tint(Color.accentColor)
+                                    }
+                                }
+                                Spacer(minLength: 0)
+                            }
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                showAllEpisodes = false
+                                playRequest = PlayRequest(item: episode, startSeconds: episode.resumeSeconds)
+                            }
+                        }
+                    }
+                }
+                .padding()
+            }
+            .navigationTitle(current.type == "Episode" ? (current.SeriesName ?? "全部集数") : current.Name)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("完成") { showAllEpisodes = false }
+                }
+            }
+        }
+    }
+
     private func toggleFavorite() {
         let next = !isFavorite
         favOverride = next
@@ -546,6 +651,14 @@ struct DetailView: View {
     private func loadEpisodes(_ seasonID: String) async {
         guard let client = store.client(), let seriesID else { return }
         episodes = (try? await client.episodes(seriesID: seriesID, seasonID: seasonID)) ?? []
+        // Land on the range holding the episode being viewed (episode
+        // details) or the one with resume progress (series details),
+        // instead of always opening on 1-5.
+        let targetID = current.type == "Episode" ? current.Id
+            : episodes.first(where: { $0.resumeSeconds > 0 })?.Id
+        if let targetID, let index = episodes.firstIndex(where: { $0.Id == targetID }) {
+            episodeRange = index / 5
+        }
     }
 }
 

@@ -88,6 +88,9 @@ struct RootView: View {
 @Observable
 final class ShellState {
     var searchRequested = false
+    /// Home asks the shell to open the records tab on a segment
+    /// (0 = recent, 2 = favorites); RecordsView consumes and clears it.
+    var recordsRequest: Int?
 }
 
 /// Value-based navigation routes. Every tab stack registers the same
@@ -234,6 +237,9 @@ struct MainView: View {
                 shell.searchRequested = false
                 tab = 4
             }
+        }
+        .onChange(of: shell.recordsRequest) { _, requested in
+            if requested != nil { tab = 2 }
         }
     }
 }

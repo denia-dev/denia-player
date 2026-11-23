@@ -143,23 +143,31 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
             return
         }
         let state = player.state
-        hasError = state == .error
-        position = Double(player.time.intValue) / 1000
+        // Publish only on real change: this runs at 2 Hz forever, and an
+        // unconditional @Published set re-renders the whole player even
+        // when paused with a frozen position.
+        let newError = state == .error
+        if newError != hasError { hasError = newError }
+        let sampled = Double(player.time.intValue) / 1000
+        if abs(sampled - position) >= 0.05 { position = sampled }
         if let media = player.media, media.length.intValue > 0 {
-            duration = Double(media.length.intValue) / 1000
+            let newDuration = Double(media.length.intValue) / 1000
+            if newDuration != duration { duration = newDuration }
         }
-        if position > maxPosition { maxPosition = position }
-        if position != lastPositionSample {
-            lastPositionSample = position
+        if sampled > maxPosition { maxPosition = sampled }
+        if sampled != lastPositionSample {
+            lastPositionSample = sampled
             lastAdvanceAt = Date()
         }
         // libvlc's state can sit on .buffering while frames are flowing;
         // trust position movement over the raw state.
         let stalled = Date().timeIntervalSince(lastAdvanceAt) > 1.0
-        isBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
-        isPlaying = !userPaused && state != .ended && state != .error
+        let newBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
+        if newBuffering != isBuffering { isBuffering = newBuffering }
+        let newPlaying = !userPaused && state != .ended && state != .error
             && (state == .playing || !stalled || state == .buffering)
-        if state == .ended { hasEnded = true }
+        if newPlaying != isPlaying { isPlaying = newPlaying }
+        if state == .ended, !hasEnded { hasEnded = true }
         postReloadMaintenance(state: state)
         let sampleAudio = player.currentAudioTrackIndex
         let sampleSub = player.currentVideoSubTitleIndex
@@ -169,14 +177,14 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
             lastSampleSub = sampleSub
             lastSampleState = state
         }
-        if duration <= 0, position > 0 {
+        if duration <= 0, sampled > 0 {
             let remaining = player.remainingTime.map { Double($0.intValue) / 1000 } ?? 0
-            if remaining > 0 { duration = position + remaining }
+            if remaining > 0 { duration = sampled + remaining }
         }
         refreshTracks()
         if state == .playing, !didInitialSeek {
             didInitialSeek = true
-            if startSeconds > 5, position < startSeconds - 2 {
+            if startSeconds > 5, sampled < startSeconds - 2 {
                 seek(to: startSeconds)
             }
         }
@@ -184,7 +192,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         // while the ES list is still settling; re-seek a few times early on.
         if startSeconds > 5, resumeAttempts < 3, state == .playing,
            Date().timeIntervalSince(loadDate) < 25,
-           position < startSeconds - 3, !subtitleTracks.isEmpty {
+           sampled < startSeconds - 3, !subtitleTracks.isEmpty {
             resumeAttempts += 1
             seek(to: startSeconds)
         }
@@ -727,6 +735,7 @@ struct VLCPlayerView: View {
                             }
                         }
                         .tint(.white)
+                        .animation(scrubbing ? nil : .linear(duration: 0.5), value: controller.position)
                         Text(Prefs.timeMode == .remaining
                              ? "-" + formatDuration(max(controller.duration - (scrubbing ? scrubValue : controller.position), 0))
                              : formatDuration(controller.duration))

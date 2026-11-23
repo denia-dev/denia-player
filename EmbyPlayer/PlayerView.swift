@@ -1060,6 +1060,7 @@ struct MPVPlayerScreen: View {
                                 }
                             }
                             .tint(.white)
+                            .animation(scrubbing ? nil : .linear(duration: 0.35), value: player.position.secondsValue)
                             Text(Prefs.timeMode == .remaining
                                  ? "-" + formatDuration(max(player.duration.secondsValue - (scrubbing ? scrubValue : player.position.secondsValue), 0))
                                  : formatDuration(player.duration.secondsValue))

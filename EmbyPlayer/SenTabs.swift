@@ -12,7 +12,7 @@ struct WideCard: View {
             ItemImage(item: item, client: client, kind: wideImageKind(item))
                 .frame(maxWidth: .infinity)
                 .aspectRatio(16 / 9, contentMode: .fill)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .clipShape(RoundedRectangle(cornerRadius: 20))
                 .overlay(alignment: .bottom) {
                     if item.resumeSeconds > 0, item.durationSeconds > 0 {
                         ZStack(alignment: .bottom) {
@@ -23,7 +23,7 @@ struct WideCard: View {
                                 HStack(spacing: 4) {
                                     Spacer()
                                     Image(systemName: "play.fill").font(.system(size: 9))
-                                    Text("\(formatDuration(item.resumeSeconds)) / \(formatDuration(item.durationSeconds))")
+                                    Text("\(formatHMS(item.resumeSeconds)) / \(formatHMS(item.durationSeconds))")
                                         .font(.system(size: 10, weight: .medium))
                                 }
                                 .foregroundStyle(.white)
@@ -42,7 +42,7 @@ struct WideCard: View {
                         }
                     }
                 }
-            Text(cardTitle).font(.subheadline.weight(.medium)).lineLimit(1)
+            Text(cardTitle).font(.system(size: 16, weight: .semibold)).lineLimit(1)
             Text(cardSubtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
         .foregroundStyle(.primary)
@@ -230,6 +230,7 @@ struct LibrariesTabView: View {
 
 struct RecordsView: View {
     @Environment(AppStore.self) private var store
+    @Environment(ShellState.self) private var shell
     @State private var segment = 1
     @State private var resume: [EmbyItem] = []
     @State private var favorites: [EmbyItem] = []
@@ -269,6 +270,12 @@ struct RecordsView: View {
             .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
             .padding(.horizontal)
             .padding(.top, 8)
+            .onChange(of: shell.recordsRequest) { _, requested in
+                if let requested {
+                    segment = requested
+                    shell.recordsRequest = nil
+                }
+            }
 
             Text(segment == 0 ? "最近播放" : (segment == 1 ? "媒体观看" : (segment == 2 ? "我的收藏" : "我的下载")))
                 .font(.system(size: 30, weight: .bold))
