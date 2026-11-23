@@ -2,6 +2,7 @@ import SwiftUI
 
 struct LibraryView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.zoomNS) private var zoomNS
     let library: EmbyItem
     @State private var items: [EmbyItem] = []
     @State private var searchText = ""
@@ -55,6 +56,7 @@ struct LibraryView: View {
                 ItemImage(item: item, client: client)
                     .aspectRatio(2 / 3, contentMode: .fill)
                     .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .zoomSource(id: item.Id, ns: zoomNS)
             }
             Text(item.Name).font(.caption).lineLimit(1)
             if let year = item.ProductionYear {

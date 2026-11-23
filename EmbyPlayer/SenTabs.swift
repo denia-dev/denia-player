@@ -6,6 +6,7 @@ import SwiftUI
 struct WideCard: View {
     let item: EmbyItem
     let client: EmbyClient
+    @Environment(\.zoomNS) private var zoomNS
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -42,6 +43,7 @@ struct WideCard: View {
                         }
                     }
                 }
+                .zoomSource(id: item.Id, ns: zoomNS)
             Text(cardTitle).font(.system(size: 16, weight: .semibold)).lineLimit(1)
             Text(cardSubtitle).font(.caption).foregroundStyle(.secondary).lineLimit(1)
         }
@@ -66,6 +68,7 @@ struct PosterCell: View {
     let item: EmbyItem
     let client: EmbyClient
     var width: CGFloat? = nil
+    @Environment(\.zoomNS) private var zoomNS
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -83,6 +86,7 @@ struct PosterCell: View {
                         .padding(6)
                 }
             }
+            .zoomSource(id: item.Id, ns: zoomNS)
             Text(item.Name).font(.caption).lineLimit(1)
                 .frame(width: width, alignment: .leading)
             if let year = item.ProductionYear {

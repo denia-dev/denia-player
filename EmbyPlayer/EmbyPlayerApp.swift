@@ -180,6 +180,56 @@ extension View {
     }
 }
 
+// MARK: - zoom transition plumbing
+
+/// Shared namespace for the iOS zoom navigation transition (the
+/// reference-app animation he sent on 2026-11-23: tap a poster and the
+/// detail page grows out of it, the list behind recedes). One namespace
+/// lives in MainView and reaches every stack through the environment.
+private struct ZoomNSKey: EnvironmentKey {
+    static let defaultValue: Namespace.ID? = nil
+}
+
+extension EnvironmentValues {
+    var zoomNS: Namespace.ID? {
+        get { self[ZoomNSKey.self] }
+        set { self[ZoomNSKey.self] = newValue }
+    }
+}
+
+private struct ZoomSourceModifier: ViewModifier {
+    let id: String
+    let ns: Namespace.ID?
+    func body(content: Content) -> some View {
+        if let ns {
+            content.matchedTransitionSource(id: id, in: ns)
+        } else {
+            content
+        }
+    }
+}
+
+private struct ZoomDestinationModifier: ViewModifier {
+    let id: String
+    let ns: Namespace.ID?
+    func body(content: Content) -> some View {
+        if let ns {
+            content.navigationTransition(.zoom(sourceID: id, in: ns))
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    func zoomSource(id: String, ns: Namespace.ID?) -> some View {
+        modifier(ZoomSourceModifier(id: id, ns: ns))
+    }
+    func zoomDestination(id: String, ns: Namespace.ID?) -> some View {
+        modifier(ZoomDestinationModifier(id: id, ns: ns))
+    }
+}
+
 /// The shell is a plain TabView - the same approach as JM Reader. On
 /// iOS 26 the system tab bar IS the floating liquid-glass bar with the
 /// sliding selection indicator, and it stays reliable where the
@@ -194,6 +244,7 @@ struct MainView: View {
     }
     @State private var shell = ShellState()
     @State private var nav = NavStore()
+    @Namespace private var zoomNS
 
     var body: some View {
         TabView(selection: $tab) {
@@ -229,6 +280,7 @@ struct MainView: View {
         }
         .tint(.blue)
         .environment(shell)
+        .environment(\.zoomNS, zoomNS)
         .onChange(of: tab) { _, newValue in
             UserDefaults.standard.set(newValue, forKey: "app.lastTab")
         }

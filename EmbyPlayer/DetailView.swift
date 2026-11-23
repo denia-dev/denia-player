@@ -9,6 +9,7 @@ struct PlayRequest: Identifiable {
 struct DetailView: View {
     @Environment(AppStore.self) private var store
     @Environment(ShellState.self) private var shell
+    @Environment(\.zoomNS) private var zoomNS
     let item: EmbyItem
     let onBack: () -> Int
     @State private var detail: EmbyItem?
@@ -61,6 +62,7 @@ struct DetailView: View {
         }
         .ignoresSafeArea(edges: .top)
         .background { ambientBackground }
+        .zoomDestination(id: item.Id, ns: zoomNS)
         .toolbar(.hidden, for: .tabBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {

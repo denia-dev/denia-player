@@ -46,6 +46,7 @@ func wideImageKind(_ item: EmbyItem) -> String {
 struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(ShellState.self) private var shell
+    @Environment(\.zoomNS) private var zoomNS
     @State private var libraries: [EmbyItem] = []
     @State private var resume: [EmbyItem] = []
     @State private var latest: [EmbyItem] = []
@@ -244,6 +245,7 @@ struct HomeView: View {
                 ItemImage(item: item, client: client, kind: wideImageKind(item))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+                    .zoomSource(id: item.Id, ns: zoomNS)
                 LinearGradient(colors: [.clear, .clear, Color(.systemBackground).opacity(0.75), Color(.systemBackground)],
                                startPoint: .top, endPoint: .bottom)
             }
