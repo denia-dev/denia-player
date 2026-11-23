@@ -15,6 +15,9 @@ struct VLCRoute {
     let preferredAudioOrdinal: Int?
     let audioLabels: [String]
     let subtitleLabels: [String]
+    /// Emby stream Index for each audio ordinal, so a manual pick in
+    /// the menu can be remembered per series.
+    let audioStreamIndexes: [Int]
 }
 
 // MARK: - controller
@@ -416,6 +419,8 @@ struct VLCPlayerView: View {
     @State private var dragMode: DragMode?
     @State private var dragStartPosition: Double = 0
     @State private var dragStartLevel: Double = 0
+    @State private var boostSavedRate: Float?
+    @State private var sleepTask: Task<Void, Never>?
 
     private enum DragMode { case scrub, brightness, volume }
 
@@ -487,11 +492,13 @@ struct VLCPlayerView: View {
             controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal)
             if Prefs.defaultRate != 1.0 { controller.setRate(Float(Prefs.defaultRate)) }
             scheduleHide()
+            startSleepTimer()
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .sheet(isPresented: $showDiag) { diagSheet }
         .onDisappear {
             hideTask?.cancel()
+            sleepTask?.cancel()
             let client = store.client()
             let position = controller.directPosition()
             Task { await client?.reportStopped(itemID: item.Id, sourceID: route.sourceID, sessionID: route.sessionID, positionSeconds: position) }
@@ -636,6 +643,9 @@ struct VLCPlayerView: View {
                     ForEach(Array(realAudioTracks.enumerated()), id: \.element.id) { ordinal, track in
                         Button {
                             controller.selectAudio(track.id)
+                            if Prefs.rememberAudioChoice, ordinal < route.audioStreamIndexes.count {
+                                Prefs.rememberAudio(index: route.audioStreamIndexes[ordinal], for: item.SeriesId ?? item.Id)
+                            }
                         } label: {
                             Label(menuLabel(route.audioLabels, ordinal, fallback: track.name),
                                   systemImage: controller.selectedAudioID == track.id ? "checkmark" : "")
@@ -708,6 +718,41 @@ struct VLCPlayerView: View {
                 }
             }
             .onTapGesture { toggleChrome() }
+            .simultaneousGesture(boostGesture)
+    }
+
+    private var boostGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.45)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                if case .second(true, _) = value { startBoost() }
+            }
+            .onEnded { _ in endBoost() }
+    }
+
+    private func startBoost() {
+        guard Prefs.longPressBoost, boostSavedRate == nil, controller.isPlaying else { return }
+        boostSavedRate = controller.rate
+        controller.setRate(Float(Prefs.boostRate))
+        gestureHint = "\(Prefs.boostRate, specifier: "%g")× 快进中"
+    }
+
+    private func endBoost() {
+        guard let saved = boostSavedRate else { return }
+        boostSavedRate = nil
+        controller.setRate(saved)
+        if gestureHint?.hasSuffix("快进中") == true { gestureHint = nil }
+    }
+
+    private func startSleepTimer() {
+        sleepTask?.cancel()
+        let minutes = Prefs.sleepTimerMinutes
+        guard minutes > 0 else { return }
+        sleepTask = Task {
+            try? await Task.sleep(for: .seconds(Double(minutes * 60)))
+            guard !Task.isCancelled else { return }
+            if controller.isPlaying { controller.togglePlay() }
+        }
     }
 
     private func handleDrag(_ value: DragGesture.Value) {

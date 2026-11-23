@@ -67,6 +67,9 @@ struct PlayerView: View {
     @State private var gestureHint: String?
     @State private var showDiagnostics = false
     @State private var savedBrightness: CGFloat = UIScreen.main.brightness
+    @State private var currentRate: Double = 1
+    @State private var boostSavedRate: Double?
+    @State private var sleepTask: Task<Void, Never>?
 
     var body: some View {
         ZStack {
@@ -168,6 +171,7 @@ struct PlayerView: View {
         .onDisappear {
             requestOrientation(.portrait)
             hideTask?.cancel()
+            sleepTask?.cancel()
             if Prefs.independentBrightness {
                 Prefs.playerBrightness = Double(UIScreen.main.brightness)
             }
@@ -213,11 +217,26 @@ struct PlayerView: View {
                     let lang = (stream.Language ?? "").lowercased()
                     return lang.hasPrefix("zh") || lang == "chi" || lang == "zho"
                 }
+                let audioMatchesPreferred: (EmbyMediaStream) -> Bool = { stream in
+                    let lang = (stream.Language ?? "").lowercased()
+                    let title = stream.DisplayTitle ?? ""
+                    switch Prefs.audioLanguage {
+                    case "en": return lang.hasPrefix("en") || lang == "eng" || title.contains("英")
+                    case "ja": return lang.hasPrefix("ja") || lang == "jpn" || title.contains("日")
+                    case "ko": return lang.hasPrefix("ko") || lang == "kor" || title.contains("韩")
+                    default: return isChineseAudio(stream)
+                    }
+                }
                 let preferredAudio: EmbyMediaStream?
-                if Prefs.audioPreference == .default {
+                if Prefs.rememberAudioChoice,
+                   let remembered = Prefs.rememberedAudioIndex(for: item.SeriesId ?? item.Id),
+                   let hit = audios.first(where: { $0.Index == remembered }) {
+                    preferredAudio = hit
+                } else if Prefs.audioLanguage == "default" {
                     preferredAudio = audios.first
                 } else {
-                    preferredAudio = audios.first(where: { isChineseAudio($0) && !isTrueHD($0) })
+                    preferredAudio = audios.first(where: { audioMatchesPreferred($0) && !isTrueHD($0) })
+                        ?? audios.first(where: { audioMatchesPreferred($0) })
                         ?? audios.first(where: { !isTrueHD($0) })
                         ?? audios.first
                 }
@@ -229,7 +248,8 @@ struct PlayerView: View {
                     .map { $0.DisplayTitle ?? $0.Codec ?? "字幕" }
                 vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId,
                                     preferredAudioOrdinal: ordinal,
-                                    audioLabels: audioLabels, subtitleLabels: subtitleLabels)
+                                    audioLabels: audioLabels, subtitleLabels: subtitleLabels,
+                                    audioStreamIndexes: audios.map { $0.Index })
                 return
             }
             session = (source.Id, info.PlaySessionId)
@@ -238,11 +258,13 @@ struct PlayerView: View {
             player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
+            currentRate = Prefs.defaultRate
             if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
             Task { await prepareSubtitles() }
             Task { await prepareAudio() }
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
             scheduleHide()
+            startSleepTimer()
         } catch {
             loadError = "加载失败：\(error.localizedDescription)"
         }
@@ -304,22 +326,43 @@ struct PlayerView: View {
         return t.contains("国语") || t.contains("中文") || t.contains("普通话")
     }
 
-    /// Mirrors the VLCKit route's entry rule for the mpv engine: with
-    /// the Chinese-first preference, move off a non-Chinese (or
-    /// TrueHD) default track onto the best Chinese one, once.
+    private func audioTrackMatchesPreferred(_ track: MPVMediaTrack) -> Bool {
+        let lang = (track.language ?? "").lowercased()
+        let t = track.title ?? ""
+        switch Prefs.audioLanguage {
+        case "en": return lang.hasPrefix("en") || lang == "eng" || t.contains("英")
+        case "ja": return lang.hasPrefix("ja") || lang == "jpn" || t.contains("日")
+        case "ko": return lang.hasPrefix("ko") || lang == "kor" || t.contains("韩")
+        default: return isChineseAudioTrack(track)
+        }
+    }
+
+    /// Mirrors the VLCKit route's entry rule for the mpv engine: a
+    /// remembered track (by stream ordinal) wins, then the preferred
+    /// language avoiding TrueHD, applied once when tracks appear.
     private func prepareAudio() async {
-        guard Prefs.audioPreference == .zh else { return }
+        let key = item.SeriesId ?? item.Id
+        let remembered = Prefs.rememberAudioChoice ? Prefs.rememberedAudioIndex(for: key) : nil
+        guard remembered != nil || Prefs.audioLanguage != "default" else { return }
         let generation = playerGeneration
         for _ in 0..<16 {
             try? await Task.sleep(for: .milliseconds(500))
             guard generation == playerGeneration, !Task.isCancelled else { return }
             let audios = player.audioTracks
             guard !audios.isEmpty else { continue }
+            if let remembered,
+               let streams = currentSource?.MediaStreams?.filter({ $0.type == "Audio" }).sorted(by: { $0.Index < $1.Index }),
+               let ordinal = streams.firstIndex(where: { $0.Index == remembered }),
+               ordinal < audios.count {
+                let target = audios[ordinal]
+                if !target.isSelected { player.selectTrack(target.id) }
+                return
+            }
             if let selected = audios.first(where: { $0.isSelected }),
-               isChineseAudioTrack(selected),
+               audioTrackMatchesPreferred(selected),
                !(selected.codec ?? "").lowercased().contains("truehd") { return }
-            guard let best = audios.first(where: { isChineseAudioTrack($0) && !($0.codec ?? "").lowercased().contains("truehd") })
-                    ?? audios.first(where: { isChineseAudioTrack($0) }) else { return }
+            guard let best = audios.first(where: { audioTrackMatchesPreferred($0) && !($0.codec ?? "").lowercased().contains("truehd") })
+                    ?? audios.first(where: { audioTrackMatchesPreferred($0) }) else { return }
             player.selectTrack(best.id)
             return
         }
@@ -426,6 +469,41 @@ struct PlayerView: View {
                 }
             }
             .onTapGesture { toggleChrome() }
+            .simultaneousGesture(boostGesture)
+    }
+
+    private var boostGesture: some Gesture {
+        LongPressGesture(minimumDuration: 0.45)
+            .sequenced(before: DragGesture(minimumDistance: 0))
+            .onChanged { value in
+                if case .second(true, _) = value { startBoost() }
+            }
+            .onEnded { _ in endBoost() }
+    }
+
+    private func startBoost() {
+        guard Prefs.longPressBoost, boostSavedRate == nil, !player.isPaused else { return }
+        boostSavedRate = currentRate
+        player.setPlaybackRate(Prefs.boostRate)
+        gestureHint = "\(Prefs.boostRate, specifier: "%g")× 快进中"
+    }
+
+    private func endBoost() {
+        guard let saved = boostSavedRate else { return }
+        boostSavedRate = nil
+        player.setPlaybackRate(saved)
+        if gestureHint?.hasSuffix("快进中") == true { gestureHint = nil }
+    }
+
+    private func startSleepTimer() {
+        sleepTask?.cancel()
+        let minutes = Prefs.sleepTimerMinutes
+        guard minutes > 0 else { return }
+        sleepTask = Task {
+            try? await Task.sleep(for: .seconds(Double(minutes * 60)))
+            guard !Task.isCancelled else { return }
+            if !player.isPaused { player.togglePlayback() }
+        }
     }
 
     @State private var dragMode: DragMode?
@@ -604,6 +682,12 @@ struct PlayerView: View {
                     ForEach(player.audioTracks, id: \.mpvID) { track in
                         Button {
                             player.selectTrack(track.id)
+                            if Prefs.rememberAudioChoice,
+                               let ordinal = player.audioTracks.firstIndex(where: { $0.id == track.id }),
+                               let streams = currentSource?.MediaStreams?.filter({ $0.type == "Audio" }).sorted(by: { $0.Index < $1.Index }),
+                               ordinal < streams.count {
+                                Prefs.rememberAudio(index: streams[ordinal].Index, for: item.SeriesId ?? item.Id)
+                            }
                         } label: {
                             Label(trackLabel(track), systemImage: track.isSelected ? "checkmark" : "")
                         }
@@ -629,7 +713,7 @@ struct PlayerView: View {
             }
             Menu {
                 ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
-                    Button("\(rate, specifier: "%g")×") { player.setPlaybackRate(rate) }
+                    Button("\(rate, specifier: "%g")×") { player.setPlaybackRate(rate); currentRate = rate }
                 }
             } label: {
                 Image(systemName: "gauge.with.dots.needle.33percent").font(.title3)

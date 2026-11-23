@@ -80,10 +80,26 @@ enum Prefs {
 
     // Audio / subtitle entry preferences (defaults reproduce the
     // behaviour builds 4-27 shipped with)
-    enum AudioPreference: String { case zh, `default` }
     enum SubtitlePreference: String { case zhHans, zhHant, en, off }
-    static var audioPreference: AudioPreference {
-        AudioPreference(rawValue: d.string(forKey: "prefs.audioPreference") ?? "") ?? .zh
+    /// Preferred audio language: "default" (first track), zh, en, ja, ko.
+    static var audioLanguage: String { d.string(forKey: "prefs.audioLanguage") ?? "zh" }
+    static var rememberAudioChoice: Bool {
+        d.object(forKey: "prefs.rememberAudioChoice") == nil ? true : d.bool(forKey: "prefs.rememberAudioChoice")
+    }
+    static func rememberedAudioIndex(for key: String) -> Int? {
+        (d.dictionary(forKey: "prefs.rememberedAudio") as? [String: Int])?[key]
+    }
+    static func rememberAudio(index: Int, for key: String) {
+        var map = (d.dictionary(forKey: "prefs.rememberedAudio") as? [String: Int]) ?? [:]
+        map[key] = index
+        d.set(map, forKey: "prefs.rememberedAudio")
+    }
+    static var sleepTimerMinutes: Int { d.integer(forKey: "prefs.sleepTimerMinutes") }
+    static var longPressBoost: Bool {
+        d.object(forKey: "prefs.longPressBoost") == nil ? true : d.bool(forKey: "prefs.longPressBoost")
+    }
+    static var boostRate: Double {
+        d.object(forKey: "prefs.boostRate") == nil ? 2.0 : d.double(forKey: "prefs.boostRate")
     }
     static var subtitlePreference: SubtitlePreference {
         SubtitlePreference(rawValue: d.string(forKey: "prefs.subtitlePreference") ?? "") ?? .zhHans
@@ -301,6 +317,7 @@ struct ButtonPrefsView: View {
 struct PlaybackPrefsView: View {
     @AppStorage("prefs.seekStepSeconds") private var seekStep = 15.0
     @AppStorage("prefs.defaultRate") private var defaultRate = 1.0
+    @AppStorage("prefs.sleepTimerMinutes") private var sleepMinutes = 0
 
     var body: some View {
         ScrollView {
@@ -318,6 +335,14 @@ struct PlaybackPrefsView: View {
                         Button("1.25×") { defaultRate = 1.25 }
                         Button("1.5×") { defaultRate = 1.5 }
                         Button("2×") { defaultRate = 2.0 }
+                    }
+                    prefsDivider
+                    prefsMenuRow("睡眠定时", value: sleepMinutes == 0 ? "关闭" : "\(sleepMinutes) 分钟") {
+                        Button("关闭") { sleepMinutes = 0 }
+                        Button("15 分钟") { sleepMinutes = 15 }
+                        Button("30 分钟") { sleepMinutes = 30 }
+                        Button("45 分钟") { sleepMinutes = 45 }
+                        Button("60 分钟") { sleepMinutes = 60 }
                     }
                 }
                 Text("快进 / 快退秒数同时作用于播放器中央按钮与双击快进；默认播放速度在每次打开播放器时生效。")
@@ -343,6 +368,8 @@ struct GesturePrefsView: View {
     @AppStorage("prefs.gestureBrightness") private var brightness = true
     @AppStorage("prefs.gestureVolume") private var volume = true
     @AppStorage("prefs.gestureScrub") private var scrub = true
+    @AppStorage("prefs.longPressBoost") private var boost = true
+    @AppStorage("prefs.boostRate") private var boostRate = 2.0
 
     var body: some View {
         ScrollView {
@@ -353,7 +380,19 @@ struct GesturePrefsView: View {
                     prefsToggleRow("音量手势（右半屏上下滑）", isOn: $volume)
                     prefsDivider
                     prefsToggleRow("进度手势（左右滑）", isOn: $scrub)
+                    prefsDivider
+                    prefsToggleRow("长按倍速播放", isOn: $boost)
+                    prefsDivider
+                    prefsMenuRow("长按倍速", value: "\(boostRate, specifier: "%g")×") {
+                        Button("1.5×") { boostRate = 1.5 }
+                        Button("2×") { boostRate = 2.0 }
+                        Button("3×") { boostRate = 3.0 }
+                    }
                 }
+                Text("长按倍速播放：播放中长按画面不放，以设定倍速快进，松手恢复原速度。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 20)
                 Text("单击画面显示 / 隐藏控制栏、双击快进快退不受这些开关影响。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -423,18 +462,24 @@ struct VideoPrefsView: View {
 // MARK: - 音频设置
 
 struct AudioPrefsView: View {
-    @AppStorage("prefs.audioPreference") private var audioPreference = "zh"
+    @AppStorage("prefs.rememberAudioChoice") private var rememberChoice = true
+    @AppStorage("prefs.audioLanguage") private var audioLanguage = "zh"
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
-                    prefsMenuRow("默认音轨", value: audioPreference == "default" ? "默认第一条" : "国语优先") {
-                        Button("国语优先") { audioPreference = "zh" }
-                        Button("默认第一条") { audioPreference = "default" }
+                    prefsToggleRow("记住所选音轨", isOn: $rememberChoice)
+                    prefsDivider
+                    prefsMenuRow("音频首选语言", value: languageLabel) {
+                        Button("默认") { audioLanguage = "default" }
+                        Button("中文") { audioLanguage = "zh" }
+                        Button("英文") { audioLanguage = "en" }
+                        Button("日语") { audioLanguage = "ja" }
+                        Button("韩语") { audioLanguage = "ko" }
                     }
                 }
-                Text("国语优先：打开视频时自动选中文音轨，并避开 TrueHD（与一直以来的进门行为一致）。默认第一条：不做挑选，按片源的第一条音轨播放。两个引擎（mpv / VLCKit）都遵循此设置。")
+                Text("记住所选音轨：在播放器里手动切换的音轨会按剧记住，同一部剧的其它集自动沿用，优先级高于首选语言。首选语言：在没有记住的音轨时，打开视频自动选该语言的音轨，并避开 TrueHD；「默认」即片源的第一条音轨。两个引擎（mpv / VLCKit）都遵循。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -444,6 +489,16 @@ struct AudioPrefsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("音频设置")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var languageLabel: String {
+        switch audioLanguage {
+        case "default": return "默认"
+        case "en": return "英文"
+        case "ja": return "日语"
+        case "ko": return "韩语"
+        default: return "中文"
+        }
     }
 }
 
