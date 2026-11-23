@@ -335,10 +335,10 @@ struct DetailView: View {
                         Text(formatHMS(target.resumeSeconds > 5 ? target.resumeSeconds : target.durationSeconds))
                     }
                     .font(.system(size: 16, weight: .semibold))
-                    .foregroundStyle(.black)
+                    .foregroundStyle(.white)
                     .frame(maxWidth: .infinity)
                     .frame(height: 42)
-                    .background(Color.white, in: Capsule())
+                    .background(Color(red: 1.0, green: 0.18, blue: 0.53), in: Capsule())
                     .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 }
                 .buttonStyle(.plain)
