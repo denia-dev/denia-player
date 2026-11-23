@@ -57,6 +57,7 @@ targets:
       - path: DownloadActivityWidget
       - path: EmbyPlayer/DownloadActivityAttributes.swift
     info:
+      path: DownloadActivityWidget/Info.plist
       properties:
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
