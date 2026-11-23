@@ -48,21 +48,38 @@ struct PlayerView: View {
 
     @State private var decision: PlayerDecision?
     @State private var resolveError: String?
+    /// False until the view has actually been laid out in landscape.
+    /// The cover presents in portrait and the geometry update rotates a
+    /// beat later; any chrome painted in between lands in portrait
+    /// geometry and visibly jumps when the rotation lands (his
+    /// long-standing "UI 错位 on entry"). Until `entered`, only the
+    /// full-bleed poster backdrop shows - it is rotation-proof.
+    @State private var entered = false
     @State private var savedBrightness: CGFloat = UIScreen.main.brightness
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            if let decision {
+            if !entered {
+                if let client = store.client() {
+                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .overlay(Color.black.opacity(0.25))
+                }
+            } else if let decision {
                 switch decision {
                 case .vlc(let route):
                     VLCPlayerView(item: item, route: route, startSeconds: startSeconds, onPlayNext: onPlayNext)
+                        .transition(.opacity)
                 case .mpv(let launch):
                     MPVPlayerScreen(item: item, startSeconds: startSeconds, onPlayNext: onPlayNext,
                                     localFileURL: localFileURL, localHasPGS: localHasPGS,
                                     localAudioLabels: localAudioLabels, localSubtitleLabels: localSubtitleLabels,
                                     launch: launch)
+                        .transition(.opacity)
                 }
             } else {
                 if let client = store.client() {
@@ -101,7 +118,20 @@ struct PlayerView: View {
             }
         }
         .statusBarHidden(true)
+        .background {
+            GeometryReader { geo in
+                Color.clear
+                    .onAppear { noteGeometry(geo.size) }
+                    .onChange(of: geo.size) { _, size in noteGeometry(size) }
+            }
+        }
         .task { await resolve() }
+        .task {
+            // Rotation-locked phones refuse the landscape request; never
+            // leave the player stuck on the backdrop in that case.
+            try? await Task.sleep(for: .seconds(1.2))
+            if !entered { withAnimation(.easeIn(duration: 0.2)) { entered = true } }
+        }
         .onAppear {
             savedBrightness = UIScreen.main.brightness
             if Prefs.independentBrightness {
@@ -115,6 +145,16 @@ struct PlayerView: View {
                 Prefs.playerBrightness = Double(UIScreen.main.brightness)
             }
             UIScreen.main.brightness = savedBrightness
+        }
+    }
+
+    /// First landscape layout (+ a beat for the rotation to settle)
+    /// opens the gate; see `entered`.
+    private func noteGeometry(_ size: CGSize) {
+        guard size.width > size.height, !entered else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            if !entered { withAnimation(.easeIn(duration: 0.2)) { entered = true } }
         }
     }
 

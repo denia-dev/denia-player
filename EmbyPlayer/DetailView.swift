@@ -110,7 +110,7 @@ struct DetailView: View {
             heroBackdrop
                 .blur(radius: 50)
                 .scaleEffect(1.25)
-            Color(.systemBackground).opacity(0.86)
+            Color(.systemBackground).opacity(0.88)
         }
         .ignoresSafeArea()
     }
@@ -199,8 +199,13 @@ struct DetailView: View {
         .background {
             ZStack {
                 heroBackdrop
-                LinearGradient(colors: [.black.opacity(0.25), .clear, Color(.systemBackground).opacity(0.45), Color(.systemBackground).opacity(0.8)],
-                               startPoint: .top, endPoint: .bottom)
+                LinearGradient(stops: [
+                    .init(color: .black.opacity(0.25), location: 0),
+                    .init(color: .clear, location: 0.3),
+                    .init(color: Color(.systemBackground).opacity(0.45), location: 0.58),
+                    .init(color: Color(.systemBackground).opacity(0.88), location: 0.85),
+                    .init(color: Color(.systemBackground).opacity(0.88), location: 1.0),
+                ], startPoint: .top, endPoint: .bottom)
             }
         }
         .frame(height: 478)
@@ -394,6 +399,7 @@ struct DetailView: View {
                     }
                     .foregroundStyle(.primary)
                 }
+                .tint(.primary)
                 Spacer()
                 if episodeRanges.count > 1 {
                     Button { episodeRange = max(0, episodeRange - 1) } label: {
