@@ -241,7 +241,7 @@ struct EmbyClient {
 
     func favoriteItems() async throws -> [EmbyItem] {
         let query = [
-            URLQueryItem(name: "IsFavorite", value: "true"),
+            URLQueryItem(name: "Filters", value: "IsFavorite"),
             URLQueryItem(name: "Recursive", value: "true"),
             URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series,Episode"),
             URLQueryItem(name: "Limit", value: "60"),

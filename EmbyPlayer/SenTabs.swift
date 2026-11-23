@@ -246,7 +246,7 @@ struct RecordsView: View {
                                     .background {
                                         if segment == index {
                                             Color.clear
-                                                .glassEffect(.regular.tint(Color.accentColor.opacity(0.15)), in: Capsule())
+                                                .glassEffect(.clear.tint(Color.accentColor.opacity(0.12)), in: Capsule())
                                                 .glassEffectID("segmentSelection", in: segmentGlass)
                                         }
                                     }
@@ -324,6 +324,15 @@ struct RecordsView: View {
                 }
                 Spacer(minLength: 92)
             }
+        }
+        .background(alignment: .top) {
+            // A soft wash behind the header: Liquid Glass over a flat
+            // white page has nothing to refract and reads as flat
+            // plastic; the gradient gives the capsule its glass back.
+            LinearGradient(colors: [Color.accentColor.opacity(0.13), Color.accentColor.opacity(0)],
+                           startPoint: .top, endPoint: .bottom)
+                .frame(height: 320)
+                .ignoresSafeArea(edges: .top)
         }
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
