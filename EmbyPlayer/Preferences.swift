@@ -108,6 +108,9 @@ enum Prefs {
         d.object(forKey: "prefs.subScale") == nil ? 1.0 : d.double(forKey: "prefs.subScale")
     }
     static var subDelay: Double { d.double(forKey: "prefs.subDelay") }
+    static var skipSegments: Bool {
+        d.object(forKey: "prefs.skipSegments") == nil ? true : d.bool(forKey: "prefs.skipSegments")
+    }
     static var appLock: Bool { d.bool(forKey: "prefs.appLock") }
     static var subtitlePreference: SubtitlePreference {
         SubtitlePreference(rawValue: d.string(forKey: "prefs.subtitlePreference") ?? "") ?? .zhHans
@@ -327,6 +330,7 @@ struct PlaybackPrefsView: View {
     @AppStorage("prefs.defaultRate") private var defaultRate = 1.0
     @AppStorage("prefs.sleepTimerMinutes") private var sleepMinutes = 0
     @AppStorage("prefs.autoPlayNext") private var autoPlayNext = true
+    @AppStorage("prefs.skipSegments") private var skipSegments = true
 
     var body: some View {
         ScrollView {
@@ -355,6 +359,8 @@ struct PlaybackPrefsView: View {
                     }
                     prefsDivider
                     prefsToggleRow("自动播放下一集", isOn: $autoPlayNext)
+                    prefsDivider
+                    prefsToggleRow("跳过片头片尾按钮", isOn: $skipSegments)
                 }
                 Text("快进 / 快退秒数同时作用于播放器中央按钮与双击快进；默认播放速度在每次打开播放器时生效。")
                     .font(.footnote)

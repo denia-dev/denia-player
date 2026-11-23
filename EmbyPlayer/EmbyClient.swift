@@ -196,6 +196,17 @@ struct EmbyClient {
         return response.Items
     }
 
+    /// Intro/outro segments (the server's MediaSegments API, fed by
+    /// the intro-skipper plugin or Emby's own chapter analysis).
+    /// Servers without segment data answer 404 or an empty list -
+    /// both read as "no segments", never as an error worth showing.
+    func mediaSegments(itemID: String) async -> [MediaSegment] {
+        let request = makeRequest(path: "/MediaSegments/\(itemID)", query: [])
+        if let array: [MediaSegment] = try? await send(request) { return array }
+        if let wrapped: MediaSegmentsResponse = try? await send(request) { return wrapped.Items }
+        return []
+    }
+
     func episodes(seriesID: String, seasonID: String) async throws -> [EmbyItem] {
         let query = [
             URLQueryItem(name: "SeasonId", value: seasonID),
@@ -391,4 +402,22 @@ struct EmbyClient {
     func reportStopped(itemID: String, sourceID: String, sessionID: String?, positionSeconds: Double) async {
         await report(path: "/Sessions/Playing/Stopped", itemID: itemID, sourceID: sourceID, sessionID: sessionID, positionSeconds: positionSeconds)
     }
+}
+
+
+/// One intro/outro segment from the MediaSegments API (ticks are
+/// 100ns units, as everywhere in Emby).
+struct MediaSegment: Decodable {
+    let Type: String
+    let StartTicks: Int64
+    let EndTicks: Int64
+
+    var startSeconds: Double { Double(StartTicks) / 10_000_000 }
+    var endSeconds: Double { Double(EndTicks) / 10_000_000 }
+    var isIntro: Bool { Type.lowercased().contains("intro") }
+    var isOutro: Bool { Type.lowercased().contains("outro") }
+}
+
+private struct MediaSegmentsResponse: Decodable {
+    let Items: [MediaSegment]
 }

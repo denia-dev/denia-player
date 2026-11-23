@@ -425,6 +425,8 @@ struct VLCPlayerView: View {
     @State private var boostSavedRate: Float?
     @GestureState private var boostPressing = false
     @State private var nextEpisode: EmbyItem?
+    @State private var segments: [MediaSegment] = []
+    @State private var activeSegment: MediaSegment?
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
     @State private var sleepTask: Task<Void, Never>?
@@ -449,7 +451,7 @@ struct VLCPlayerView: View {
                 Text(gestureHint)
                     .font(.headline)
                     .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(.black.opacity(0.6), in: Capsule())
+                    .glassEffect(.regular, in: Capsule())
                     .foregroundStyle(.white)
             }
 
@@ -492,6 +494,27 @@ struct VLCPlayerView: View {
             if controller.isBuffering, !controller.hasError {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
+            if let activeSegment {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        Button { skipActiveSegment() } label: {
+                            Text(activeSegment.isIntro ? "跳过片头" : "跳过片尾")
+                                .font(.subheadline.bold())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 16).padding(.vertical, 9)
+                                .glassEffect(.regular.interactive(), in: Capsule())
+                                .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 96)
+                .zIndex(20)
+            }
+
             if controller.hasError {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
@@ -517,11 +540,15 @@ struct VLCPlayerView: View {
             scheduleHide()
             startSleepTimer()
             fetchNextEpisode()
+            fetchSegments()
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .sheet(isPresented: $showDiag) { diagSheet }
         .onChange(of: controller.hasEnded) { _, ended in
             if ended, Prefs.autoPlayNext, let nextEpisode { onPlayNext?(nextEpisode) }
+        }
+        .onChange(of: controller.position) { _, position in
+            updateActiveSegment(position: position)
         }
         .sheet(isPresented: $showEpisodePicker) { episodePicker }
         .onDisappear {
@@ -769,7 +796,7 @@ struct VLCPlayerView: View {
     // failed the press mid-way, leaving the boost on forever).
     private var boostGesture: some Gesture {
         LongPressGesture(minimumDuration: 2.0, maximumDistance: 12)
-            .updating($boostPressing) { _, state, _ in state = true }
+            .updating($boostPressing) { value, state, _ in state = value }
     }
 
     private func startBoost() {
@@ -824,6 +851,32 @@ struct VLCPlayerView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private func fetchSegments() {
+        guard let client = store.client() else { return }
+        Task { segments = await client.mediaSegments(itemID: item.Id) }
+    }
+
+    private func updateActiveSegment(position: Double) {
+        guard Prefs.skipSegments else {
+            if activeSegment != nil { activeSegment = nil }
+            return
+        }
+        let hit = segments.first {
+            position >= $0.startSeconds && position <= $0.endSeconds - 2 && ($0.isIntro || $0.isOutro)
+        }
+        if hit?.startSeconds != activeSegment?.startSeconds { activeSegment = hit }
+    }
+
+    private func skipActiveSegment() {
+        guard let segment = activeSegment else { return }
+        activeSegment = nil
+        if segment.isOutro, let nextEpisode {
+            onPlayNext?(nextEpisode)
+        } else {
+            controller.seek(to: segment.endSeconds + 0.3)
+        }
     }
 
     private func fetchNextEpisode() {
