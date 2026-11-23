@@ -60,7 +60,7 @@ final class DownloadsManager: NSObject, ObservableObject {
 
     private var session: URLSession!
     private var tasks: [Int: String] = [:]            // taskIdentifier -> itemID
-    private var pending: [String: DownloadRecord] = [:] // itemID -> record skeleton
+    @Published private(set) var pending: [String: DownloadRecord] = [:] // itemID -> active download skeleton
     private var pendingContainer: [String: String] = [:]
 
     private var root: URL {
@@ -244,6 +244,16 @@ final class DownloadsManager: NSObject, ObservableObject {
         failures[item.Id] = nil
         saveFailures()
         progress[item.Id] = 0
+        // Publish an immediate lightweight row before PlaybackInfo returns;
+        // otherwise the downloads tab can appear completely empty while the
+        // request is being resolved and ActivityKit is not yet available.
+        pending[item.Id] = DownloadRecord(
+            id: item.Id, name: item.Name, type: item.type,
+            seriesID: item.SeriesId, seriesName: item.SeriesName,
+            indexNumber: item.IndexNumber, overview: item.Overview,
+            runtimeSeconds: item.RunTimeTicks.map { Double($0) / 10_000_000 } ?? 0,
+            fileName: "", posterFileName: nil, sizeBytes: 0, hasPGS: false,
+            audioLabels: [], subtitleLabels: [], downloadedAt: Date())
         Task {
             do {
                 let info = try await client.playbackInfo(itemID: item.Id, startSeconds: 0)
