@@ -104,13 +104,18 @@ struct DetailView: View {
     }
 
     /// The backdrop, washed out, behind the whole page (SenPlayer's
-    /// ambient tint) instead of a hard white background.
+    /// ambient tint) instead of a hard white background. It must stay
+    /// VISIBLE as soft color patches down the whole page - SenPlayer's
+    /// background is the art itself, full-bleed. Builds 53-55 veiled it
+    /// at 0.88 over a radius-50 blur: 12% of an averaged-out image is a
+    /// flat slab, which is exactly what he kept rejecting ("背景充满"
+    /// means the art fills the page, not that a seam is blended).
     private var ambientBackground: some View {
         ZStack {
             heroBackdrop
-                .blur(radius: 50)
+                .blur(radius: 26)
                 .scaleEffect(1.25)
-            Color(.systemBackground).opacity(0.88)
+            Color(.systemBackground).opacity(0.55)
         }
         .ignoresSafeArea()
     }
@@ -203,8 +208,8 @@ struct DetailView: View {
                     .init(color: .black.opacity(0.25), location: 0),
                     .init(color: .clear, location: 0.3),
                     .init(color: Color(.systemBackground).opacity(0.45), location: 0.58),
-                    .init(color: Color(.systemBackground).opacity(0.88), location: 0.85),
-                    .init(color: Color(.systemBackground).opacity(0.88), location: 1.0),
+                    .init(color: Color(.systemBackground).opacity(0.55), location: 0.85),
+                    .init(color: Color(.systemBackground).opacity(0.55), location: 1.0),
                 ], startPoint: .top, endPoint: .bottom)
             }
             // Melt, don't cut: the background's alpha fades to zero over
