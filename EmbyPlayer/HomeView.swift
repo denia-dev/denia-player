@@ -6,12 +6,32 @@ struct ItemImage: View {
     let client: EmbyClient
     var kind: String = "Primary"
 
+    /// Shown when the server has no usable image: a titled tile instead of
+    /// an invisible hole in the grid.
+    private var imagePlaceholder: some View {
+        ZStack {
+            Rectangle().fill(Color.primary.opacity(0.07))
+            VStack(spacing: 6) {
+                Image(systemName: item.type == "Movie" ? "film" : "tv")
+                    .font(.title3)
+                    .foregroundStyle(.secondary)
+                Text(item.Name)
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .padding(.horizontal, 6)
+            }
+        }
+    }
+
     var body: some View {
         let sourceID = (kind == "Primary" && item.type == "Episode" && item.ImageTags?["Primary"] == nil)
             ? (item.SeriesId ?? item.Id) : item.Id
         return AsyncImage(url: client.imageURL(itemID: sourceID, kind: kind)) { phase in
             switch phase {
             case .success(let image): image.resizable().scaledToFill()
+            case .failure: imagePlaceholder
             default: Rectangle().fill(.quaternary)
             }
         }

@@ -186,6 +186,22 @@ struct EmbyClient {
         return response.Items
     }
 
+    /// One page of a library/collection's children. The plain children()
+    /// call returns whatever the server's implicit cap allows (goemby
+    /// truncates around 20), so browsable lists must page explicitly.
+    func childrenPage(parentID: String, startIndex: Int, limit: Int) async throws -> EmbyItemsResponse {
+        let query = [
+            URLQueryItem(name: "ParentId", value: parentID),
+            URLQueryItem(name: "SortBy", value: "SortName"),
+            URLQueryItem(name: "SortOrder", value: "Ascending"),
+            URLQueryItem(name: "Fields", value: "Overview"),
+            URLQueryItem(name: "StartIndex", value: String(startIndex)),
+            URLQueryItem(name: "Limit", value: String(limit)),
+            URLQueryItem(name: "EnableTotalRecordCount", value: "true"),
+        ]
+        return try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+    }
+
     func item(id: String) async throws -> EmbyItem {
         try await send(makeRequest(path: "/Users/\(server.userID)/Items/\(id)"))
     }

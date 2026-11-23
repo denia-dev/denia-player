@@ -7,6 +7,10 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var searchResults: [EmbyItem] = []
     @State private var errorText: String?
+    @State private var totalCount: Int?
+    @State private var loadingMore = false
+
+    private let pageSize = 60
 
     private var columns: [GridItem] {
         [GridItem(.adaptive(minimum: Prefs.posterColumns == 2 ? 150 : Prefs.posterColumns == 4 ? 88 : 110), spacing: 12)]
@@ -23,6 +27,12 @@ struct LibraryView: View {
                         gridCell(item)
                     }
                     .buttonStyle(.plain)
+                    .onAppear { maybeLoadMore(after: item) }
+                }
+                if loadingMore {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
                 }
             }
             .padding()
@@ -55,8 +65,30 @@ struct LibraryView: View {
 
     private func load() async {
         guard let client = store.client() else { return }
-        do { items = try await client.children(parentID: library.Id) }
-        catch { errorText = error.localizedDescription }
+        do {
+            let page = try await client.childrenPage(parentID: library.Id, startIndex: 0, limit: pageSize)
+            items = page.Items
+            totalCount = page.TotalRecordCount
+        } catch { errorText = error.localizedDescription }
+    }
+
+    /// Fetch the next page when the scroll nears the end of what we have.
+    private func maybeLoadMore(after item: EmbyItem) {
+        guard searchText.isEmpty, !loadingMore else { return }
+        guard let totalCount, items.count < totalCount else { return }
+        guard let index = items.firstIndex(where: { $0.Id == item.Id }),
+              index >= items.count - 9 else { return }
+        loadingMore = true
+        Task {
+            defer { loadingMore = false }
+            guard let client = store.client() else { return }
+            guard let page = try? await client.childrenPage(parentID: library.Id,
+                                                            startIndex: items.count,
+                                                            limit: pageSize) else { return }
+            let known = Set(items.map(\.Id))
+            items.append(contentsOf: page.Items.filter { !known.contains($0.Id) })
+            totalCount = page.TotalRecordCount ?? totalCount
+        }
     }
 
     private func runSearch(_ term: String) async {
