@@ -392,6 +392,18 @@ struct SettingsView: View {
                         URLCache.shared.removeAllCachedResponses()
                         cacheNote = "已清除"
                     }
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.appPrefs) {
+                        SettingRowContent(icon: "paintpalette.fill", color: .pink, title: "应用偏好",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.modulePrefs) {
+                        SettingRowContent(icon: "square.grid.2x2.fill", color: .green, title: "模块配置",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 settingsGroup("播放") {
@@ -409,6 +421,26 @@ struct SettingsView: View {
                     Divider().padding(.leading, 58)
                     NavigationLink(value: Route.gesturePrefs) {
                         SettingRowContent(icon: "hand.tap.fill", color: .blue, title: "播放手势",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                settingsGroup("音视频") {
+                    NavigationLink(value: Route.videoPrefs) {
+                        SettingRowContent(icon: "video.fill", color: .blue, title: "视频设置",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.audioPrefs) {
+                        SettingRowContent(icon: "headphones", color: .blue, title: "音频设置",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.subtitlePrefs) {
+                        SettingRowContent(icon: "captions.bubble.fill", color: .orange, title: "字幕设置",
                                           value: nil, chevron: true)
                     }
                     .buttonStyle(.plain)

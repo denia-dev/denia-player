@@ -224,14 +224,30 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
                     player.currentVideoSubTitleIndex = real[ordinal].id
                     selectedSubtitleID = real[ordinal].id
                 }
-            } else if player.currentVideoSubTitleIndex < 0 {
-                let pick = real.first(where: { $0.name.contains("简") || $0.name.contains("中") }) ?? real.first
+            } else if player.currentVideoSubTitleIndex < 0, Prefs.subtitlePreference != .off {
+                let pick = Self.subtitlePick(real) ?? real.first
                 if let pick {
                     desiredSubtitleOrdinal = real.firstIndex(where: { $0.id == pick.id })
                     player.currentVideoSubTitleIndex = pick.id
                     selectedSubtitleID = pick.id
                 }
             }
+        }
+    }
+
+    /// The one-time entry subtitle pick, following the configured
+    /// preference (VLCKit exposes track names only, so matching is by
+    /// name, like the original Simplified-first rule).
+    private static func subtitlePick(_ real: [(id: Int32, name: String)]) -> (id: Int32, name: String)? {
+        switch Prefs.subtitlePreference {
+        case .zhHans:
+            return real.first(where: { $0.name.contains("简") }) ?? real.first(where: { $0.name.contains("中") })
+        case .zhHant:
+            return real.first(where: { $0.name.contains("繁") }) ?? real.first(where: { $0.name.contains("中") })
+        case .en:
+            return real.first(where: { $0.name.contains("英") || $0.name.localizedCaseInsensitiveContains("english") })
+        case .off:
+            return nil
         }
     }
 

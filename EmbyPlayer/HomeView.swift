@@ -41,7 +41,7 @@ struct HomeView: View {
                 if let errorText {
                     Text(errorText).foregroundStyle(.red).font(.footnote).padding(.horizontal)
                 }
-                if !resume.isEmpty, let client = store.client() {
+                if Prefs.showHomeResume, !resume.isEmpty, let client = store.client() {
                     sectionHeader("继续观看", count: resume.count)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 14) {
@@ -56,7 +56,7 @@ struct HomeView: View {
                         .padding(.horizontal)
                     }
                 }
-                if !libraries.isEmpty, let client = store.client() {
+                if Prefs.showHomeLibraries, !libraries.isEmpty, let client = store.client() {
                     sectionHeader("我的媒体库", count: nil)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 12) {
@@ -76,7 +76,7 @@ struct HomeView: View {
                         .padding(.horizontal)
                     }
                 }
-                if !latest.isEmpty, let client = store.client() {
+                if Prefs.showHomeLatest, !latest.isEmpty, let client = store.client() {
                     sectionHeader("最新添加", count: nil)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 12) {

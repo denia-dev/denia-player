@@ -61,6 +61,11 @@ enum Route: Hashable {
     case buttonPrefs
     case playbackPrefs
     case gesturePrefs
+    case videoPrefs
+    case audioPrefs
+    case subtitlePrefs
+    case appPrefs
+    case modulePrefs
 }
 
 /// The five tab stacks' navigation paths, held in a reference-type
@@ -106,6 +111,16 @@ extension View {
                 PlaybackPrefsView()
             case .gesturePrefs:
                 GesturePrefsView()
+            case .videoPrefs:
+                VideoPrefsView()
+            case .audioPrefs:
+                AudioPrefsView()
+            case .subtitlePrefs:
+                SubtitlePrefsView()
+            case .appPrefs:
+                AppPrefsView()
+            case .modulePrefs:
+                ModulePrefsView()
             }
         }
     }
@@ -117,7 +132,12 @@ extension View {
 /// hand-rolled glass bar did not. Pushed pages hide it with
 /// .toolbar(.hidden, for: .tabBar).
 struct MainView: View {
-    @State private var tab = 0
+    @State private var tab: Int
+
+    init() {
+        let start = Prefs.startTab
+        _tab = State(initialValue: start >= 0 ? start : UserDefaults.standard.integer(forKey: "app.lastTab"))
+    }
     @State private var shell = ShellState()
     @State private var nav = NavStore()
 
@@ -155,6 +175,9 @@ struct MainView: View {
         }
         .tint(.blue)
         .environment(shell)
+        .onChange(of: tab) { _, newValue in
+            UserDefaults.standard.set(newValue, forKey: "app.lastTab")
+        }
         .onChange(of: shell.searchRequested) { _, requested in
             if requested {
                 shell.searchRequested = false

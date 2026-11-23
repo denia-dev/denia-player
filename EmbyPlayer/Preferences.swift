@@ -68,6 +68,41 @@ enum Prefs {
     static var gestureScrub: Bool {
         d.object(forKey: "prefs.gestureScrub") == nil ? true : d.bool(forKey: "prefs.gestureScrub")
     }
+
+    // Video (mpv configuration; applied when the player is created)
+    static var decodeMode: String { d.string(forKey: "prefs.decodeMode") ?? "hardware" }
+    static var softwareThreads: Int {
+        d.object(forKey: "prefs.softwareThreads") == nil ? 8 : d.integer(forKey: "prefs.softwareThreads")
+    }
+    static var dvP7Convert: Bool {
+        d.object(forKey: "prefs.dvP7Convert") == nil ? true : d.bool(forKey: "prefs.dvP7Convert")
+    }
+
+    // Audio / subtitle entry preferences (defaults reproduce the
+    // behaviour builds 4-27 shipped with)
+    enum AudioPreference: String { case zh, `default` }
+    enum SubtitlePreference: String { case zhHans, zhHant, en, off }
+    static var audioPreference: AudioPreference {
+        AudioPreference(rawValue: d.string(forKey: "prefs.audioPreference") ?? "") ?? .zh
+    }
+    static var subtitlePreference: SubtitlePreference {
+        SubtitlePreference(rawValue: d.string(forKey: "prefs.subtitlePreference") ?? "") ?? .zhHans
+    }
+
+    // Home modules + start tab
+    static var showHomeResume: Bool {
+        d.object(forKey: "prefs.showHomeResume") == nil ? true : d.bool(forKey: "prefs.showHomeResume")
+    }
+    static var showHomeLibraries: Bool {
+        d.object(forKey: "prefs.showHomeLibraries") == nil ? true : d.bool(forKey: "prefs.showHomeLibraries")
+    }
+    static var showHomeLatest: Bool {
+        d.object(forKey: "prefs.showHomeLatest") == nil ? true : d.bool(forKey: "prefs.showHomeLatest")
+    }
+    /// 0-4 = that tab; -1 = whichever tab was used last.
+    static var startTab: Int {
+        d.object(forKey: "prefs.startTab") == nil ? 0 : d.integer(forKey: "prefs.startTab")
+    }
 }
 
 // MARK: - Shared settings-page building blocks (SenPlayer-style cards)
@@ -328,6 +363,181 @@ struct GesturePrefsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("播放手势")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 视频设置
+
+struct VideoPrefsView: View {
+    @AppStorage("prefs.decodeMode") private var decodeMode = "hardware"
+    @AppStorage("prefs.softwareThreads") private var threads = 8
+    @AppStorage("prefs.dvP7Convert") private var p7Convert = true
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsMenuRow("首选解码模式", value: decodeLabel) {
+                        Button("自动") { decodeMode = "auto" }
+                        Button("硬解码 (HW/GPU)") { decodeMode = "hardware" }
+                        Button("软解码") { decodeMode = "software" }
+                    }
+                    prefsDivider
+                    prefsMenuRow("软件解码线程", value: "\(threads)") {
+                        Button("2") { threads = 2 }
+                        Button("4") { threads = 4 }
+                        Button("8") { threads = 8 }
+                        Button("16") { threads = 16 }
+                    }
+                }
+                Text("硬解码：高效省电，基本不发热，能否硬解取决于设备与系统。软解码：兼容性强，但播放大文件容易发热且耗电量高。除非无法正常播放，否则不要使用软解码。以上设置作用于 mpv 引擎；VLCKit 引擎（PGS 字幕片源）使用其内置解码。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+
+                prefsCard {
+                    prefsToggleRow("杜比 P7 转杜比 P8.1", isOn: $p7Convert)
+                }
+                Text("开启后，杜比视界 Profile 7 片源会转成 P8.1 兼容播放（与 SenPlayer 同名开关行为一致）；关闭则按严格模式处理，个别片源可能无法播放。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("视频设置")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var decodeLabel: String {
+        switch decodeMode {
+        case "auto": return "自动"
+        case "software": return "软解码"
+        default: return "硬解码 (HW/GPU)"
+        }
+    }
+}
+
+// MARK: - 音频设置
+
+struct AudioPrefsView: View {
+    @AppStorage("prefs.audioPreference") private var audioPreference = "zh"
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsMenuRow("默认音轨", value: audioPreference == "default" ? "默认第一条" : "国语优先") {
+                        Button("国语优先") { audioPreference = "zh" }
+                        Button("默认第一条") { audioPreference = "default" }
+                    }
+                }
+                Text("国语优先：打开视频时自动选中文音轨，并避开 TrueHD（与一直以来的进门行为一致）。默认第一条：不做挑选，按片源的第一条音轨播放。两个引擎（mpv / VLCKit）都遵循此设置。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("音频设置")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 字幕设置
+
+struct SubtitlePrefsView: View {
+    @AppStorage("prefs.subtitlePreference") private var subtitlePreference = "zhHans"
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsMenuRow("默认字幕", value: subtitleLabel) {
+                        Button("简体中文") { subtitlePreference = "zhHans" }
+                        Button("繁体中文") { subtitlePreference = "zhHant" }
+                        Button("英文") { subtitlePreference = "en" }
+                        Button("关闭") { subtitlePreference = "off" }
+                    }
+                }
+                Text("打开视频时自动挑选的字幕（内嵌与外挂字幕都算）；没有匹配的字幕时回退到片源默认字幕。选「关闭」则不自动开启字幕，仍可在播放器里手动选择。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("字幕设置")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var subtitleLabel: String {
+        switch subtitlePreference {
+        case "zhHant": return "繁体中文"
+        case "en": return "英文"
+        case "off": return "关闭"
+        default: return "简体中文"
+        }
+    }
+}
+
+// MARK: - 应用偏好
+
+struct AppPrefsView: View {
+    @AppStorage("prefs.startTab") private var startTab = 0
+
+    private let tabNames = ["首页", "资源库", "记录", "设置", "搜索"]
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsMenuRow("启动时打开", value: startTab == -1 ? "上次使用" : tabNames[startTab]) {
+                        ForEach(tabNames.indices, id: \.self) { index in
+                            Button(tabNames[index]) { startTab = index }
+                        }
+                        Button("上次使用") { startTab = -1 }
+                    }
+                }
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("应用偏好")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 模块配置（首页区块）
+
+struct ModulePrefsView: View {
+    @AppStorage("prefs.showHomeResume") private var showResume = true
+    @AppStorage("prefs.showHomeLibraries") private var showLibraries = true
+    @AppStorage("prefs.showHomeLatest") private var showLatest = true
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsToggleRow("继续观看", isOn: $showResume)
+                    prefsDivider
+                    prefsToggleRow("我的媒体库", isOn: $showLibraries)
+                    prefsDivider
+                    prefsToggleRow("最新添加", isOn: $showLatest)
+                }
+                Text("控制首页各区块的显示；顶部推荐轮播不受影响。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.leading, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("模块配置")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

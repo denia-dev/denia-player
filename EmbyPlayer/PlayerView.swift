@@ -34,6 +34,7 @@ struct PlayerView: View {
             "demuxer-max-bytes": "536870912",
             "demuxer-readahead-secs": "60",
             "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+            "vd-lavc-threads": "\(Prefs.softwareThreads)",
         ]
         // MPVUI ships no fonts and iOS exposes no system font dir to libass,
         // so bundle a CJK font or every Chinese subtitle renders as tofu.
@@ -46,8 +47,8 @@ struct PlayerView: View {
         let created = MPVPlayer(configuration: .init(
             additionalOptions: options,
             automaticallyPlays: true,
-            dolbyVisionPolicy: .profile7Compatibility,
-            hardwareDecoding: .videoToolbox,
+            dolbyVisionPolicy: Prefs.dvP7Convert ? .profile7Compatibility : .strict,
+            hardwareDecoding: Prefs.decodeMode == "software" ? .disabled : (Prefs.decodeMode == "auto" ? .automatic : .videoToolbox),
             initialBufferDuration: .seconds(3),
             networkCacheDuration: .seconds(120),
             rebufferDuration: .seconds(5),
@@ -212,9 +213,14 @@ struct PlayerView: View {
                     let lang = (stream.Language ?? "").lowercased()
                     return lang.hasPrefix("zh") || lang == "chi" || lang == "zho"
                 }
-                let preferredAudio = audios.first(where: { isChineseAudio($0) && !isTrueHD($0) })
-                    ?? audios.first(where: { !isTrueHD($0) })
-                    ?? audios.first
+                let preferredAudio: EmbyMediaStream?
+                if Prefs.audioPreference == .default {
+                    preferredAudio = audios.first
+                } else {
+                    preferredAudio = audios.first(where: { isChineseAudio($0) && !isTrueHD($0) })
+                        ?? audios.first(where: { !isTrueHD($0) })
+                        ?? audios.first
+                }
                 let ordinal = preferredAudio.flatMap { pick in audios.firstIndex(where: { $0.Index == pick.Index }) }
                 let audioLabels = audios.map { $0.DisplayTitle ?? $0.Codec ?? "音轨" }
                 let subtitleLabels = (source.MediaStreams ?? [])
@@ -234,6 +240,7 @@ struct PlayerView: View {
             player.setSubtitlesVisible(true)
             if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
             Task { await prepareSubtitles() }
+            Task { await prepareAudio() }
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
             scheduleHide()
         } catch {
@@ -250,6 +257,74 @@ struct PlayerView: View {
         return t.contains("中") || t.contains("简") || t.contains("繁") || t.localizedCaseInsensitiveContains("chs") || t.localizedCaseInsensitiveContains("cht")
     }
 
+    private func isSimplifiedSub(language: String?, title: String?) -> Bool {
+        let lang = (language ?? "").lowercased()
+        if lang == "zh-hans" || lang == "zh-cn" { return true }
+        let t = title ?? ""
+        return t.contains("简") || t.localizedCaseInsensitiveContains("chs")
+    }
+
+    private func isTraditionalSub(language: String?, title: String?) -> Bool {
+        let lang = (language ?? "").lowercased()
+        if lang == "zh-hant" || lang == "zh-tw" || lang == "zh-hk" { return true }
+        let t = title ?? ""
+        return t.contains("繁") || t.localizedCaseInsensitiveContains("cht")
+    }
+
+    private func isEnglishSub(language: String?, title: String?) -> Bool {
+        let lang = (language ?? "").lowercased()
+        if lang.hasPrefix("en") || lang == "eng" { return true }
+        let t = title ?? ""
+        return t.contains("英") || t.localizedCaseInsensitiveContains("english")
+    }
+
+    /// Lower scores win; nil means the track does not match the
+    /// configured subtitle preference at all.
+    private func subtitlePrefScore(language: String?, title: String?) -> Int? {
+        switch Prefs.subtitlePreference {
+        case .zhHans:
+            if isSimplifiedSub(language: language, title: title) { return 0 }
+            if isChineseSub(language: language, title: title) { return 1 }
+            return nil
+        case .zhHant:
+            if isTraditionalSub(language: language, title: title) { return 0 }
+            if isChineseSub(language: language, title: title) { return 1 }
+            return nil
+        case .en:
+            return isEnglishSub(language: language, title: title) ? 0 : nil
+        case .off:
+            return nil
+        }
+    }
+
+    private func isChineseAudioTrack(_ track: MPVMediaTrack) -> Bool {
+        let lang = (track.language ?? "").lowercased()
+        if lang.hasPrefix("zh") || lang == "chi" || lang == "zho" { return true }
+        let t = track.title ?? ""
+        return t.contains("国语") || t.contains("中文") || t.contains("普通话")
+    }
+
+    /// Mirrors the VLCKit route's entry rule for the mpv engine: with
+    /// the Chinese-first preference, move off a non-Chinese (or
+    /// TrueHD) default track onto the best Chinese one, once.
+    private func prepareAudio() async {
+        guard Prefs.audioPreference == .zh else { return }
+        let generation = playerGeneration
+        for _ in 0..<16 {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard generation == playerGeneration, !Task.isCancelled else { return }
+            let audios = player.audioTracks
+            guard !audios.isEmpty else { continue }
+            if let selected = audios.first(where: { $0.isSelected }),
+               isChineseAudioTrack(selected),
+               !(selected.codec ?? "").lowercased().contains("truehd") { return }
+            guard let best = audios.first(where: { isChineseAudioTrack($0) && !($0.codec ?? "").lowercased().contains("truehd") })
+                    ?? audios.first(where: { isChineseAudioTrack($0) }) else { return }
+            player.selectTrack(best.id)
+            return
+        }
+    }
+
     /// Adds the server's external subtitle files and, when the container did
     /// not auto-select one, selects the best embedded track (Chinese first,
     /// then the container's default, then the first track).
@@ -261,11 +336,20 @@ struct PlayerView: View {
 
         let externals = client.externalSubtitles(itemID: item.Id, source: source)
         if !externals.isEmpty {
-            let preferred = externals.first(where: { isChineseSub(language: $0.language, title: $0.title) }) ?? externals[0]
-            for ext in externals where ext.url != preferred.url {
-                player.loadExternalSubtitle(ext.url, selecting: nil)
+            if Prefs.subtitlePreference == .off {
+                for ext in externals {
+                    player.loadExternalSubtitle(ext.url, selecting: nil)
+                }
+            } else {
+                let preferred = externals
+                    .filter { subtitlePrefScore(language: $0.language, title: $0.title) != nil }
+                    .min(by: { (subtitlePrefScore(language: $0.language, title: $0.title) ?? Int.max) < (subtitlePrefScore(language: $1.language, title: $1.title) ?? Int.max) })
+                    ?? externals[0]
+                for ext in externals where ext.url != preferred.url {
+                    player.loadExternalSubtitle(ext.url, selecting: nil)
+                }
+                player.loadExternalSubtitle(preferred.url, selecting: .primary)
             }
-            player.loadExternalSubtitle(preferred.url, selecting: .primary)
         }
 
         for _ in 0..<24 {
@@ -273,7 +357,11 @@ struct PlayerView: View {
             guard generation == playerGeneration, !Task.isCancelled else { return }
             let subs = player.subtitleTracks
             if subs.contains(where: { $0.isSelected }) { return }
-            guard let best = subs.first(where: { isChineseSub(language: $0.language, title: $0.title) })
+            if Prefs.subtitlePreference == .off { return }
+            let scored = subs
+                .filter { subtitlePrefScore(language: $0.language, title: $0.title) != nil }
+                .min(by: { (subtitlePrefScore(language: $0.language, title: $0.title) ?? Int.max) < (subtitlePrefScore(language: $1.language, title: $1.title) ?? Int.max) })
+            guard let best = scored
                     ?? subs.first(where: { $0.isDefault })
                     ?? subs.first else { continue }
             try? await Task.sleep(for: .seconds(1))
