@@ -9,10 +9,29 @@ extension Duration {
     }
 }
 
-/// Spike player: proves the mpv direct-play core on real files.
-/// Layout rule (from the post-mortem): the rendering view is created once and
-/// never moves; gestures live on their own transparent layer; chrome is a
-/// sibling overlay animated by opacity only.
+/// Which engine plays this item, decided once by PlayerView before any
+/// player surface is created.
+enum PlayerDecision {
+    case vlc(VLCRoute)
+    case mpv(MPVLaunch)
+}
+
+/// Everything the mpv screen needs to start without asking the server
+/// again (a second PlaybackInfo would mint a second play session).
+struct MPVLaunch {
+    let url: URL
+    let source: EmbyMediaSource?
+    let sessionID: String?
+}
+
+/// Player entry point: decides the engine FIRST, then shows exactly one
+/// full-screen player screen. Up to build 48 the VLC view was embedded
+/// inside the mpv view's stack - two chromes, two gesture layers, two
+/// close buttons in one hierarchy - and on PGS titles the VLC control
+/// layer came out torn apart (info and slider at the top of the screen,
+/// transport floating mid-screen, bottom empty). One screen, one engine,
+/// no stacking. This container owns only the shared shell concerns:
+/// engine decision, entry orientation and brightness save/restore.
 struct PlayerView: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
@@ -27,10 +46,220 @@ struct PlayerView: View {
     var localAudioLabels: [String] = []
     var localSubtitleLabels: [String] = []
 
-    @State private var player = PlayerView.makePlayer(videoOutput: .metal)
+    @State private var decision: PlayerDecision?
+    @State private var resolveError: String?
+    @State private var savedBrightness: CGFloat = UIScreen.main.brightness
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            if let decision {
+                switch decision {
+                case .vlc(let route):
+                    VLCPlayerView(item: item, route: route, startSeconds: startSeconds, onPlayNext: onPlayNext)
+                case .mpv(let launch):
+                    MPVPlayerScreen(item: item, startSeconds: startSeconds, onPlayNext: onPlayNext,
+                                    localFileURL: localFileURL, localHasPGS: localHasPGS,
+                                    localAudioLabels: localAudioLabels, localSubtitleLabels: localSubtitleLabels,
+                                    launch: launch)
+                }
+            } else {
+                if let client = store.client() {
+                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .overlay(Color.black.opacity(0.25))
+                }
+                if let resolveError {
+                    VStack(spacing: 10) {
+                        Image(systemName: "exclamationmark.triangle").font(.largeTitle)
+                        Text(resolveError).font(.footnote).multilineTextAlignment(.center)
+                    }
+                    .foregroundStyle(.white)
+                    .padding()
+                } else {
+                    ProgressView().tint(.white).scaleEffect(1.4)
+                }
+                VStack {
+                    HStack {
+                        Button { dismiss() } label: {
+                            Image(systemName: "xmark")
+                                .font(.body.bold())
+                                .foregroundStyle(.white)
+                                .padding(10)
+                                .glassEffect(.regular.interactive(), in: Circle())
+                                .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
+                        }
+                        Spacer()
+                    }
+                    Spacer()
+                }
+                .padding(.leading, 14)
+                .padding(.top, 10)
+            }
+        }
+        .statusBarHidden(true)
+        .task { await resolve() }
+        .onAppear {
+            savedBrightness = UIScreen.main.brightness
+            if Prefs.independentBrightness {
+                UIScreen.main.brightness = CGFloat(Prefs.playerBrightness)
+            }
+            applyEntryOrientation()
+        }
+        .onDisappear {
+            requestOrientation(.portrait)
+            if Prefs.independentBrightness {
+                Prefs.playerBrightness = Double(UIScreen.main.brightness)
+            }
+            UIScreen.main.brightness = savedBrightness
+        }
+    }
+
+    /// Decide the engine before any surface exists.
+    private func resolve() async {
+        guard decision == nil else { return }
+        if let localFileURL {
+            decision = localHasPGS
+                ? .vlc(VLCRoute(url: localFileURL, sourceID: "", sessionID: nil,
+                                preferredAudioOrdinal: nil,
+                                audioLabels: localAudioLabels, subtitleLabels: localSubtitleLabels,
+                                audioStreamIndexes: [], preferredSubtitleOrdinal: nil,
+                                subtitleOff: false, subtitleStreamIndexes: [], isLocal: true))
+                : .mpv(MPVLaunch(url: localFileURL, source: nil, sessionID: nil))
+            return
+        }
+        guard let client = store.client() else { resolveError = "没有可用服务器"; return }
+        do {
+            let info = try await client.playbackInfo(itemID: item.Id, startSeconds: startSeconds)
+            guard let source = info.MediaSources.first(where: { $0.SupportsDirectPlay == true }) ?? info.MediaSources.first else {
+                resolveError = "服务器没有返回媒体源"
+                return
+            }
+            guard let url = client.directStreamURL(itemID: item.Id, source: source, sessionID: info.PlaySessionId) else {
+                resolveError = "无法生成直连地址"
+                return
+            }
+            // PGS (bitmap) subtitles cannot be composited by MPVUI's
+            // renderers (proven by diagnostics, builds 8-10): hand those
+            // items to the VLCKit engine, which renders them natively.
+            // The VLC view owns session reporting for this route.
+            let hasPGS = (source.MediaStreams ?? []).contains {
+                $0.type == "Subtitle" && ($0.Codec ?? "").lowercased().contains("pgs")
+            }
+            if hasPGS {
+                let audios = (source.MediaStreams ?? [])
+                    .filter { $0.type == "Audio" }
+                    .sorted { $0.Index < $1.Index }
+                func isTrueHD(_ stream: EmbyMediaStream) -> Bool {
+                    (stream.Codec ?? "").lowercased().contains("truehd")
+                }
+                func isChineseAudio(_ stream: EmbyMediaStream) -> Bool {
+                    let lang = (stream.Language ?? "").lowercased()
+                    return lang.hasPrefix("zh") || lang == "chi" || lang == "zho"
+                }
+                let audioMatchesPreferred: (EmbyMediaStream) -> Bool = { stream in
+                    let lang = (stream.Language ?? "").lowercased()
+                    let title = stream.DisplayTitle ?? ""
+                    switch Prefs.audioLanguage {
+                    case "en": return lang.hasPrefix("en") || lang == "eng" || title.contains("英")
+                    case "ja": return lang.hasPrefix("ja") || lang == "jpn" || title.contains("日")
+                    case "ko": return lang.hasPrefix("ko") || lang == "kor" || title.contains("韩")
+                    default: return isChineseAudio(stream)
+                    }
+                }
+                let preferredAudio: EmbyMediaStream?
+                if Prefs.rememberAudioChoice,
+                   let remembered = Prefs.rememberedAudioIndex(for: item.SeriesId ?? item.Id),
+                   let hit = audios.first(where: { $0.Index == remembered }) {
+                    preferredAudio = hit
+                } else if Prefs.audioLanguage == "default" {
+                    preferredAudio = audios.first
+                } else {
+                    preferredAudio = audios.first(where: { audioMatchesPreferred($0) && !isTrueHD($0) })
+                        ?? audios.first(where: { audioMatchesPreferred($0) })
+                        ?? audios.first(where: { !isTrueHD($0) })
+                        ?? audios.first
+                }
+                let ordinal = preferredAudio.flatMap { pick in audios.firstIndex(where: { $0.Index == pick.Index }) }
+                let audioLabels = audios.map { stream in
+                    let base = stream.DisplayTitle ?? stream.Codec ?? "音轨"
+                    return stream.Channels.map { base + " · " + channelLayoutName($0) } ?? base
+                }
+                let subtitleStreams = (source.MediaStreams ?? [])
+                    .filter { $0.type == "Subtitle" }
+                    .sorted { $0.Index < $1.Index }
+                let subtitleLabels = subtitleStreams.map { $0.DisplayTitle ?? $0.Codec ?? "字幕" }
+                var preferredSubtitleOrdinal: Int? = nil
+                var subtitleOff = false
+                if Prefs.rememberSubtitleChoice,
+                   let rememberedSub = Prefs.rememberedSubtitleIndex(for: item.SeriesId ?? item.Id) {
+                    if rememberedSub < 0 { subtitleOff = true }
+                    else { preferredSubtitleOrdinal = subtitleStreams.firstIndex(where: { $0.Index == rememberedSub }) }
+                }
+                decision = .vlc(VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId,
+                                    preferredAudioOrdinal: ordinal,
+                                    audioLabels: audioLabels, subtitleLabels: subtitleLabels,
+                                    audioStreamIndexes: audios.map { $0.Index },
+                                    preferredSubtitleOrdinal: preferredSubtitleOrdinal,
+                                    subtitleOff: subtitleOff,
+                                    subtitleStreamIndexes: subtitleStreams.map { $0.Index }))
+                return
+            }
+            decision = .mpv(MPVLaunch(url: url, source: source, sessionID: info.PlaySessionId))
+        } catch {
+            resolveError = "加载失败：\(error.localizedDescription)"
+        }
+    }
+
+    private func applyEntryOrientation() {
+        switch Prefs.playerOrientation {
+        case .landscape: requestOrientation(Prefs.landscapeMask)
+        case .portrait: requestOrientation(.portrait)
+        case .auto: break
+        }
+    }
+
+    private func requestOrientation(_ mask: UIInterfaceOrientationMask) {
+        AppDelegate.orientationMask = mask
+        guard let scene = UIApplication.shared.connectedScenes
+            .compactMap({ $0 as? UIWindowScene }).first else { return }
+        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
+        guard mask != .all else { return }
+        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
+            AppDelegate.lastOrientationError = "\(error)"
+        }
+    }
+
+}
+
+/// The mpv player screen. Layout rule (from the post-mortem): the
+/// rendering view is created once and never moves; gestures live on their
+/// own transparent layer; chrome is a sibling overlay animated by opacity
+/// only. PlayerView shows this screen only after the engine decision is
+/// made, so it never shares its stack with the VLC view.
+struct MPVPlayerScreen: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+
+    let item: EmbyItem
+    let startSeconds: Double
+    var onPlayNext: ((EmbyItem) -> Void)?
+    /// Offline playback (Downloads): when set, the local file is played
+    /// directly - no server session, no reporting, position saved locally.
+    var localFileURL: URL? = nil
+    var localHasPGS: Bool = false
+    var localAudioLabels: [String] = []
+    var localSubtitleLabels: [String] = []
+    /// Playback context resolved by the container before this screen
+    /// exists, so it never has to ask the server again.
+    let launch: MPVLaunch
+
+    @State private var player = MPVPlayerScreen.makePlayer(videoOutput: .metal)
     @State private var playerGeneration = 0
     @State private var currentStreamURL: URL?
-    @State private var vlcRoute: VLCRoute?
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
 
@@ -79,7 +308,6 @@ struct PlayerView: View {
     @State private var scrubValue: Double = 0
     @State private var gestureHint: String?
     @State private var showDiagnostics = false
-    @State private var savedBrightness: CGFloat = UIScreen.main.brightness
     @State private var currentRate: Double = 1
     @State private var boostSavedRate: Double?
     @State private var nextEpisode: EmbyItem?
@@ -161,12 +389,6 @@ struct PlayerView: View {
             if player.state == .loading {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
-            if let vlcRoute {
-                VLCPlayerView(item: item, route: vlcRoute, startSeconds: startSeconds, onPlayNext: onPlayNext)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .zIndex(30)
-            }
-
             if let activeSegment {
                 VStack {
                     Spacer()
@@ -222,11 +444,6 @@ struct PlayerView: View {
         .task { await startPlayback() }
         .task { await progressLoop() }
         .onAppear {
-            savedBrightness = UIScreen.main.brightness
-            if Prefs.independentBrightness {
-                UIScreen.main.brightness = CGFloat(Prefs.playerBrightness)
-            }
-            applyEntryOrientation()
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .overlay(alignment: .trailing) {
@@ -246,14 +463,9 @@ struct PlayerView: View {
         .animation(.easeInOut(duration: 0.25), value: showEpisodePicker)
         .sheet(isPresented: $showChapters) { chaptersSheet }
         .onDisappear {
-            requestOrientation(.portrait)
             hideTask?.cancel()
             sleepTask?.cancel()
             endWatchTask?.cancel()
-            if Prefs.independentBrightness {
-                Prefs.playerBrightness = Double(UIScreen.main.brightness)
-            }
-            UIScreen.main.brightness = savedBrightness
             if let session {
                 let client = store.client()
                 let position = player.position.secondsValue
@@ -270,14 +482,8 @@ struct PlayerView: View {
 
     private func startPlayback() async {
         if let localFileURL {
-            if localHasPGS {
-                vlcRoute = VLCRoute(url: localFileURL, sourceID: "", sessionID: nil,
-                                    preferredAudioOrdinal: nil,
-                                    audioLabels: localAudioLabels, subtitleLabels: localSubtitleLabels,
-                                    audioStreamIndexes: [], preferredSubtitleOrdinal: nil,
-                                    subtitleOff: false, subtitleStreamIndexes: [], isLocal: true)
-                return
-            }
+            // Local PGS items never reach this screen (the container
+            // routed them to VLC); a local file here is mpv-playable.
             player.load(localFileURL, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
@@ -289,103 +495,27 @@ struct PlayerView: View {
             endWatchTask = Task { await watchForEnd() }
             return
         }
-        guard let client = store.client() else { loadError = "没有可用服务器"; return }
-        do {
-            let info = try await client.playbackInfo(itemID: item.Id, startSeconds: startSeconds)
-            guard let source = info.MediaSources.first(where: { $0.SupportsDirectPlay == true }) ?? info.MediaSources.first else {
-                loadError = "服务器没有返回媒体源"
-                return
-            }
-            guard let url = client.directStreamURL(itemID: item.Id, source: source, sessionID: info.PlaySessionId) else {
-                loadError = "无法生成直连地址"
-                return
-            }
-            // PGS (bitmap) subtitles cannot be composited by MPVUI's
-            // renderers (proven by diagnostics, builds 8-10): hand those
-            // items to the VLCKit engine, which renders them natively.
-            // The VLC view owns session reporting for this route.
-            let hasPGS = (source.MediaStreams ?? []).contains {
-                $0.type == "Subtitle" && ($0.Codec ?? "").lowercased().contains("pgs")
-            }
-            if hasPGS {
-                let audios = (source.MediaStreams ?? [])
-                    .filter { $0.type == "Audio" }
-                    .sorted { $0.Index < $1.Index }
-                func isTrueHD(_ stream: EmbyMediaStream) -> Bool {
-                    (stream.Codec ?? "").lowercased().contains("truehd")
-                }
-                func isChineseAudio(_ stream: EmbyMediaStream) -> Bool {
-                    let lang = (stream.Language ?? "").lowercased()
-                    return lang.hasPrefix("zh") || lang == "chi" || lang == "zho"
-                }
-                let audioMatchesPreferred: (EmbyMediaStream) -> Bool = { stream in
-                    let lang = (stream.Language ?? "").lowercased()
-                    let title = stream.DisplayTitle ?? ""
-                    switch Prefs.audioLanguage {
-                    case "en": return lang.hasPrefix("en") || lang == "eng" || title.contains("英")
-                    case "ja": return lang.hasPrefix("ja") || lang == "jpn" || title.contains("日")
-                    case "ko": return lang.hasPrefix("ko") || lang == "kor" || title.contains("韩")
-                    default: return isChineseAudio(stream)
-                    }
-                }
-                let preferredAudio: EmbyMediaStream?
-                if Prefs.rememberAudioChoice,
-                   let remembered = Prefs.rememberedAudioIndex(for: item.SeriesId ?? item.Id),
-                   let hit = audios.first(where: { $0.Index == remembered }) {
-                    preferredAudio = hit
-                } else if Prefs.audioLanguage == "default" {
-                    preferredAudio = audios.first
-                } else {
-                    preferredAudio = audios.first(where: { audioMatchesPreferred($0) && !isTrueHD($0) })
-                        ?? audios.first(where: { audioMatchesPreferred($0) })
-                        ?? audios.first(where: { !isTrueHD($0) })
-                        ?? audios.first
-                }
-                let ordinal = preferredAudio.flatMap { pick in audios.firstIndex(where: { $0.Index == pick.Index }) }
-                let audioLabels = audios.map { stream in
-                    let base = stream.DisplayTitle ?? stream.Codec ?? "音轨"
-                    return stream.Channels.map { base + " · " + channelLayoutName($0) } ?? base
-                }
-                let subtitleStreams = (source.MediaStreams ?? [])
-                    .filter { $0.type == "Subtitle" }
-                    .sorted { $0.Index < $1.Index }
-                let subtitleLabels = subtitleStreams.map { $0.DisplayTitle ?? $0.Codec ?? "字幕" }
-                var preferredSubtitleOrdinal: Int? = nil
-                var subtitleOff = false
-                if Prefs.rememberSubtitleChoice,
-                   let rememberedSub = Prefs.rememberedSubtitleIndex(for: item.SeriesId ?? item.Id) {
-                    if rememberedSub < 0 { subtitleOff = true }
-                    else { preferredSubtitleOrdinal = subtitleStreams.firstIndex(where: { $0.Index == rememberedSub }) }
-                }
-                vlcRoute = VLCRoute(url: url, sourceID: source.Id, sessionID: info.PlaySessionId,
-                                    preferredAudioOrdinal: ordinal,
-                                    audioLabels: audioLabels, subtitleLabels: subtitleLabels,
-                                    audioStreamIndexes: audios.map { $0.Index },
-                                    preferredSubtitleOrdinal: preferredSubtitleOrdinal,
-                                    subtitleOff: subtitleOff,
-                                    subtitleStreamIndexes: subtitleStreams.map { $0.Index })
-                return
-            }
-            session = (source.Id, info.PlaySessionId)
-            currentStreamURL = url
-            currentSource = source
-            player.load(url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
-            player.requestVideoFeatures([.nativeSubtitles])
-            player.setSubtitlesVisible(true)
-            currentRate = Prefs.defaultRate
-            if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
-            Task { await prepareSubtitles() }
-            Task { await prepareAudio() }
-            await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
-            scheduleHide()
-            startSleepTimer()
-            fetchNextEpisode()
-            fetchChapters()
-            fetchSegments()
-            endWatchTask = Task { await watchForEnd() }
-        } catch {
-            loadError = "加载失败：\(error.localizedDescription)"
+        guard let source = launch.source, let client = store.client() else {
+            loadError = "没有可用服务器"
+            return
         }
+        session = (source.Id, launch.sessionID)
+        currentStreamURL = launch.url
+        currentSource = source
+        player.load(launch.url, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
+        player.requestVideoFeatures([.nativeSubtitles])
+        player.setSubtitlesVisible(true)
+        currentRate = Prefs.defaultRate
+        if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
+        Task { await prepareSubtitles() }
+        Task { await prepareAudio() }
+        await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: launch.sessionID, positionSeconds: startSeconds)
+        scheduleHide()
+        startSleepTimer()
+        fetchNextEpisode()
+        fetchChapters()
+        fetchSegments()
+        endWatchTask = Task { await watchForEnd() }
     }
 
     // MARK: - subtitles & orientation
@@ -548,25 +678,6 @@ struct PlayerView: View {
                 player.setSubtitlesVisible(true)
             }
             return
-        }
-    }
-
-    private func applyEntryOrientation() {
-        switch Prefs.playerOrientation {
-        case .landscape: requestOrientation(Prefs.landscapeMask)
-        case .portrait: requestOrientation(.portrait)
-        case .auto: break
-        }
-    }
-
-    private func requestOrientation(_ mask: UIInterfaceOrientationMask) {
-        AppDelegate.orientationMask = mask
-        guard let scene = UIApplication.shared.connectedScenes
-            .compactMap({ $0 as? UIWindowScene }).first else { return }
-        scene.keyWindow?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-        guard mask != .all else { return }
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: mask)) { error in
-            AppDelegate.lastOrientationError = "\(error)"
         }
     }
 
