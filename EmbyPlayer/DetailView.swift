@@ -116,9 +116,10 @@ struct DetailView: View {
     private var ambientBackground: some View {
         ZStack {
             heroBackdrop
-                .blur(radius: 26)
-                .scaleEffect(1.25)
-            Color(.systemBackground).opacity(0.55)
+                .blur(radius: 40)
+                .saturation(1.3)
+                .scaleEffect(1.3)
+            Color(.systemBackground).opacity(0.35)
         }
         .ignoresSafeArea()
     }
@@ -135,9 +136,10 @@ struct DetailView: View {
     private var scrollingAmbient: some View {
         ZStack {
             heroBackdrop
-                .blur(radius: 26)
-                .scaleEffect(1.15)
-            Color(.systemBackground).opacity(0.55)
+                .blur(radius: 40)
+                .saturation(1.3)
+                .scaleEffect(1.2)
+            Color(.systemBackground).opacity(0.35)
         }
         .clipped()
     }
@@ -219,6 +221,7 @@ struct DetailView: View {
                         .foregroundStyle(.secondary)
                 }
                 playCapsule
+                    .padding(.horizontal, 13)
             }
         .padding(.horizontal, 24)
         .padding(.bottom, 6)
@@ -331,10 +334,10 @@ struct DetailView: View {
                         Text("播放")
                         Text(formatHMS(target.resumeSeconds > 5 ? target.resumeSeconds : target.durationSeconds))
                     }
-                    .font(.headline)
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.black)
                     .frame(maxWidth: .infinity)
-                    .frame(height: 54)
+                    .frame(height: 42)
                     .background(Color.white, in: Capsule())
                     .shadow(color: .black.opacity(0.15), radius: 12, y: 4)
                 }
