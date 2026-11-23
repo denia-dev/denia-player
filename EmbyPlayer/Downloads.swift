@@ -48,6 +48,7 @@ final class DownloadsManager: NSObject, ObservableObject {
     @Published private(set) var activeIDs: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
     @Published private(set) var downloadSpeeds: [String: Double] = [:]
+    @Published private(set) var liveActivityMessages: [String: String] = [:]
 
     private let failuresKey = "denia.download.failures.v1"
     private let recoveriesKey = "denia.download.recoveries.v1"
@@ -107,7 +108,12 @@ final class DownloadsManager: NSObject, ObservableObject {
                 guard let self else { return }
                 let live = Set(restoredTasks.map(\.taskIdentifier))
                 for task in restoredTasks {
-                    if self.tasks[task.taskIdentifier] != nil { task.resume() }
+                    if let itemID = self.tasks[task.taskIdentifier] {
+                        task.resume()
+                        if let recovery = self.recoveries[itemID] {
+                            Task { await self.beginLiveActivity(for: recovery) }
+                        }
+                    }
                 }
                 for (itemID, recovery) in self.recoveries where !live.contains(recovery.taskID) {
                     self.finishWithFailure(itemID, message: "下载中断；点下载按钮可重新开始。")
@@ -165,8 +171,20 @@ final class DownloadsManager: NSObject, ObservableObject {
 
     func failure(for itemID: String) -> String? { failures[itemID] }
 
+    func retryLiveActivity(itemID: String) {
+        guard let recovery = recoveries[itemID] else { return }
+        Task { await beginLiveActivity(for: recovery) }
+    }
+
     private func beginLiveActivity(for recovery: DownloadRecovery) async {
-        guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
+        let authorization = ActivityAuthorizationInfo()
+        guard authorization.areActivitiesEnabled else {
+            liveActivityMessages[recovery.itemID] = "系统关闭了实时活动（Settings areActivitiesEnabled=false）"
+            return
+        }
+        if !UIDevice.current.userInterfaceIdiom.isPhone {
+            liveActivityMessages[recovery.itemID] = "实时活动已尝试创建；此设备无灵动岛，仅可在锁屏查看"
+        }
         let activity: Activity<DownloadActivityAttributes>
         if let existing = Activity<DownloadActivityAttributes>.activities.first(where: { $0.attributes.itemID == recovery.itemID }) {
             activity = existing
@@ -177,9 +195,13 @@ final class DownloadsManager: NSObject, ObservableObject {
             do {
                 activity = try Activity.request(attributes: attributes,
                     content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60)), pushType: nil)
-            } catch { return }
+            } catch {
+                liveActivityMessages[recovery.itemID] = "活动创建失败：\(error.localizedDescription)"
+                return
+            }
         }
         liveActivities[recovery.itemID] = activity
+        liveActivityMessages[recovery.itemID] = "实时活动已创建"
     }
 
     private func updateLiveActivity(itemID: String, bytes: Int64, total: Int64, status: String = "下载中") {
@@ -558,6 +580,16 @@ struct DownloadsView: View {
                         Text(remaining > 0 ? "剩余 \(formatDLTime(Double(remaining)))" : "\(ByteCountFormatter.string(fromByteCount: Int64(speed), countStyle: .file))/秒")
                     }
                 }.font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                if let activityMessage = manager.liveActivityMessages[record.id] {
+                    HStack {
+                        Text(activityMessage).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                        Spacer(minLength: 2)
+                        if activityMessage.contains("失败") || activityMessage.contains("关闭了") {
+                            Button("重试") { manager.retryLiveActivity(itemID: record.id) }
+                                .font(.caption2)
+                        }
+                    }
+                }
             }
             Button(role: .destructive) { manager.cancel(itemID: record.id) } label: {
                 Image(systemName: "xmark.circle.fill").font(.title3)
