@@ -1075,21 +1075,30 @@ struct MPVPlayerScreen: View {
     private var chrome: some View {
         VStack {
             // Top bar: plain icons, no glass (his SenPlayer reference).
-            HStack(spacing: 18) {
-                // The always-on close button sits at the top-left; leave room.
-                Color.clear.frame(width: 34, height: 1)
+            HStack(spacing: 0) {
+                // Symmetric side zones: the left one clears the always-on
+                // close (+PiP) buttons in the overlay layer, the right one
+                // mirrors it, so the title sits truly centered and can
+                // never slide under either side (his 2026-11-23 report:
+                // title collided with the close/PiP buttons).
+                Color.clear.frame(width: 118, height: 1)
                 if !controlsLocked, Prefs.showTitleInPlayer {
-                    VStack(alignment: .leading, spacing: 1) {
+                    VStack(alignment: .center, spacing: 1) {
                         Text(item.Name).font(.subheadline.bold()).lineLimit(1)
                         if let series = item.SeriesName {
                             Text(series).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
                         }
                     }
+                    .frame(maxWidth: .infinity)
+                } else {
+                    Spacer()
                 }
-                Spacer()
-                if !controlsLocked, Prefs.showDiagnosticsButton {
-                    Button { showDiagnostics = true } label: {
-                        Image(systemName: "info.circle").font(.title2)
+                ZStack(alignment: .trailing) {
+                    Color.clear.frame(width: 118, height: 1)
+                    if !controlsLocked, Prefs.showDiagnosticsButton {
+                        Button { showDiagnostics = true } label: {
+                            Image(systemName: "info.circle").font(.title2)
+                        }
                     }
                 }
             }

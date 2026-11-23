@@ -669,20 +669,28 @@ struct VLCPlayerView: View {
     private var topBarLayer: some View {
         VStack {
             // Top bar: plain icons, no glass (his SenPlayer reference).
-            HStack(spacing: 18) {
-                Spacer().frame(width: 34)
+            HStack(spacing: 0) {
+                // Same centered-title layout as the MPV chrome: symmetric
+                // side zones keep the title off the close button (left)
+                // and the diagnostics button (right).
+                Color.clear.frame(width: 118, height: 1)
                 if !controlsLocked, Prefs.showTitleInPlayer {
                     Text(item.Name ?? "")
                         .font(.headline)
                         .lineLimit(1)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    Spacer()
                 }
-                Spacer()
-                if !controlsLocked, Prefs.showDiagnosticsButton {
-                    Button {
-                        diagText = controller.diagnosticsDump()
-                        showDiag = true
-                    } label: {
-                        Image(systemName: "info.circle").font(.title2)
+                ZStack(alignment: .trailing) {
+                    Color.clear.frame(width: 118, height: 1)
+                    if !controlsLocked, Prefs.showDiagnosticsButton {
+                        Button {
+                            diagText = controller.diagnosticsDump()
+                            showDiag = true
+                        } label: {
+                            Image(systemName: "info.circle").font(.title2)
+                        }
                     }
                 }
             }
