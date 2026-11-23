@@ -42,7 +42,7 @@ struct EmbyItem: Decodable, Identifiable {
         case type = "Type"
         case CollectionType, SeriesName, SeriesId, SeasonId, IndexNumber, ParentIndexNumber
         case Overview, ProductionYear, RunTimeTicks, ChildCount, ImageTags, BackdropImageTags
-        case Genres, CommunityRating, PremiereDate, People
+        case Genres, CommunityRating, PremiereDate, People, Chapters
         case UserData, MediaSources
     }
 
