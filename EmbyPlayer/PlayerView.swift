@@ -340,8 +340,15 @@ struct MPVPlayerScreen: View {
             "sub-auto": "fuzzy",
             "slang": "zh-Hans,zh-CN,zh,chi,zho",
             "demuxer-max-bytes": "536870912",
-            "demuxer-readahead-secs": "60",
-            "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+            "demuxer-max-back-bytes": "268435456",
+            // Smoothness batch 2: keep a 120 s forward cache window (was
+            // 60 s readahead) so brief network stalls on the tunnel lines
+            // don't reach the decoder, and reconnect on network errors too,
+            // not just on stream errors.
+            "cache": "yes",
+            "cache-secs": "120",
+            "demuxer-readahead-secs": "120",
+            "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5",
             "vd-lavc-threads": "\(Prefs.softwareThreads)",
             "sub-scale": String(format: "%.2f", Prefs.subScale),
             "sub-delay": String(format: "%.1f", Prefs.subDelay),

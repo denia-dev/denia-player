@@ -46,9 +46,11 @@ final class DownloadsManager: NSObject, ObservableObject {
     @Published private(set) var progress: [String: Double] = [:]
     @Published private(set) var activeIDs: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
-    /// All Live Activity work (start/update/end + visible status) lives in
-    /// DownloadLiveActivity.swift; the downloads list observes it directly.
-    let liveActivity = DownloadLiveActivityCenter()
+    /// Smoothed download rate per item (bytes/sec), computed in
+    /// downloadProgress from successive byte samples; drives the
+    /// speed / remaining-time readout in the downloads list.
+    @Published private(set) var speeds: [String: Double] = [:]
+    private var speedSamples: [String: (bytes: Int64, time: Date)] = [:]
 
     private let failuresKey = "denia.download.failures.v1"
     private let recoveriesKey = "denia.download.recoveries.v1"
@@ -114,11 +116,6 @@ final class DownloadsManager: NSObject, ObservableObject {
                 for task in restoredTasks {
                     if let itemID = self.tasks[task.taskIdentifier] {
                         task.resume()
-                        if let recovery = self.recoveries[itemID] {
-                            self.liveActivity.start(itemID: itemID,
-                                                    title: recovery.skeleton.episodeTitle,
-                                                    totalBytes: recovery.skeleton.sizeBytes)
-                        }
                     }
                 }
                 for (itemID, recovery) in self.recoveries where !live.contains(recovery.taskID) {
@@ -187,7 +184,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         progress[item.Id] = 0
         // Publish an immediate lightweight row before PlaybackInfo returns;
         // otherwise the downloads tab can appear completely empty while the
-        // request is being resolved and ActivityKit is not yet available.
+        // request is being resolved.
         let placeholder = DownloadRecord(
             id: item.Id, name: item.Name, type: item.type,
             seriesID: item.SeriesId, seriesName: item.SeriesName,
@@ -197,11 +194,6 @@ final class DownloadsManager: NSObject, ObservableObject {
             audioLabels: [], subtitleLabels: [], downloadedAt: Date())
         pending[item.Id] = placeholder
         syncActiveList()
-        // Start the Live Activity NOW, synchronously with the tap, while the
-        // app is certainly active. Waiting until the media source resolves
-        // lets the request land after the user has locked the phone, where
-        // the system will not present it.
-        liveActivity.start(itemID: item.Id, title: placeholder.episodeTitle, totalBytes: 0)
         Task {
             do {
                 let info = try await client.playbackInfo(itemID: item.Id, startSeconds: 0)
@@ -244,10 +236,6 @@ final class DownloadsManager: NSObject, ObservableObject {
                                                     container: source.Container ?? "mkv", taskID: task.taskIdentifier)
                     self.recoveries[item.Id] = recovery
                     self.saveRecoveries()
-                    // Second chance with the real total (start is idempotent);
-                    // normally a no-op because the tap-time start succeeded.
-                    self.liveActivity.start(itemID: item.Id, title: skeleton.episodeTitle,
-                                            totalBytes: skeleton.sizeBytes)
                     task.resume()
                 }
                 // Poster alongside, best effort.
@@ -291,10 +279,8 @@ final class DownloadsManager: NSObject, ObservableObject {
     // MARK: internals
 
     private func finishWithFailure(_ itemID: String, message: String? = "下载失败，请检查网络后重试。") {
-        liveActivity.finish(itemID: itemID,
-                            outcome: message == nil ? .cancelled : .failed,
-                            bytes: liveActivity.lastKnownBytes(for: itemID),
-                            total: pending[itemID]?.sizeBytes ?? 0)
+        speeds[itemID] = nil
+        speedSamples[itemID] = nil
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
@@ -334,8 +320,8 @@ final class DownloadsManager: NSObject, ObservableObject {
         records.removeAll { $0.id == itemID }
         records.append(skeleton)
         persist()
-        liveActivity.finish(itemID: itemID, outcome: .completed,
-                            bytes: skeleton.sizeBytes, total: skeleton.sizeBytes)
+        speeds[itemID] = nil
+        speedSamples[itemID] = nil
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
@@ -356,8 +342,17 @@ final class DownloadsManager: NSObject, ObservableObject {
     fileprivate func downloadProgress(taskID: Int, fraction: Double, bytes: Int64, expected: Int64) {
         guard let itemID = tasks[taskID] else { return }
         progress[itemID] = fraction
-        let total = expected > 0 ? expected : (pending[itemID]?.sizeBytes ?? 0)
-        liveActivity.update(itemID: itemID, bytes: bytes, total: total)
+        let now = Date()
+        if let sample = speedSamples[itemID] {
+            let dt = now.timeIntervalSince(sample.time)
+            if dt >= 0.5 {
+                let rate = Double(bytes - sample.bytes) / dt
+                if rate > 0 { speeds[itemID] = rate }
+                speedSamples[itemID] = (bytes, now)
+            }
+        } else {
+            speedSamples[itemID] = (bytes, now)
+        }
     }
 }
 
@@ -461,7 +456,6 @@ struct DownloadButton: View {
 
 struct DownloadsView: View {
     @ObservedObject private var manager = DownloadsManager.shared
-    @ObservedObject private var liveCenter = DownloadsManager.shared.liveActivity
     @State private var playing: DownloadRecord?
 
     private var movies: [DownloadRecord] { manager.records.filter { $0.type != "Episode" } }
@@ -532,7 +526,7 @@ struct DownloadsView: View {
 
     private func activeRow(_ record: DownloadRecord) -> some View {
         let fraction = manager.progress[record.id] ?? 0
-        let speed = liveCenter.speeds[record.id] ?? 0
+        let speed = manager.speeds[record.id] ?? 0
         return HStack(spacing: 12) {
             poster(record).frame(width: 96, height: 54)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -549,9 +543,6 @@ struct DownloadsView: View {
                         Text(remaining > 0 ? "剩余 \(formatDLTime(Double(remaining)))" : "\(ByteCountFormatter.string(fromByteCount: Int64(speed), countStyle: .file))/秒")
                     }
                 }.font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                if let activityStatus = liveCenter.status[record.id] {
-                    Text(activityStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                }
             }
             Button(role: .destructive) { manager.cancel(itemID: record.id) } label: {
                 Image(systemName: "xmark.circle.fill").font(.title3)
