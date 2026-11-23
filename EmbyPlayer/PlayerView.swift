@@ -55,6 +55,9 @@ struct PlayerView: View {
     /// long-standing "UI 错位 on entry"). Until `entered`, only the
     /// full-bleed poster backdrop shows - it is rotation-proof.
     @State private var entered = false
+    /// Incremented on every geometry change; the entry gate opens only
+    /// when the size has stayed put for a beat (see noteGeometry).
+    @State private var sizeToken = 0
     @State private var savedBrightness: CGFloat = UIScreen.main.brightness
 
     var body: some View {
@@ -129,7 +132,7 @@ struct PlayerView: View {
         .task {
             // Rotation-locked phones refuse the landscape request; never
             // leave the player stuck on the backdrop in that case.
-            try? await Task.sleep(for: .seconds(1.2))
+            try? await Task.sleep(for: .seconds(1.6))
             if !entered { withAnimation(.easeIn(duration: 0.2)) { entered = true } }
         }
         .onAppear {
@@ -148,13 +151,23 @@ struct PlayerView: View {
         }
     }
 
-    /// First landscape layout (+ a beat for the rotation to settle)
-    /// opens the gate; see `entered`.
+    /// Opens the gate only when the landscape size has STOPPED changing.
+    /// Build 54 waited a fixed 120 ms after the first landscape size,
+    /// but the cover's rotation animation is still interpolating the
+    /// window frame then - the player screen was inserted mid-flight,
+    /// painted its chrome at an intermediate geometry, and the chrome
+    /// visibly JUMPED when the animation landed (his report on 54:
+    /// "旋转后跳到那个位置"). Debouncing on stability inserts the
+    /// screen only into final geometry.
     private func noteGeometry(_ size: CGSize) {
         guard size.width > size.height, !entered else { return }
+        sizeToken += 1
+        let token = sizeToken
         Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(120))
-            if !entered { withAnimation(.easeIn(duration: 0.2)) { entered = true } }
+            try? await Task.sleep(for: .milliseconds(280))
+            if token == sizeToken, !entered {
+                withAnimation(.easeIn(duration: 0.2)) { entered = true }
+            }
         }
     }
 

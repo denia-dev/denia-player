@@ -207,6 +207,21 @@ struct DetailView: View {
                     .init(color: Color(.systemBackground).opacity(0.88), location: 1.0),
                 ], startPoint: .top, endPoint: .bottom)
             }
+            // Melt, don't cut: the background's alpha fades to zero over
+            // the bottom stretch, so at the hero's lower edge the visible
+            // pixels ARE the page's ambient layer itself. Matching veil
+            // strengths (build 54) still left a line because the art
+            // under the veil differs (sharp crop vs blurred average);
+            // a crossfade to the very layer behind removes the edge
+            // by construction.
+            .mask {
+                LinearGradient(stops: [
+                    .init(color: .black, location: 0),
+                    .init(color: .black, location: 0.62),
+                    .init(color: .clear, location: 0.98),
+                    .init(color: .clear, location: 1.0),
+                ], startPoint: .top, endPoint: .bottom)
+            }
         }
         .frame(height: 478)
         .clipped()
