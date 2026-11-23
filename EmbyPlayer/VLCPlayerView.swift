@@ -721,12 +721,15 @@ struct VLCPlayerView: View {
             .simultaneousGesture(boostGesture)
     }
 
+    // A plain long press, deliberately NOT sequenced with a drag:
+    // build 29 sequenced it with DragGesture(minimumDistance: 0),
+    // whose recognition starved the brightness/volume/scrub drag on
+    // both sides. A long press fails as soon as the finger moves
+    // beyond a few points, so it cannot compete with real drags;
+    // its onEnded fires when the finger lifts.
     private var boostGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.45)
-            .sequenced(before: DragGesture(minimumDistance: 0))
-            .onChanged { value in
-                if case .second(true, _) = value { startBoost() }
-            }
+        LongPressGesture(minimumDuration: 0.45, maximumDistance: 12)
+            .onChanged { _ in startBoost() }
             .onEnded { _ in endBoost() }
     }
 
