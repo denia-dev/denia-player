@@ -63,6 +63,7 @@ struct PlayerView: View {
 
     @State private var chromeVisible = true
     @State private var controlsLocked = false
+    @State private var boostArmTask: Task<Void, Never>?
     @State private var hideTask: Task<Void, Never>?
     @State private var loadError: String?
     @State private var session: (sourceID: String, sessionID: String?)?
@@ -525,7 +526,22 @@ struct PlayerView: View {
             .onTapGesture { toggleChrome() }
             .simultaneousGesture(boostGesture)
             .onChange(of: boostPressing) { _, pressing in
-                if pressing { startBoost() } else { endBoost() }
+                // The gesture's value means "a finger is down", NOT
+                // "the hold time was met" - it flips true at
+                // touch-down, which is why taps flashed the boost
+                // hint (builds 33-38). The arm timer is the real
+                // gate: boost engages only after a continuous
+                // 2-second press, by construction.
+                boostArmTask?.cancel()
+                if pressing {
+                    boostArmTask = Task { @MainActor in
+                        try? await Task.sleep(for: .seconds(2.0))
+                        guard !Task.isCancelled else { return }
+                        startBoost()
+                    }
+                } else {
+                    endBoost()
+                }
             }
     }
 

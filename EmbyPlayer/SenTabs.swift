@@ -555,6 +555,7 @@ struct SearchTabView: View {
     @State private var results: [EmbyItem] = []
     @State private var searched = false
     @State private var searchTask: Task<Void, Never>?
+    @State private var history: [String] = UserDefaults.standard.stringArray(forKey: "prefs.searchHistory") ?? []
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -564,6 +565,7 @@ struct SearchTabView: View {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
                 TextField("搜索电影、剧集", text: $text)
                     .submitLabel(.search)
+                    .onSubmit { recordHistory() }
                 if !text.isEmpty {
                     Button { text = ""; results = []; searched = false } label: {
                         Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
@@ -578,10 +580,14 @@ struct SearchTabView: View {
 
             if let client = store.client() {
                 if results.isEmpty {
-                    Spacer()
-                    Text(searched ? "没有找到结果" : "输入片名，聚合搜索当前服务器")
-                        .foregroundStyle(.secondary).font(.subheadline)
-                    Spacer()
+                    if !searched && text.isEmpty && !history.isEmpty {
+                        historyList
+                    } else {
+                        Spacer()
+                        Text(searched ? "没有找到结果" : "输入片名，聚合搜索当前服务器")
+                            .foregroundStyle(.secondary).font(.subheadline)
+                        Spacer()
+                    }
                 } else {
                     ScrollView {
                         LazyVGrid(columns: columns, spacing: 16) {
@@ -609,6 +615,53 @@ struct SearchTabView: View {
                 results = (try? await client.search(term: trimmed)) ?? []
                 searched = true
             }
+        }
+    }
+}
+
+
+private extension SearchTabView {
+    func recordHistory() {
+        let term = text.trimmingCharacters(in: .whitespaces)
+        guard !term.isEmpty else { return }
+        history.removeAll { $0 == term }
+        history.insert(term, at: 0)
+        history = Array(history.prefix(10))
+        UserDefaults.standard.set(history, forKey: "prefs.searchHistory")
+    }
+
+    var historyList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                HStack {
+                    Text("最近搜索")
+                        .font(.subheadline.weight(.semibold))
+                    Spacer()
+                    Button("清空") {
+                        history = []
+                        UserDefaults.standard.removeObject(forKey: "prefs.searchHistory")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+                ForEach(history, id: \.self) { term in
+                    Button { text = term } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: "clock.arrow.circlepath")
+                                .foregroundStyle(.secondary)
+                            Text(term).lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.horizontal)
+                        .padding(.vertical, 9)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.top, 2)
         }
     }
 }
