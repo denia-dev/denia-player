@@ -182,7 +182,7 @@ final class DownloadsManager: NSObject, ObservableObject {
             liveActivityMessages[recovery.itemID] = "系统关闭了实时活动（Settings areActivitiesEnabled=false）"
             return
         }
-        if !UIDevice.current.userInterfaceIdiom.isPhone {
+        if UIDevice.current.userInterfaceIdiom != .phone {
             liveActivityMessages[recovery.itemID] = "实时活动已尝试创建；此设备无灵动岛，仅可在锁屏查看"
         }
         let activity: Activity<DownloadActivityAttributes>
