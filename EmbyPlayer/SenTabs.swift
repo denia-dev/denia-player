@@ -285,16 +285,22 @@ struct RecordsView: View {
                 .font(.system(size: 30, weight: .bold))
                 .padding(.horizontal)
 
-            ScrollView {
-                if segment == 3 {
+            if segment == 3 {
+                // Downloads live in their OWN scroll view: as a conditional
+                // branch inside the shared one, this content never appeared
+                // on device (builds 68-70) while sibling branches rendered.
+                ScrollView {
                     VStack(alignment: .leading, spacing: 14) {
-                        Text("下载页标记 build70")
+                        Text("下载页标记 build71")
                             .font(.caption2).foregroundStyle(.tertiary)
                         DownloadsView()
                     }
                     .padding(.horizontal)
                     .padding(.bottom, 92)
-                } else if let client = store.client() {
+                }
+            } else {
+            ScrollView {
+                if let client = store.client() {
                     if segment == 1 {
                         VStack(alignment: .leading, spacing: 14) {
                             HStack(spacing: 8) {
@@ -350,6 +356,7 @@ struct RecordsView: View {
                 }
             }
             .id(segment)
+            }
         }
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
