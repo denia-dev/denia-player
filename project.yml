@@ -20,6 +20,9 @@ targets:
       path: Info.plist
       properties:
         UIBackgroundModes: [audio]
+        NSSupportsLiveActivities: true
+        CFBundleURLTypes:
+          - CFBundleURLSchemes: [deniaplayer]
         NSFaceIDUsageDescription: 用于验证身份并解锁 Denia Player。
         CFBundleDisplayName: Denia Player
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
@@ -35,7 +38,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.denia.embyplayer
         MARKETING_VERSION: "1.0"
-        CURRENT_PROJECT_VERSION: "64"
+        CURRENT_PROJECT_VERSION: "65"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
@@ -45,3 +48,23 @@ targets:
         product: MPVUI
       - framework: Frameworks/MobileVLCKit.xcframework
         embed: true
+      - target: DownloadActivityWidget
+
+  DownloadActivityWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: DownloadActivityWidget
+      - path: EmbyPlayer/DownloadActivityAttributes.swift
+    info:
+      properties:
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+          NSExtensionPrincipalClass: "$(PRODUCT_MODULE_NAME).DownloadWidgets"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.denia.embyplayer.DownloadActivityWidget
+        IPHONEOS_DEPLOYMENT_TARGET: "16.1"
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
