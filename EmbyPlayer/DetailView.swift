@@ -258,6 +258,10 @@ struct DetailView: View {
             actionButton(icon: isFavorite ? "heart.fill" : "heart", active: isFavorite) {
                 toggleFavorite()
             }
+            if item.isPlayable {
+                Spacer()
+                DownloadButton(item: item)
+            }
         }
         .padding(.horizontal, 36)
         .padding(.vertical, 2)
@@ -391,6 +395,10 @@ struct DetailView: View {
                                                 .padding(.horizontal, 8)
                                                 .padding(.bottom, 6)
                                             }
+                                        }
+                                        .overlay(alignment: .topTrailing) {
+                                            DownloadButton(item: episode, mini: true)
+                                                .padding(6)
                                         }
                                         .overlay(alignment: .bottomTrailing) {
                                             if let rating = episode.CommunityRating {

@@ -243,7 +243,7 @@ struct RecordsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 2) {
-                ForEach(Array(["通用", "观看", "收藏"].enumerated()), id: \.offset) { index, label in
+                ForEach(Array(["通用", "观看", "收藏", "下载"].enumerated()), id: \.offset) { index, label in
                     Button {
                         withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { segment = index }
                     } label: {
@@ -270,12 +270,15 @@ struct RecordsView: View {
             .padding(.horizontal)
             .padding(.top, 8)
 
-            Text(segment == 0 ? "最近播放" : (segment == 1 ? "媒体观看" : "我的收藏"))
+            Text(segment == 0 ? "最近播放" : (segment == 1 ? "媒体观看" : (segment == 2 ? "我的收藏" : "我的下载")))
                 .font(.system(size: 30, weight: .bold))
                 .padding(.horizontal)
 
             ScrollView {
-                if let client = store.client() {
+                if segment == 3 {
+                    DownloadsView()
+                        .padding(.horizontal)
+                } else if let client = store.client() {
                     if segment == 1 {
                         VStack(alignment: .leading, spacing: 14) {
                             HStack(spacing: 8) {

@@ -22,6 +22,9 @@ struct VLCRoute {
     let preferredSubtitleOrdinal: Int?
     let subtitleOff: Bool
     let subtitleStreamIndexes: [Int]
+    /// Offline download playback: no server reporting, position saved
+    /// to UserDefaults instead.
+    var isLocal: Bool = false
 }
 
 // MARK: - controller
@@ -582,9 +585,13 @@ struct VLCPlayerView: View {
         .onDisappear {
             hideTask?.cancel()
             sleepTask?.cancel()
-            let client = store.client()
             let position = controller.directPosition()
-            Task { await client?.reportStopped(itemID: item.Id, sourceID: route.sourceID, sessionID: route.sessionID, positionSeconds: position) }
+            if route.isLocal {
+                DownloadsManager.savePosition(position, for: item.Id)
+            } else {
+                let client = store.client()
+                Task { await client?.reportStopped(itemID: item.Id, sourceID: route.sourceID, sessionID: route.sessionID, positionSeconds: position) }
+            }
             controller.player.stop()
         }
     }
@@ -614,7 +621,7 @@ struct VLCPlayerView: View {
     // MARK: - reporting
 
     private func reportingLoop() async {
-        guard let client = store.client() else { return }
+        guard !route.isLocal, let client = store.client() else { return }
         await client.reportStart(itemID: item.Id, sourceID: route.sourceID, sessionID: route.sessionID, positionSeconds: startSeconds)
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(10))

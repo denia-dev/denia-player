@@ -20,6 +20,12 @@ struct PlayerView: View {
     let item: EmbyItem
     let startSeconds: Double
     var onPlayNext: ((EmbyItem) -> Void)?
+    /// Offline playback (Downloads): when set, the local file is played
+    /// directly - no server session, no reporting, position saved locally.
+    var localFileURL: URL? = nil
+    var localHasPGS: Bool = false
+    var localAudioLabels: [String] = []
+    var localSubtitleLabels: [String] = []
 
     @State private var player = PlayerView.makePlayer(videoOutput: .metal)
     @State private var playerGeneration = 0
@@ -252,6 +258,9 @@ struct PlayerView: View {
                 let position = player.position.secondsValue
                 Task { await client?.reportStopped(itemID: item.Id, sourceID: session.sourceID, sessionID: session.sessionID, positionSeconds: position) }
             }
+            if localFileURL != nil && !localHasPGS {
+                DownloadsManager.savePosition(player.position.secondsValue, for: item.Id)
+            }
             player.stop()
         }
     }
@@ -259,6 +268,26 @@ struct PlayerView: View {
     // MARK: - playback session
 
     private func startPlayback() async {
+        if let localFileURL {
+            if localHasPGS {
+                vlcRoute = VLCRoute(url: localFileURL, sourceID: "", sessionID: nil,
+                                    preferredAudioOrdinal: nil,
+                                    audioLabels: localAudioLabels, subtitleLabels: localSubtitleLabels,
+                                    audioStreamIndexes: [], preferredSubtitleOrdinal: nil,
+                                    subtitleOff: false, subtitleStreamIndexes: [], isLocal: true)
+                return
+            }
+            player.load(localFileURL, startTime: startSeconds > 5 ? .seconds(startSeconds) : nil)
+            player.requestVideoFeatures([.nativeSubtitles])
+            player.setSubtitlesVisible(true)
+            currentRate = Prefs.defaultRate
+            if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
+            Task { await prepareAudio() }
+            scheduleHide()
+            startSleepTimer()
+            endWatchTask = Task { await watchForEnd() }
+            return
+        }
         guard let client = store.client() else { loadError = "没有可用服务器"; return }
         do {
             let info = try await client.playbackInfo(itemID: item.Id, startSeconds: startSeconds)
