@@ -28,6 +28,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
     @Published var isPlaying = false
     @Published var isBuffering = true
     @Published var hasError = false
+    @Published var hasEnded = false
     @Published var position: Double = 0
     @Published var duration: Double = 0
     @Published var audioTracks: [(id: Int32, name: String)] = []
@@ -148,6 +149,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         let stalled = Date().timeIntervalSince(lastAdvanceAt) > 1.0
         isBuffering = !hasError && (state == .opening || (state == .buffering && stalled))
         isPlaying = !userPaused && state != .ended && state != .error
+        if state == .ended { hasEnded = true }
             && (state == .playing || !stalled || state == .buffering)
         postReloadMaintenance(state: state)
         let sampleAudio = player.currentAudioTrackIndex
@@ -407,6 +409,7 @@ struct VLCPlayerView: View {
     let item: EmbyItem
     let route: VLCRoute
     let startSeconds: Double
+    var onPlayNext: ((EmbyItem) -> Void)?
 
     @StateObject private var controller = VLCPlayerController()
     @State private var chromeVisible = true
@@ -421,6 +424,7 @@ struct VLCPlayerView: View {
     @State private var dragStartLevel: Double = 0
     @State private var boostSavedRate: Float?
     @GestureState private var boostPressing = false
+    @State private var nextEpisode: EmbyItem?
     @State private var sleepTask: Task<Void, Never>?
 
     private enum DragMode { case scrub, brightness, volume }
@@ -454,7 +458,8 @@ struct VLCPlayerView: View {
                             .font(.body.bold())
                             .foregroundStyle(.white)
                             .padding(10)
-                            .background(.black.opacity(0.45), in: Circle())
+                            .glassEffect(.regular.interactive(), in: Circle())
+                            .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
                     }
                     Spacer()
                 }
@@ -494,9 +499,13 @@ struct VLCPlayerView: View {
             if Prefs.defaultRate != 1.0 { controller.setRate(Float(Prefs.defaultRate)) }
             scheduleHide()
             startSleepTimer()
+            fetchNextEpisode()
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .sheet(isPresented: $showDiag) { diagSheet }
+        .onChange(of: controller.hasEnded) { _, ended in
+            if ended, Prefs.autoPlayNext, let nextEpisode { onPlayNext?(nextEpisode) }
+        }
         .onDisappear {
             hideTask?.cancel()
             sleepTask?.cancel()
@@ -590,6 +599,7 @@ struct VLCPlayerView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 9)
             .glassEffect(.regular, in: Capsule())
+            .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
             .padding(.horizontal, 12)
             .padding(.bottom, 10)
         }
@@ -631,6 +641,11 @@ struct VLCPlayerView: View {
 
     private var trackMenus: some View {
         HStack(spacing: 14) {
+            if let nextEpisode {
+                Button { onPlayNext?(nextEpisode) } label: {
+                    Image(systemName: "forward.end.fill").font(.title3)
+                }
+            }
             if Prefs.showDiagnosticsButton {
             Button {
                 diagText = controller.diagnosticsDump()
@@ -746,6 +761,18 @@ struct VLCPlayerView: View {
         boostSavedRate = nil
         controller.setRate(saved)
         if gestureHint?.hasSuffix("快进中") == true { gestureHint = nil }
+    }
+
+    private func fetchNextEpisode() {
+        guard item.type == "Episode", let seriesID = item.SeriesId,
+              let seasonID = item.SeasonId, let client = store.client() else { return }
+        Task {
+            guard let episodes = try? await client.episodes(seriesID: seriesID, seasonID: seasonID) else { return }
+            let sorted = episodes.sorted { ($0.IndexNumber ?? 0) < ($1.IndexNumber ?? 0) }
+            if let index = sorted.firstIndex(where: { $0.Id == item.Id }), index + 1 < sorted.count {
+                nextEpisode = sorted[index + 1]
+            }
+        }
     }
 
     private func startSleepTimer() {

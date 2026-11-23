@@ -105,7 +105,9 @@ struct DetailView: View {
             Task { if let seasonID { await loadEpisodes(seasonID) } }
         }
         .fullScreenCover(item: $playRequest) { request in
-            PlayerView(item: request.item, startSeconds: request.startSeconds)
+            PlayerView(item: request.item, startSeconds: request.startSeconds) { next in
+                playRequest = PlayRequest(item: next, startSeconds: 0)
+            }
         }
     }
 

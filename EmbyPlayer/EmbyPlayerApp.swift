@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import LocalAuthentication
 
 /// Owns the app-wide orientation mask. The player widens it on entry
 /// and restores portrait on exit. Routing the mask through the
@@ -30,12 +31,53 @@ struct EmbyPlayerApp: App {
 
 struct RootView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var locked = false
 
     var body: some View {
-        if store.activeServer?.isLoggedIn == true {
-            MainView()
-        } else {
-            ServersView()
+        ZStack {
+            if store.activeServer?.isLoggedIn == true {
+                MainView()
+            } else {
+                ServersView()
+            }
+            if locked {
+                lockScreen
+            }
+        }
+        .onAppear {
+            if Prefs.appLock { locked = true; authenticate() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background, Prefs.appLock { locked = true }
+            if phase == .active, locked { authenticate() }
+        }
+    }
+
+    private var lockScreen: some View {
+        ZStack {
+            Color(.systemBackground).ignoresSafeArea()
+            VStack(spacing: 16) {
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(Color.accentColor)
+                    .frame(width: 72, height: 72)
+                    .overlay(Image(systemName: "play.fill").font(.title).foregroundStyle(.white))
+                Text("EmbyPlayer 已锁定").font(.headline)
+                Button("解锁") { authenticate() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func authenticate() {
+        let context = LAContext()
+        var authError: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &authError) else {
+            locked = false
+            return
+        }
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "解锁 EmbyPlayer") { success, _ in
+            Task { @MainActor in if success { locked = false } }
         }
     }
 }
@@ -66,6 +108,7 @@ enum Route: Hashable {
     case subtitlePrefs
     case appPrefs
     case modulePrefs
+    case privacyPrefs
 }
 
 /// The five tab stacks' navigation paths, held in a reference-type
@@ -121,6 +164,8 @@ extension View {
                 AppPrefsView()
             case .modulePrefs:
                 ModulePrefsView()
+            case .privacyPrefs:
+                PrivacyPrefsView()
             }
         }
     }

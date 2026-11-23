@@ -404,6 +404,12 @@ struct SettingsView: View {
                                           value: nil, chevron: true)
                     }
                     .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.privacyPrefs) {
+                        SettingRowContent(icon: "lock.fill", color: .gray, title: "隐私保护",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 settingsGroup("播放") {

@@ -125,6 +125,9 @@ struct HomeView: View {
                             .frame(width: 7, height: 7)
                     }
                 }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 5)
+                .glassEffect(.regular, in: Capsule())
                 .padding(.bottom, 10)
             } else {
                 Rectangle().fill(.quaternary).frame(height: 300)
@@ -181,6 +184,9 @@ struct HomeView: View {
                 }
                 .font(.subheadline.weight(.medium))
                 .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .glassEffect(.regular, in: Capsule())
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)

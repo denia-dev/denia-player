@@ -101,6 +101,14 @@ enum Prefs {
     static var boostRate: Double {
         d.object(forKey: "prefs.boostRate") == nil ? 2.0 : d.double(forKey: "prefs.boostRate")
     }
+    static var autoPlayNext: Bool {
+        d.object(forKey: "prefs.autoPlayNext") == nil ? true : d.bool(forKey: "prefs.autoPlayNext")
+    }
+    static var subScale: Double {
+        d.object(forKey: "prefs.subScale") == nil ? 1.0 : d.double(forKey: "prefs.subScale")
+    }
+    static var subDelay: Double { d.double(forKey: "prefs.subDelay") }
+    static var appLock: Bool { d.bool(forKey: "prefs.appLock") }
     static var subtitlePreference: SubtitlePreference {
         SubtitlePreference(rawValue: d.string(forKey: "prefs.subtitlePreference") ?? "") ?? .zhHans
     }
@@ -318,6 +326,7 @@ struct PlaybackPrefsView: View {
     @AppStorage("prefs.seekStepSeconds") private var seekStep = 15.0
     @AppStorage("prefs.defaultRate") private var defaultRate = 1.0
     @AppStorage("prefs.sleepTimerMinutes") private var sleepMinutes = 0
+    @AppStorage("prefs.autoPlayNext") private var autoPlayNext = true
 
     var body: some View {
         ScrollView {
@@ -344,6 +353,8 @@ struct PlaybackPrefsView: View {
                         Button("45 分钟") { sleepMinutes = 45 }
                         Button("60 分钟") { sleepMinutes = 60 }
                     }
+                    prefsDivider
+                    prefsToggleRow("自动播放下一集", isOn: $autoPlayNext)
                 }
                 Text("快进 / 快退秒数同时作用于播放器中央按钮与双击快进；默认播放速度在每次打开播放器时生效。")
                     .font(.footnote)
@@ -506,6 +517,8 @@ struct AudioPrefsView: View {
 
 struct SubtitlePrefsView: View {
     @AppStorage("prefs.subtitlePreference") private var subtitlePreference = "zhHans"
+    @AppStorage("prefs.subScale") private var subScale = 1.0
+    @AppStorage("prefs.subDelay") private var subDelay = 0.0
 
     var body: some View {
         ScrollView {
@@ -518,7 +531,25 @@ struct SubtitlePrefsView: View {
                         Button("关闭") { subtitlePreference = "off" }
                     }
                 }
-                Text("打开视频时自动挑选的字幕（内嵌与外挂字幕都算）；没有匹配的字幕时回退到片源默认字幕。选「关闭」则不自动开启字幕，仍可在播放器里手动选择。")
+                prefsCard {
+                    prefsMenuRow("字幕大小", value: subScaleLabel) {
+                        Button("较小") { subScale = 0.8 }
+                        Button("标准") { subScale = 1.0 }
+                        Button("较大") { subScale = 1.25 }
+                        Button("特大") { subScale = 1.5 }
+                    }
+                    prefsDivider
+                    prefsMenuRow("字幕延迟", value: subDelayLabel) {
+                        Button("延后 2 秒") { subDelay = 2.0 }
+                        Button("延后 1 秒") { subDelay = 1.0 }
+                        Button("延后 0.5 秒") { subDelay = 0.5 }
+                        Button("无延迟") { subDelay = 0 }
+                        Button("提前 0.5 秒") { subDelay = -0.5 }
+                        Button("提前 1 秒") { subDelay = -1.0 }
+                        Button("提前 2 秒") { subDelay = -2.0 }
+                    }
+                }
+                Text("打开视频时自动挑选的字幕（内嵌与外挂字幕都算）；没有匹配的字幕时回退到片源默认字幕。选「关闭」则不自动开启字幕，仍可在播放器里手动选择。字幕大小与延迟在打开视频时应用，对 mpv 引擎的文字字幕生效；PGS 位图字幕（VLCKit）不受影响。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -528,6 +559,20 @@ struct SubtitlePrefsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("字幕设置")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var subScaleLabel: String {
+        switch subScale {
+        case 0.8: return "较小"
+        case 1.25: return "较大"
+        case 1.5: return "特大"
+        default: return "标准"
+        }
+    }
+
+    private var subDelayLabel: String {
+        if subDelay == 0 { return "无" }
+        return subDelay > 0 ? String(format: "延后 %g 秒", subDelay) : String(format: "提前 %g 秒", -subDelay)
     }
 
     private var subtitleLabel: String {
@@ -593,6 +638,31 @@ struct ModulePrefsView: View {
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("模块配置")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+
+// MARK: - 隐私保护
+
+struct PrivacyPrefsView: View {
+    @AppStorage("prefs.appLock") private var appLock = false
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsToggleRow("应用锁", isOn: $appLock)
+                }
+                Text("打开 App、从后台回到前台时，用 Face ID 或设备密码解锁。设备没设密码时不会上锁。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("隐私保护")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

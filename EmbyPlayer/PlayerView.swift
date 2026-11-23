@@ -19,6 +19,7 @@ struct PlayerView: View {
 
     let item: EmbyItem
     let startSeconds: Double
+    var onPlayNext: ((EmbyItem) -> Void)?
 
     @State private var player = PlayerView.makePlayer(videoOutput: .metal)
     @State private var playerGeneration = 0
@@ -35,6 +36,8 @@ struct PlayerView: View {
             "demuxer-readahead-secs": "60",
             "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
             "vd-lavc-threads": "\(Prefs.softwareThreads)",
+            "sub-scale": String(format: "%.2f", Prefs.subScale),
+            "sub-delay": String(format: "%.1f", Prefs.subDelay),
         ]
         // MPVUI ships no fonts and iOS exposes no system font dir to libass,
         // so bundle a CJK font or every Chinese subtitle renders as tofu.
@@ -70,6 +73,8 @@ struct PlayerView: View {
     @State private var currentRate: Double = 1
     @State private var boostSavedRate: Double?
     @GestureState private var boostPressing = false
+    @State private var nextEpisode: EmbyItem?
+    @State private var endWatchTask: Task<Void, Never>?
     @State private var sleepTask: Task<Void, Never>?
 
     var body: some View {
@@ -107,7 +112,8 @@ struct PlayerView: View {
                             .font(.body.bold())
                             .foregroundStyle(.white)
                             .padding(10)
-                            .background(.black.opacity(0.45), in: Circle())
+                            .glassEffect(.regular.interactive(), in: Circle())
+                            .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
                     }
                     Spacer()
                 }
@@ -124,7 +130,7 @@ struct PlayerView: View {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
             if let vlcRoute {
-                VLCPlayerView(item: item, route: vlcRoute, startSeconds: startSeconds)
+                VLCPlayerView(item: item, route: vlcRoute, startSeconds: startSeconds, onPlayNext: onPlayNext)
                     .zIndex(30)
             }
 
@@ -173,6 +179,7 @@ struct PlayerView: View {
             requestOrientation(.portrait)
             hideTask?.cancel()
             sleepTask?.cancel()
+            endWatchTask?.cancel()
             if Prefs.independentBrightness {
                 Prefs.playerBrightness = Double(UIScreen.main.brightness)
             }
@@ -266,6 +273,8 @@ struct PlayerView: View {
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: info.PlaySessionId, positionSeconds: startSeconds)
             scheduleHide()
             startSleepTimer()
+            fetchNextEpisode()
+            endWatchTask = Task { await watchForEnd() }
         } catch {
             loadError = "加载失败：\(error.localizedDescription)"
         }
@@ -499,6 +508,28 @@ struct PlayerView: View {
         if gestureHint?.hasSuffix("快进中") == true { gestureHint = nil }
     }
 
+    private func fetchNextEpisode() {
+        guard item.type == "Episode", let seriesID = item.SeriesId,
+              let seasonID = item.SeasonId, let client = store.client() else { return }
+        Task {
+            guard let episodes = try? await client.episodes(seriesID: seriesID, seasonID: seasonID) else { return }
+            let sorted = episodes.sorted { ($0.IndexNumber ?? 0) < ($1.IndexNumber ?? 0) }
+            if let index = sorted.firstIndex(where: { $0.Id == item.Id }), index + 1 < sorted.count {
+                nextEpisode = sorted[index + 1]
+            }
+        }
+    }
+
+    private func watchForEnd() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(1))
+            if player.state == .ended {
+                if Prefs.autoPlayNext, let nextEpisode { onPlayNext?(nextEpisode) }
+                return
+            }
+        }
+    }
+
     private func startSleepTimer() {
         sleepTask?.cancel()
         let minutes = Prefs.sleepTimerMinutes
@@ -636,6 +667,7 @@ struct PlayerView: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 9)
                 .glassEffect(.regular, in: Capsule())
+                .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
                 if let error = player.lastError {
                     Text(String(describing: error)).font(.caption2).foregroundStyle(.red.opacity(0.9)).lineLimit(2)
                 }
@@ -681,6 +713,11 @@ struct PlayerView: View {
 
     private var trackMenus: some View {
         HStack(spacing: 14) {
+            if let nextEpisode {
+                Button { onPlayNext?(nextEpisode) } label: {
+                    Image(systemName: "forward.end.fill").font(.title3)
+                }
+            }
             if Prefs.showAudioButton, !player.audioTracks.isEmpty {
                 Menu {
                     ForEach(player.audioTracks, id: \.mpvID) { track in
