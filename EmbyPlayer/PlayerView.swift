@@ -871,6 +871,9 @@ struct PlayerView: View {
                         HStack(spacing: 10) {
                             Text(formatDuration(scrubbing ? scrubValue : player.position.secondsValue))
                                 .font(.caption.monospacedDigit())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .glassEffect(.regular, in: Capsule())
                             Slider(value: Binding(
                                 get: { scrubbing ? scrubValue : player.position.secondsValue },
                                 set: { scrubValue = $0 }
@@ -887,11 +890,10 @@ struct PlayerView: View {
                                  ? "-" + formatDuration(max(player.duration.secondsValue - (scrubbing ? scrubValue : player.position.secondsValue), 0))
                                  : formatDuration(player.duration.secondsValue))
                                 .font(.caption.monospacedDigit())
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .glassEffect(.regular, in: Capsule())
                         }
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .glassEffect(.regular, in: Capsule())
-                        .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
                         if let error = player.lastError {
                             Text(String(describing: error)).font(.caption2).foregroundStyle(.red.opacity(0.9)).lineLimit(2)
                         }

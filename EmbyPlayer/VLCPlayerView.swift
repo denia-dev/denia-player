@@ -662,6 +662,9 @@ struct VLCPlayerView: View {
                     HStack(spacing: 10) {
                         Text(formatDuration(scrubbing ? scrubValue : controller.position))
                             .font(.caption.monospacedDigit())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .glassEffect(.regular, in: Capsule())
                         Slider(value: Binding(
                             get: { scrubbing ? scrubValue : controller.position },
                             set: { scrubValue = $0 }
@@ -678,11 +681,10 @@ struct VLCPlayerView: View {
                              ? "-" + formatDuration(max(controller.duration - (scrubbing ? scrubValue : controller.position), 0))
                              : formatDuration(controller.duration))
                             .font(.caption.monospacedDigit())
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .glassEffect(.regular, in: Capsule())
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .glassEffect(.regular, in: Capsule())
-                    .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
                     .padding(.horizontal, 12)
 
                     HStack {
