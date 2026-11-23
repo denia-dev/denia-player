@@ -1,0 +1,41 @@
+workflows:
+  ios-unsigned:
+    name: iOS unsigned IPA
+    instance_type: mac_mini_m2
+    max_build_duration: 60
+    environment:
+      xcode: latest
+    scripts:
+      - name: Trust SPM macros/plugins
+        script: |
+          defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+          defaults write com.apple.dt.Xcode IDESkipPackagePluginFingerprintValidation -bool YES
+      - name: Fetch MobileVLCKit 3.7.3
+        script: |
+          curl -L -o /tmp/mvlc.tar.xz "https://download.videolan.org/pub/cocoapods/prod/MobileVLCKit-3.7.3-319ed2c0-79128878.tar.xz"
+          echo "0d04059906962ddc9a7bd1ebaa12e1f9ae85eb2466116a97a2f46886dd27a0a9  /tmp/mvlc.tar.xz" | shasum -a 256 -c -
+          mkdir -p /tmp/mvlc Frameworks
+          tar -xJf /tmp/mvlc.tar.xz -C /tmp/mvlc
+          cp -R /tmp/mvlc/MobileVLCKit-binary/MobileVLCKit.xcframework Frameworks/
+          ls Frameworks/MobileVLCKit.xcframework
+      - name: Generate project with XcodeGen
+        script: |
+          which xcodegen || brew install xcodegen
+          xcodegen generate
+      - name: Build (no signing)
+        script: |
+          xcodebuild -project EmbyPlayer.xcodeproj -scheme EmbyPlayer \
+            -configuration Release -sdk iphoneos \
+            -derivedDataPath build/DD \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            build
+      - name: Package IPA
+        script: |
+          APP=$(find build/DD/Build/Products/Release-iphoneos -maxdepth 1 -name "*.app" | head -1)
+          echo "App bundle: $APP"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry EmbyPlayer-unsigned.ipa Payload
+          ls -lh EmbyPlayer-unsigned.ipa
+    artifacts:
+      - EmbyPlayer-unsigned.ipa
