@@ -2,81 +2,126 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
+// Lock screen + Dynamic Island presentation for download activities.
+// Pure presentation: all state arrives in the activity's ContentState.
+
 struct DownloadActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: DownloadActivityAttributes.self) { context in
-            DownloadLockScreenView(context: context)
-                .widgetURL(URL(string: "deniaplayer://downloads"))
+            LockScreenView(context: context)
         } dynamicIsland: { context in
             let state = context.state
             return DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    Image(systemName: state.status == "已完成" ? "checkmark.circle.fill" : "arrow.down.circle.fill")
-                        .foregroundStyle(state.status == "失败" ? Color.red : Color.accentColor)
+                    StatusIcon(status: state.status)
+                        .font(.title3)
+                        .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(state.status == "下载中" ? state.progress.formatted(.percent.precision(.fractionLength(0))) : state.status)
-                        .font(.caption.monospacedDigit())
+                    Text(state.status == "下载中"
+                         ? state.progress.formatted(.percent.precision(.fractionLength(0)))
+                         : state.status)
+                        .font(.callout.monospacedDigit().weight(.semibold))
+                        .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.center) {
-                    Text(context.attributes.title).lineLimit(1).font(.caption.weight(.semibold))
+                    Text(context.attributes.title)
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
                 }
                 DynamicIslandExpandedRegion(.bottom) {
                     VStack(alignment: .leading, spacing: 6) {
                         ProgressView(value: state.progress)
+                            .tint(.accentColor)
                         HStack {
-                            Text("\(ByteCountFormatter.string(fromByteCount: state.downloadedBytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: state.totalBytes, countStyle: .file))")
+                            Text("\(byteText(state.downloadedBytes)) / \(byteText(state.totalBytes))")
                             Spacer()
-                            Text(state.status == "下载中" ? (state.remainingSeconds > 0 ? "剩余 \(formatRemaining(state.remainingSeconds))" : "\(ByteCountFormatter.string(fromByteCount: Int64(state.bytesPerSecond), countStyle: .file))/秒") : state.status)
-                        }.font(.caption2).foregroundStyle(.secondary)
+                            Text(trailingText(state))
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                     }
+                    .padding(.top, 2)
                 }
             } compactLeading: {
-                Image(systemName: state.status == "已完成" ? "checkmark.circle.fill" : "arrow.down.circle.fill")
-                    .foregroundStyle(state.status == "失败" ? Color.red : Color.accentColor)
+                StatusIcon(status: state.status)
             } compactTrailing: {
-                Text(state.status == "下载中" ? state.progress.formatted(.percent.precision(.fractionLength(0))) : state.status)
-                    .font(.caption2.monospacedDigit())
+                Text(state.status == "下载中"
+                     ? state.progress.formatted(.percent.precision(.fractionLength(0)))
+                     : state.status)
+                    .font(.caption2.monospacedDigit().weight(.semibold))
+                    .frame(minWidth: 36)
             } minimal: {
-                Image(systemName: state.status == "已完成" ? "checkmark.circle.fill" : "arrow.down.circle.fill")
+                StatusIcon(status: state.status)
             }
-            .widgetURL(URL(string: "deniaplayer://downloads"))
             .keylineTint(.accentColor)
         }
     }
 }
 
-private struct DownloadLockScreenView: View {
-    let context: ActivityViewContext<DownloadActivityAttributes>
+private struct StatusIcon: View {
+    let status: String
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Label(context.attributes.title, systemImage: "arrow.down.circle.fill").lineLimit(1)
-                Spacer()
-                Text(context.state.status == "下载中" ? context.state.progress.formatted(.percent.precision(.fractionLength(0))) : context.state.status)
-                    .font(.caption.monospacedDigit())
-            }
-            ProgressView(value: context.state.progress)
-            HStack {
-                Text("\(ByteCountFormatter.string(fromByteCount: context.state.downloadedBytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: context.state.totalBytes, countStyle: .file))")
-                Spacer()
-                if context.state.remainingSeconds > 0 {
-                    Text("剩余 \(formatRemaining(context.state.remainingSeconds))")
-                } else if context.state.bytesPerSecond > 0 {
-                    Text("\(ByteCountFormatter.string(fromByteCount: Int64(context.state.bytesPerSecond), countStyle: .file))/秒")
-                }
-            }.font(.caption2).foregroundStyle(.secondary)
-        }.padding()
+        Image(systemName: status == "已完成" ? "checkmark.circle.fill"
+              : status == "失败" ? "exclamationmark.circle.fill"
+              : "arrow.down.circle.fill")
+            .foregroundStyle(status == "失败" ? Color.red : Color.accentColor)
     }
+}
+
+private struct LockScreenView: View {
+    let context: ActivityViewContext<DownloadActivityAttributes>
+
+    var body: some View {
+        let state = context.state
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                StatusIcon(status: state.status)
+                Text(context.attributes.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+                Text(state.status == "下载中"
+                     ? state.progress.formatted(.percent.precision(.fractionLength(0)))
+                     : state.status)
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+            }
+            ProgressView(value: state.progress)
+                .tint(.accentColor)
+            HStack {
+                Text("\(byteText(state.downloadedBytes)) / \(byteText(state.totalBytes))")
+                Spacer()
+                Text(trailingText(state))
+            }
+            .font(.caption2)
+            .foregroundStyle(.secondary)
+        }
+        .padding()
+        .activityBackgroundTint(Color.black.opacity(0.35))
+        .activitySystemActionForegroundColor(.white)
+    }
+}
+
+private func byteText(_ bytes: Int64) -> String {
+    ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+}
+
+private func trailingText(_ state: DownloadActivityAttributes.ContentState) -> String {
+    guard state.status == "下载中" else { return state.status }
+    if state.remainingSeconds > 0 { return "剩余 \(remainingText(state.remainingSeconds))" }
+    if state.bytesPerSecond > 0 { return "\(byteText(Int64(state.bytesPerSecond)))/秒" }
+    return "正在接收数据…"
+}
+
+private func remainingText(_ seconds: Int) -> String {
+    if seconds >= 3600 { return String(format: "%d小时%02d分", seconds / 3600, (seconds % 3600) / 60) }
+    if seconds >= 60 { return String(format: "%d分%02d秒", seconds / 60, seconds % 60) }
+    return "\(seconds)秒"
 }
 
 @main
 struct DownloadWidgets: WidgetBundle {
-    var body: some Widget { DownloadActivityWidget() }
-}
-
-private func formatRemaining(_ seconds: Int) -> String {
-    if seconds >= 3600 { return String(format: "%d小时%02d分", seconds / 3600, (seconds % 3600) / 60) }
-    if seconds >= 60 { return String(format: "%d分%02d秒", seconds / 60, seconds % 60) }
-    return "\(seconds)秒"
+    var body: some Widget {
+        DownloadActivityWidget()
+    }
 }

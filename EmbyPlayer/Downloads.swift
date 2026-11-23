@@ -1,6 +1,5 @@
 import SwiftUI
 import Foundation
-import ActivityKit
 
 // MARK: - offline downloads
 //
@@ -47,16 +46,14 @@ final class DownloadsManager: NSObject, ObservableObject {
     @Published private(set) var progress: [String: Double] = [:]
     @Published private(set) var activeIDs: Set<String> = []
     @Published private(set) var failures: [String: String] = [:]
-    @Published private(set) var downloadSpeeds: [String: Double] = [:]
-    @Published private(set) var liveActivityMessages: [String: String] = [:]
+    /// All Live Activity work (start/update/end + visible status) lives in
+    /// DownloadLiveActivity.swift; the downloads list observes it directly.
+    let liveActivity = DownloadLiveActivityCenter()
 
     private let failuresKey = "denia.download.failures.v1"
     private let recoveriesKey = "denia.download.recoveries.v1"
     private var recoveries: [String: DownloadRecovery] = [:]
     private var backgroundEventsCompletion: (() -> Void)?
-    private var liveActivities: [String: Activity<DownloadActivityAttributes>] = [:]
-    private var liveActivityLastUpdate: [String: Date] = [:]
-    private var liveActivityByteSample: [String: (date: Date, bytes: Int64)] = [:]
 
     private var session: URLSession!
     private var tasks: [Int: String] = [:]            // taskIdentifier -> itemID
@@ -100,9 +97,6 @@ final class DownloadsManager: NSObject, ObservableObject {
         config.timeoutIntervalForRequest = 60
         config.timeoutIntervalForResource = 60 * 60 * 12
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-        for activity in Activity<DownloadActivityAttributes>.activities {
-            liveActivities[activity.attributes.itemID] = activity
-        }
         session.getAllTasks { [weak self] restoredTasks in
             Task { @MainActor in
                 guard let self else { return }
@@ -111,7 +105,9 @@ final class DownloadsManager: NSObject, ObservableObject {
                     if let itemID = self.tasks[task.taskIdentifier] {
                         task.resume()
                         if let recovery = self.recoveries[itemID] {
-                            Task { await self.beginLiveActivity(for: recovery) }
+                            self.liveActivity.start(itemID: itemID,
+                                                    title: recovery.skeleton.episodeTitle,
+                                                    totalBytes: recovery.skeleton.sizeBytes)
                         }
                     }
                 }
@@ -171,71 +167,6 @@ final class DownloadsManager: NSObject, ObservableObject {
 
     func failure(for itemID: String) -> String? { failures[itemID] }
 
-    func retryLiveActivity(itemID: String) {
-        guard let recovery = recoveries[itemID] else { return }
-        Task { await beginLiveActivity(for: recovery) }
-    }
-
-    private func beginLiveActivity(for recovery: DownloadRecovery) async {
-        let authorization = ActivityAuthorizationInfo()
-        guard authorization.areActivitiesEnabled else {
-            liveActivityMessages[recovery.itemID] = "系统关闭了实时活动（Settings areActivitiesEnabled=false）"
-            return
-        }
-        if UIDevice.current.userInterfaceIdiom != .phone {
-            liveActivityMessages[recovery.itemID] = "实时活动已尝试创建；此设备无灵动岛，仅可在锁屏查看"
-        }
-        let activity: Activity<DownloadActivityAttributes>
-        if let existing = Activity<DownloadActivityAttributes>.activities.first(where: { $0.attributes.itemID == recovery.itemID }) {
-            activity = existing
-        } else {
-            let attributes = DownloadActivityAttributes(itemID: recovery.itemID, title: recovery.skeleton.episodeTitle)
-            let state = DownloadActivityAttributes.ContentState(progress: 0, downloadedBytes: 0,
-                totalBytes: recovery.skeleton.sizeBytes, bytesPerSecond: 0, remainingSeconds: 0, status: "下载中")
-            do {
-                activity = try Activity.request(attributes: attributes,
-                    content: ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60)), pushType: nil)
-            } catch {
-                liveActivityMessages[recovery.itemID] = "活动创建失败：\(error.localizedDescription)"
-                return
-            }
-        }
-        liveActivities[recovery.itemID] = activity
-        liveActivityMessages[recovery.itemID] = "实时活动已创建"
-    }
-
-    private func updateLiveActivity(itemID: String, bytes: Int64, total: Int64, status: String = "下载中") {
-        let now = Date()
-        guard status != "下载中" || now.timeIntervalSince(liveActivityLastUpdate[itemID] ?? .distantPast) >= 1 else { return }
-        let sample = liveActivityByteSample[itemID]
-        let elapsed = sample.map { now.timeIntervalSince($0.date) } ?? 0
-        let speed = elapsed > 0.25 ? Double(max(0, bytes - (sample?.bytes ?? bytes))) / elapsed : 0
-        liveActivityByteSample[itemID] = (now, bytes)
-        liveActivityLastUpdate[itemID] = now
-        downloadSpeeds[itemID] = speed
-        guard let activity = liveActivities[itemID] else { return }
-        let fraction = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : 0
-        let remaining = speed > 0 && total > bytes ? Int(Double(total - bytes) / speed) : 0
-        let state = DownloadActivityAttributes.ContentState(progress: fraction, downloadedBytes: bytes,
-            totalBytes: total, bytesPerSecond: speed, remainingSeconds: remaining, status: status)
-        Task { await activity.update(ActivityContent(state: state, staleDate: Date().addingTimeInterval(15 * 60))) }
-    }
-
-    private func endLiveActivity(itemID: String, status: String, bytes: Int64 = 0, total: Int64 = 0) {
-        let activity = liveActivities.removeValue(forKey: itemID)
-            ?? Activity<DownloadActivityAttributes>.activities.first { $0.attributes.itemID == itemID }
-        guard let activity else { return }
-        let fraction = total > 0 ? min(1, max(0, Double(bytes) / Double(total))) : (status == "已完成" ? 1 : 0)
-        let state = DownloadActivityAttributes.ContentState(progress: fraction, downloadedBytes: bytes,
-            totalBytes: total, bytesPerSecond: 0, remainingSeconds: 0, status: status)
-        liveActivityByteSample[itemID] = nil
-        liveActivityLastUpdate[itemID] = nil
-        Task {
-            await activity.end(ActivityContent(state: state, staleDate: nil),
-                dismissalPolicy: .after(Date().addingTimeInterval(status == "已完成" ? 300 : 900)))
-        }
-    }
-
     /// Resolves the media source first; refuses to start if it would leave
     /// less than 512 MiB free. The error remains visible and retryable.
     func enqueue(item: EmbyItem, client: EmbyClient) {
@@ -247,13 +178,19 @@ final class DownloadsManager: NSObject, ObservableObject {
         // Publish an immediate lightweight row before PlaybackInfo returns;
         // otherwise the downloads tab can appear completely empty while the
         // request is being resolved and ActivityKit is not yet available.
-        pending[item.Id] = DownloadRecord(
+        let placeholder = DownloadRecord(
             id: item.Id, name: item.Name, type: item.type,
             seriesID: item.SeriesId, seriesName: item.SeriesName,
             indexNumber: item.IndexNumber, overview: item.Overview,
             runtimeSeconds: item.RunTimeTicks.map { Double($0) / 10_000_000 } ?? 0,
             fileName: "", posterFileName: nil, sizeBytes: 0, hasPGS: false,
             audioLabels: [], subtitleLabels: [], downloadedAt: Date())
+        pending[item.Id] = placeholder
+        // Start the Live Activity NOW, synchronously with the tap, while the
+        // app is certainly active. Waiting until the media source resolves
+        // lets the request land after the user has locked the phone, where
+        // the system will not present it.
+        liveActivity.start(itemID: item.Id, title: placeholder.episodeTitle, totalBytes: 0)
         Task {
             do {
                 let info = try await client.playbackInfo(itemID: item.Id, startSeconds: 0)
@@ -295,10 +232,11 @@ final class DownloadsManager: NSObject, ObservableObject {
                                                     container: source.Container ?? "mkv", taskID: task.taskIdentifier)
                     self.recoveries[item.Id] = recovery
                     self.saveRecoveries()
-                    Task {
-                        await self.beginLiveActivity(for: recovery)
-                        task.resume()
-                    }
+                    // Second chance with the real total (start is idempotent);
+                    // normally a no-op because the tap-time start succeeded.
+                    self.liveActivity.start(itemID: item.Id, title: skeleton.episodeTitle,
+                                            totalBytes: skeleton.sizeBytes)
+                    task.resume()
                 }
                 // Poster alongside, best effort.
                 if let poster = client.imageURL(itemID: item.Id, kind: "Primary", maxHeight: 480) {
@@ -340,11 +278,10 @@ final class DownloadsManager: NSObject, ObservableObject {
     // MARK: internals
 
     private func finishWithFailure(_ itemID: String, message: String? = "下载失败，请检查网络后重试。") {
-        let downloaded = liveActivityByteSample[itemID]?.bytes ?? 0
-        let expected = pending[itemID]?.sizeBytes ?? 0
-        endLiveActivity(itemID: itemID, status: message == nil ? "已取消" : "失败",
-                        bytes: downloaded, total: expected)
-        downloadSpeeds[itemID] = nil
+        liveActivity.finish(itemID: itemID,
+                            outcome: message == nil ? .cancelled : .failed,
+                            bytes: liveActivity.lastKnownBytes(for: itemID),
+                            total: pending[itemID]?.sizeBytes ?? 0)
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
@@ -383,8 +320,8 @@ final class DownloadsManager: NSObject, ObservableObject {
         records.removeAll { $0.id == itemID }
         records.append(skeleton)
         persist()
-        endLiveActivity(itemID: itemID, status: "已完成", bytes: skeleton.sizeBytes, total: skeleton.sizeBytes)
-        downloadSpeeds[itemID] = nil
+        liveActivity.finish(itemID: itemID, outcome: .completed,
+                            bytes: skeleton.sizeBytes, total: skeleton.sizeBytes)
         activeIDs.remove(itemID)
         progress[itemID] = nil
         pending[itemID] = nil
@@ -405,7 +342,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         guard let itemID = tasks[taskID] else { return }
         progress[itemID] = fraction
         let total = expected > 0 ? expected : (pending[itemID]?.sizeBytes ?? 0)
-        updateLiveActivity(itemID: itemID, bytes: bytes, total: total)
+        liveActivity.update(itemID: itemID, bytes: bytes, total: total)
     }
 }
 
@@ -503,6 +440,7 @@ struct DownloadButton: View {
 
 struct DownloadsView: View {
     @ObservedObject private var manager = DownloadsManager.shared
+    @ObservedObject private var liveCenter = DownloadsManager.shared.liveActivity
     @State private var playing: DownloadRecord?
 
     private var movies: [DownloadRecord] { manager.records.filter { $0.type != "Episode" } }
@@ -573,7 +511,7 @@ struct DownloadsView: View {
 
     private func activeRow(_ record: DownloadRecord) -> some View {
         let fraction = manager.progress[record.id] ?? 0
-        let speed = manager.downloadSpeeds[record.id] ?? 0
+        let speed = liveCenter.speeds[record.id] ?? 0
         return HStack(spacing: 12) {
             poster(record).frame(width: 96, height: 54)
                 .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -590,15 +528,8 @@ struct DownloadsView: View {
                         Text(remaining > 0 ? "剩余 \(formatDLTime(Double(remaining)))" : "\(ByteCountFormatter.string(fromByteCount: Int64(speed), countStyle: .file))/秒")
                     }
                 }.font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                if let activityMessage = manager.liveActivityMessages[record.id] {
-                    HStack {
-                        Text(activityMessage).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-                        Spacer(minLength: 2)
-                        if activityMessage.contains("失败") || activityMessage.contains("关闭了") {
-                            Button("重试") { manager.retryLiveActivity(itemID: record.id) }
-                                .font(.caption2)
-                        }
-                    }
+                if let activityStatus = liveCenter.status[record.id] {
+                    Text(activityStatus).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
                 }
             }
             Button(role: .destructive) { manager.cancel(itemID: record.id) } label: {
