@@ -201,7 +201,7 @@ struct EmbyClient {
     /// Servers without segment data answer 404 or an empty list -
     /// both read as "no segments", never as an error worth showing.
     func mediaSegments(itemID: String) async -> [MediaSegment] {
-        let request = makeRequest(path: "/MediaSegments/\(itemID)", query: [])
+        guard let request = try? makeRequest(path: "/MediaSegments/\(itemID)", query: []) else { return [] }
         if let array: [MediaSegment] = try? await send(request) { return array }
         if let wrapped: MediaSegmentsResponse = try? await send(request) { return wrapped.Items }
         return []
@@ -435,14 +435,19 @@ struct EmbyClient {
 /// One intro/outro segment from the MediaSegments API (ticks are
 /// 100ns units, as everywhere in Emby).
 struct MediaSegment: Decodable {
-    let Type: String
+    let kind: String
     let StartTicks: Int64
     let EndTicks: Int64
 
+    enum CodingKeys: String, CodingKey {
+        case kind = "Type"
+        case StartTicks, EndTicks
+    }
+
     var startSeconds: Double { Double(StartTicks) / 10_000_000 }
     var endSeconds: Double { Double(EndTicks) / 10_000_000 }
-    var isIntro: Bool { Type.lowercased().contains("intro") }
-    var isOutro: Bool { Type.lowercased().contains("outro") }
+    var isIntro: Bool { kind.lowercased().contains("intro") }
+    var isOutro: Bool { kind.lowercased().contains("outro") }
 }
 
 private struct MediaSegmentsResponse: Decodable {
