@@ -420,6 +420,7 @@ struct VLCPlayerView: View {
     @State private var dragStartPosition: Double = 0
     @State private var dragStartLevel: Double = 0
     @State private var boostSavedRate: Float?
+    @GestureState private var boostPressing = false
     @State private var sleepTask: Task<Void, Never>?
 
     private enum DragMode { case scrub, brightness, volume }
@@ -702,11 +703,6 @@ struct VLCPlayerView: View {
     private var gestureLayer: some View {
         Color.clear
             .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 12)
-                    .onChanged { value in handleDrag(value) }
-                    .onEnded { _ in handleDragEnd() }
-            )
             .overlay {
                 HStack(spacing: 0) {
                     Color.clear.contentShape(Rectangle())
@@ -717,20 +713,25 @@ struct VLCPlayerView: View {
                         .onTapGesture(count: 2) { controller.seekBy(Prefs.seekStepSeconds); pokeChrome() }
                 }
             }
+            .gesture(
+                DragGesture(minimumDistance: 12)
+                    .onChanged { value in handleDrag(value) }
+                    .onEnded { _ in handleDragEnd() }
+            )
             .onTapGesture { toggleChrome() }
             .simultaneousGesture(boostGesture)
+            .onChange(of: boostPressing) { _, pressing in
+                if pressing { startBoost() } else { endBoost() }
+            }
     }
 
-    // A plain long press, deliberately NOT sequenced with a drag:
-    // build 29 sequenced it with DragGesture(minimumDistance: 0),
-    // whose recognition starved the brightness/volume/scrub drag on
-    // both sides. A long press fails as soon as the finger moves
-    // beyond a few points, so it cannot compete with real drags;
-    // its onEnded fires when the finger lifts.
+    // Press-and-hold boost via @GestureState: the state resets when
+    // the gesture ends, fails or is cancelled, so the rate can never
+    // stick (build 30's onEnded was skipped when a drag attempt
+    // failed the press mid-way, leaving the boost on forever).
     private var boostGesture: some Gesture {
         LongPressGesture(minimumDuration: 0.45, maximumDistance: 12)
-            .onChanged { _ in startBoost() }
-            .onEnded { _ in endBoost() }
+            .updating($boostPressing) { _, state, _ in state = true }
     }
 
     private func startBoost() {
