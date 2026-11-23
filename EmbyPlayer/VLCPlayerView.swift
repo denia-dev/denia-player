@@ -436,6 +436,7 @@ struct VLCPlayerView: View {
     @State private var dragStartLevel: Double = 0
     @State private var boostSavedRate: Float?
     @State private var nextEpisode: EmbyItem?
+    @State private var previousEpisode: EmbyItem?
     @State private var segments: [MediaSegment] = []
     @State private var activeSegment: MediaSegment?
     @State private var seasonEpisodes: [EmbyItem] = []
@@ -615,24 +616,22 @@ struct VLCPlayerView: View {
 
     private var chrome: some View {
         VStack {
-            HStack(spacing: 12) {
+            // Top bar: plain icons, no glass (his SenPlayer reference).
+            HStack(spacing: 18) {
                 Spacer().frame(width: 34)
-                if controlsLocked {
-                    Spacer()
-                    Button { controlsLocked = false; pokeChrome() } label: {
-                        Image(systemName: "lock.fill").font(.title3)
-                    }
-                } else {
-                if Prefs.showTitleInPlayer {
+                if !controlsLocked, Prefs.showTitleInPlayer {
                     Text(item.Name ?? "")
                         .font(.headline)
                         .lineLimit(1)
                 }
                 Spacer()
-                trackMenus
-                Button { controlsLocked = true; pokeChrome() } label: {
-                    Image(systemName: "lock.open").font(.title3)
-                }
+                if !controlsLocked, Prefs.showDiagnosticsButton {
+                    Button {
+                        diagText = controller.diagnosticsDump()
+                        showDiag = true
+                    } label: {
+                        Image(systemName: "info.circle").font(.title2)
+                    }
                 }
             }
             .padding(.horizontal)
@@ -640,100 +639,109 @@ struct VLCPlayerView: View {
 
             Spacer()
 
-            if !controlsLocked {
-            centerCluster
-
-            Spacer()
-
-            HStack(spacing: 10) {
-                Text(formatDuration(scrubbing ? scrubValue : controller.position))
-                    .font(.caption.monospacedDigit())
-                Slider(value: Binding(
-                    get: { scrubbing ? scrubValue : controller.position },
-                    set: { scrubValue = $0 }
-                ), in: 0...max(controller.duration, 1)) { editing in
-                    if editing { scrubbing = true; scrubValue = controller.position }
-                    else {
-                        controller.seek(to: scrubValue)
-                        scrubbing = false
-                        pokeChrome()
+            if controlsLocked {
+                HStack {
+                    Button { controlsLocked = false; pokeChrome() } label: {
+                        Image(systemName: "lock.fill").font(.title3)
                     }
+                    Spacer()
                 }
-                .tint(.white)
-                Text(Prefs.timeMode == .remaining
-                     ? "-" + formatDuration(max(controller.duration - (scrubbing ? scrubValue : controller.position), 0))
-                     : formatDuration(controller.duration))
-                    .font(.caption.monospacedDigit())
-            }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 9)
-            .glassEffect(.regular, in: Capsule())
-            .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
-            .padding(.horizontal, 12)
-            .padding(.bottom, 10)
+                .padding(.horizontal, 16)
+                .padding(.bottom, 10)
+            } else {
+                VStack(spacing: 10) {
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(streamInfoLine)
+                            .font(.caption.weight(.medium))
+                            .lineLimit(1)
+                        Spacer()
+                        circleMenus
+                    }
+                    .padding(.horizontal, 14)
+
+                    HStack(spacing: 10) {
+                        Text(formatDuration(scrubbing ? scrubValue : controller.position))
+                            .font(.caption.monospacedDigit())
+                        Slider(value: Binding(
+                            get: { scrubbing ? scrubValue : controller.position },
+                            set: { scrubValue = $0 }
+                        ), in: 0...max(controller.duration, 1)) { editing in
+                            if editing { scrubbing = true; scrubValue = controller.position }
+                            else {
+                                controller.seek(to: scrubValue)
+                                scrubbing = false
+                                pokeChrome()
+                            }
+                        }
+                        .tint(.white)
+                        Text(Prefs.timeMode == .remaining
+                             ? "-" + formatDuration(max(controller.duration - (scrubbing ? scrubValue : controller.position), 0))
+                             : formatDuration(controller.duration))
+                            .font(.caption.monospacedDigit())
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 9)
+                    .glassEffect(.regular, in: Capsule())
+                    .shadow(color: .black.opacity(0.25), radius: 10, y: 3)
+                    .padding(.horizontal, 12)
+
+                    HStack {
+                        Button { controlsLocked = true; pokeChrome() } label: {
+                            Image(systemName: "lock.open").font(.title3)
+                        }
+                        .frame(width: 34, alignment: .leading)
+                        Spacer()
+                        transportButtons
+                        Spacer()
+                        Group {
+                            if seasonEpisodes.count > 1 {
+                                Button { showEpisodePicker = true } label: {
+                                    Image(systemName: "list.bullet").font(.title3)
+                                }
+                            } else {
+                                Color.clear
+                            }
+                        }
+                        .frame(width: 34, alignment: .trailing)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 10)
+                }
             }
         }
         .foregroundStyle(.white)
         .background(
-            LinearGradient(colors: [.black.opacity(0.45), .clear, .black.opacity(0.45)],
+            LinearGradient(colors: [.black.opacity(0.35), .clear, .black.opacity(0.45)],
                            startPoint: .top, endPoint: .bottom)
                 .allowsHitTesting(false)
         )
     }
 
-    private var centerCluster: some View {
-        HStack(spacing: 30) {
-            clusterButton(icon: "gobackward.\(Int(Prefs.seekStepSeconds))", size: 56) {
-                controller.seek(to: max(0, controller.position - Prefs.seekStepSeconds))
-                pokeChrome()
-            }
-            clusterButton(icon: controller.isPlaying ? "pause.fill" : "play.fill", size: 78) {
-                controller.togglePlay()
-                pokeChrome()
-            }
-            clusterButton(icon: "goforward.\(Int(Prefs.seekStepSeconds))", size: 56) {
-                controller.seek(to: min(controller.duration, controller.position + Prefs.seekStepSeconds))
-                pokeChrome()
-            }
-        }
-    }
-
-    private func clusterButton(icon: String, size: CGFloat, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: size * 0.38, weight: .semibold))
-                .foregroundStyle(.white)
-                .frame(width: size, height: size)
-                .glassEffect(.regular.interactive(), in: Circle())
-        }
-        .buttonStyle(.plain)
-    }
-
-    private var trackMenus: some View {
-        HStack(spacing: 14) {
-            if seasonEpisodes.count > 1 {
-                Button { showEpisodePicker = true } label: {
-                    Image(systemName: "list.bullet").font(.title3)
-                }
-            }
-            if chapters.count > 1 {
-                Button { showChapters = true } label: {
-                    Image(systemName: "bookmark").font(.title3)
-                }
-            }
-            if let nextEpisode {
-                Button { onPlayNext?(nextEpisode) } label: {
-                    Image(systemName: "forward.end.fill").font(.title3)
-                }
-            }
-            if Prefs.showDiagnosticsButton {
+    private var transportButtons: some View {
+        HStack(spacing: 36) {
             Button {
-                diagText = controller.diagnosticsDump()
-                showDiag = true
+                if let previousEpisode { onPlayNext?(previousEpisode) }
+                else { controller.seek(to: max(0, controller.position - Prefs.seekStepSeconds)); pokeChrome() }
             } label: {
-                Image(systemName: "info.circle").font(.title3)
+                Image(systemName: seasonEpisodes.count > 1 ? "backward.end.fill" : "gobackward.\(Int(Prefs.seekStepSeconds))")
+                    .font(.title)
             }
+            Button { controller.togglePlay(); pokeChrome() } label: {
+                Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 36))
             }
+            Button {
+                if let nextEpisode { onPlayNext?(nextEpisode) }
+                else { controller.seek(to: min(controller.duration, controller.position + Prefs.seekStepSeconds)); pokeChrome() }
+            } label: {
+                Image(systemName: seasonEpisodes.count > 1 ? "forward.end.fill" : "goforward.\(Int(Prefs.seekStepSeconds))")
+                    .font(.title)
+            }
+        }
+    }
+
+    private var circleMenus: some View {
+        HStack(spacing: 10) {
             if Prefs.showAudioButton, controller.audioTracks.count > 1 {
                 Menu {
                     ForEach(Array(realAudioTracks.enumerated()), id: \.element.id) { ordinal, track in
@@ -747,9 +755,7 @@ struct VLCPlayerView: View {
                                   systemImage: controller.selectedAudioID == track.id ? "checkmark" : "")
                         }
                     }
-                } label: {
-                    Image(systemName: "waveform").font(.title3)
-                }
+                } label: { circleLabel("waveform") }
             }
             if Prefs.showSubtitleButton, controller.subtitleTracks.count > 1 {
                 Menu {
@@ -773,19 +779,36 @@ struct VLCPlayerView: View {
                                   systemImage: controller.selectedSubtitleID == track.id ? "checkmark" : "")
                         }
                     }
-                } label: {
-                    Image(systemName: "captions.bubble").font(.title3)
-                }
+                } label: { circleLabel("captions.bubble") }
             }
             Menu {
-                ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
-                    Button("\(rate, specifier: "%g")×") { controller.setRate(Float(rate)) }
+                if let nextEpisode {
+                    Button("下一集") { onPlayNext?(nextEpisode) }
                 }
-            } label: {
-                Image(systemName: "gauge.with.dots.needle.33percent").font(.title3)
-            }
+                if chapters.count > 1 {
+                    Button("章节") { showChapters = true }
+                }
+                Section("倍速") {
+                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
+                        Button("\(rate, specifier: "%g")×") { controller.setRate(Float(rate)) }
+                    }
+                }
+            } label: { circleLabel("ellipsis") }
         }
     }
+
+    private func circleLabel(_ icon: String) -> some View {
+        Image(systemName: icon)
+            .font(.system(size: 16, weight: .semibold))
+            .frame(width: 38, height: 38)
+            .background(Color.black.opacity(0.45), in: Circle())
+    }
+
+    private var streamInfoLine: String {
+        let size = controller.player.videoSize
+        return size.height > 0 ? "\(Int(size.height))p" : ""
+    }
+
 
     private var realAudioTracks: [(id: Int32, name: String)] {
         controller.audioTracks.filter { $0.id >= 0 }
@@ -982,6 +1005,9 @@ struct VLCPlayerView: View {
             seasonEpisodes = sorted
             if let index = sorted.firstIndex(where: { $0.Id == item.Id }), index + 1 < sorted.count {
                 nextEpisode = sorted[index + 1]
+            }
+            if let index = sorted.firstIndex(where: { $0.Id == item.Id }), index > 0 {
+                previousEpisode = sorted[index - 1]
             }
         }
     }
