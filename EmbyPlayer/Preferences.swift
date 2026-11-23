@@ -112,6 +112,10 @@ enum Prefs {
         d.object(forKey: "prefs.skipSegments") == nil ? true : d.bool(forKey: "prefs.skipSegments")
     }
     static var appLock: Bool { d.bool(forKey: "prefs.appLock") }
+    static var posterColumns: Int {
+        let stored = d.integer(forKey: "prefs.posterColumns")
+        return stored == 0 ? 3 : stored
+    }
     static var subtitlePreference: SubtitlePreference {
         SubtitlePreference(rawValue: d.string(forKey: "prefs.subtitlePreference") ?? "") ?? .zhHans
     }
@@ -723,5 +727,34 @@ struct CachePrefsView: View {
     private func refreshUsage() {
         let bytes = URLCache.shared.currentDiskUsage + URLCache.shared.currentMemoryUsage
         usageText = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+}
+
+
+// MARK: - 列表配置
+
+struct ListPrefsView: View {
+    @AppStorage("prefs.posterColumns") private var posterColumns = 3
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsMenuRow("海报列数", value: "\(posterColumns) 列") {
+                        Button("2 列（大图）") { posterColumns = 2 }
+                        Button("3 列（标准）") { posterColumns = 3 }
+                        Button("4 列（紧凑）") { posterColumns = 4 }
+                    }
+                }
+                Text("作用于资源库与收藏的海报网格。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("列表配置")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }

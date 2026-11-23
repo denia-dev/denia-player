@@ -219,49 +219,44 @@ struct LibrariesTabView: View {
 
 struct RecordsView: View {
     @Environment(AppStore.self) private var store
-    @Namespace private var segmentGlass
     @State private var segment = 1
     @State private var resume: [EmbyItem] = []
     @State private var favorites: [EmbyItem] = []
     @State private var history: [EmbyItem] = []
 
     private let wideColumns = [GridItem(.flexible(), spacing: 16), GridItem(.flexible(), spacing: 16)]
-    private let posterColumns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+    private var posterColumns: [GridItem] {
+        (0..<Prefs.posterColumns).map { _ in GridItem(.flexible(), spacing: 12) }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Spacer()
-                GlassEffectContainer(spacing: 2) {
-                    HStack(spacing: 2) {
-                        ForEach(Array(["通用", "观看", "收藏"].enumerated()), id: \.offset) { index, label in
-                            Button {
-                                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { segment = index }
-                            } label: {
-                                Text(label)
-                                    .font(.subheadline.weight(segment == index ? .semibold : .regular))
-                                    .foregroundStyle(segment == index ? Color.accentColor : Color.primary)
-                                    .padding(.horizontal, 26)
-                                    .padding(.vertical, 8)
-                                    .background {
-                                        if segment == index {
-                                            Color.clear
-                                                .glassEffect(.clear.tint(Color.accentColor.opacity(0.12)), in: Capsule())
-                                                .glassEffectID("segmentSelection", in: segmentGlass)
-                                        }
-                                    }
+            HStack(spacing: 2) {
+                ForEach(Array(["通用", "观看", "收藏"].enumerated()), id: \.offset) { index, label in
+                    Button {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) { segment = index }
+                    } label: {
+                        Text(label)
+                            .font(.subheadline.weight(segment == index ? .semibold : .regular))
+                            .foregroundStyle(segment == index ? Color.accentColor : Color.primary)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 9)
+                            .background {
+                                if segment == index {
+                                    Color.clear
+                                        .glassEffect(.regular.tint(Color.primary.opacity(0.05)), in: Capsule())
+                                }
                             }
-                            .buttonStyle(.plain)
-                        }
                     }
-                    .padding(3)
-                    .background {
-                        Color.clear.glassEffect(.regular, in: Capsule())
-                    }
-                    .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+                    .buttonStyle(.plain)
                 }
-                Spacer()
             }
+            .padding(3)
+            .background {
+                Color.clear.glassEffect(.regular, in: Capsule())
+            }
+            .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
+            .padding(.horizontal)
             .padding(.top, 8)
 
             Text(segment == 0 ? "最近播放" : (segment == 1 ? "媒体观看" : "我的收藏"))
@@ -324,15 +319,6 @@ struct RecordsView: View {
                 }
                 Spacer(minLength: 92)
             }
-        }
-        .background(alignment: .top) {
-            // A soft wash behind the header: Liquid Glass over a flat
-            // white page has nothing to refract and reads as flat
-            // plastic; the gradient gives the capsule its glass back.
-            LinearGradient(colors: [Color.accentColor.opacity(0.13), Color.accentColor.opacity(0)],
-                           startPoint: .top, endPoint: .bottom)
-                .frame(height: 320)
-                .ignoresSafeArea(edges: .top)
         }
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
@@ -412,6 +398,12 @@ struct SettingsView: View {
                     Divider().padding(.leading, 58)
                     NavigationLink(value: Route.modulePrefs) {
                         SettingRowContent(icon: "square.grid.2x2.fill", color: .green, title: "模块配置",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.listPrefs) {
+                        SettingRowContent(icon: "list.bullet", color: .teal, title: "列表配置",
                                           value: nil, chevron: true)
                     }
                     .buttonStyle(.plain)

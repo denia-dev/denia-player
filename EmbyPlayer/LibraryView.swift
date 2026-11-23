@@ -8,7 +8,9 @@ struct LibraryView: View {
     @State private var searchResults: [EmbyItem] = []
     @State private var errorText: String?
 
-    private let columns = [GridItem(.adaptive(minimum: 110), spacing: 12)]
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: Prefs.posterColumns == 2 ? 150 : Prefs.posterColumns == 4 ? 88 : 110), spacing: 12)]
+    }
 
     var body: some View {
         ScrollView {

@@ -110,6 +110,7 @@ enum Route: Hashable {
     case modulePrefs
     case privacyPrefs
     case cachePrefs
+    case listPrefs
 }
 
 /// The five tab stacks' navigation paths, held in a reference-type
@@ -169,6 +170,8 @@ extension View {
                 PrivacyPrefsView()
             case .cachePrefs:
                 CachePrefsView()
+            case .listPrefs:
+                ListPrefsView()
             }
         }
     }
