@@ -163,6 +163,7 @@ struct PlayerView: View {
             }
             if let vlcRoute {
                 VLCPlayerView(item: item, route: vlcRoute, startSeconds: startSeconds, onPlayNext: onPlayNext)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .zIndex(30)
             }
 

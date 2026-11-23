@@ -457,7 +457,17 @@ struct VLCPlayerView: View {
 
             gestureLayer
 
-            chrome
+            chromeBackdrop
+                .opacity(chromeVisible ? 1 : 0)
+                .animation(.easeInOut(duration: 0.25), value: chromeVisible)
+                .allowsHitTesting(false)
+
+            topBarLayer
+                .opacity(chromeVisible ? 1 : 0)
+                .animation(.easeInOut(duration: 0.25), value: chromeVisible)
+                .allowsHitTesting(chromeVisible)
+
+            bottomBarLayer
                 .opacity(chromeVisible ? 1 : 0)
                 .animation(.easeInOut(duration: 0.25), value: chromeVisible)
                 .allowsHitTesting(chromeVisible)
@@ -635,7 +645,20 @@ struct VLCPlayerView: View {
 
     // MARK: - chrome
 
-    private var chrome: some View {
+    // The chrome is two independent full-frame layers (top bar anchored
+    // up, control stack anchored down) plus a passive gradient backdrop,
+    // instead of one spacer-driven column: with the libvlc surface in the
+    // stack the single column could be laid out at a wrong height and its
+    // rows tore apart (build 47 screenshot: info line and slider rendered
+    // under the title, transport floating mid-screen, screen bottom
+    // empty). Each layer here pins its own edge, so the rows cannot drift.
+    private var chromeBackdrop: some View {
+        LinearGradient(colors: [.black.opacity(0.35), .clear, .black.opacity(0.45)],
+                       startPoint: .top, endPoint: .bottom)
+            .allowsHitTesting(false)
+    }
+
+    private var topBarLayer: some View {
         VStack {
             // Top bar: plain icons, no glass (his SenPlayer reference).
             HStack(spacing: 18) {
@@ -657,9 +680,15 @@ struct VLCPlayerView: View {
             }
             .padding(.horizontal)
             .padding(.top, 10)
-
             Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .foregroundStyle(.white)
+    }
 
+    private var bottomBarLayer: some View {
+        VStack {
+            Spacer()
             if controlsLocked {
                 HStack {
                     Button { controlsLocked = false; pokeChrome() } label: {
@@ -732,12 +761,8 @@ struct VLCPlayerView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(.white)
-        .background(
-            LinearGradient(colors: [.black.opacity(0.35), .clear, .black.opacity(0.45)],
-                           startPoint: .top, endPoint: .bottom)
-                .allowsHitTesting(false)
-        )
     }
 
     private var transportButtons: some View {
