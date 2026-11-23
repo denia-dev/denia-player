@@ -126,6 +126,22 @@ struct PlayerView: View {
             .animation(.easeInOut(duration: 0.25), value: chromeVisible)
             .allowsHitTesting(chromeVisible)
 
+            // Loading backdrop: gives the glass chrome something to
+            // refract before the first frame arrives - over pure black
+            // the glass renders as a black blob.
+            Group {
+                if player.state == .loading, let client = store.client() {
+                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .overlay(Color.black.opacity(0.25))
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.35), value: player.state == .loading)
+            .allowsHitTesting(false)
+
             if player.state == .loading {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
@@ -490,7 +506,7 @@ struct PlayerView: View {
     // stick (build 30's onEnded was skipped when a drag attempt
     // failed the press mid-way, leaving the boost on forever).
     private var boostGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.45, maximumDistance: 12)
+        LongPressGesture(minimumDuration: 0.8, maximumDistance: 12)
             .updating($boostPressing) { _, state, _ in state = true }
     }
 

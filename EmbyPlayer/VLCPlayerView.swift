@@ -472,6 +472,21 @@ struct VLCPlayerView: View {
             .animation(.easeInOut(duration: 0.25), value: chromeVisible)
             .allowsHitTesting(chromeVisible)
 
+            // Loading backdrop (see PlayerView): pretty glass from
+            // the first second instead of glass over black.
+            Group {
+                if controller.duration == 0, let client = store.client() {
+                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                        .ignoresSafeArea()
+                        .overlay(Color.black.opacity(0.25))
+                        .transition(.opacity)
+                }
+            }
+            .animation(.easeInOut(duration: 0.35), value: controller.duration == 0)
+            .allowsHitTesting(false)
+
             if controller.isBuffering, !controller.hasError {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
@@ -745,7 +760,7 @@ struct VLCPlayerView: View {
     // stick (build 30's onEnded was skipped when a drag attempt
     // failed the press mid-way, leaving the boost on forever).
     private var boostGesture: some Gesture {
-        LongPressGesture(minimumDuration: 0.45, maximumDistance: 12)
+        LongPressGesture(minimumDuration: 0.8, maximumDistance: 12)
             .updating($boostPressing) { _, state, _ in state = true }
     }
 
