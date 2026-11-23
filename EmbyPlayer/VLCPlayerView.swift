@@ -202,7 +202,8 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
             let real = audioTracks.filter { $0.id >= 0 }
             if !real.isEmpty {
                 didAutoSelectAudio = true
-                desiredAudioOrdinal = preferredAudioOrdinal.flatMap { $0 < real.count ? $0 : nil }
+                desiredAudioOrdinal = desiredAudioOrdinal.flatMap { $0 < real.count ? $0 : nil }
+                    ?? preferredAudioOrdinal.flatMap { $0 < real.count ? $0 : nil }
                     ?? (player.currentAudioTrackIndex < 0 ? 0 : nil)
                 if let ordinal = desiredAudioOrdinal,
                    player.currentAudioTrackIndex != real[ordinal].id {
@@ -215,8 +216,15 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         }
         if !didAutoSelectSubtitle, subtitleTracks.count > 1 {
             didAutoSelectSubtitle = true
-            if player.currentVideoSubTitleIndex < 0 {
-                let real = subtitleTracks.filter { $0.id >= 0 }
+            let real = subtitleTracks.filter { $0.id >= 0 }
+            if desiredSubtitleOff {
+                // Subtitles stay off for this player.
+            } else if let ordinal = desiredSubtitleOrdinal, ordinal < real.count {
+                if player.currentVideoSubTitleIndex != real[ordinal].id {
+                    player.currentVideoSubTitleIndex = real[ordinal].id
+                    selectedSubtitleID = real[ordinal].id
+                }
+            } else if player.currentVideoSubTitleIndex < 0 {
                 let pick = real.first(where: { $0.name.contains("简") || $0.name.contains("中") }) ?? real.first
                 if let pick {
                     desiredSubtitleOrdinal = real.firstIndex(where: { $0.id == pick.id })
@@ -328,6 +336,9 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         player = fresh
         fresh.media = media
         needsPostReloadApply = true
+        didAutoSelectAudio = false
+        didAutoSelectSubtitle = false
+        logEvent("reloadRearmedSelection")
         fresh.play()
     }
 
