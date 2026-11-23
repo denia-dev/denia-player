@@ -58,6 +58,7 @@ struct DetailView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 40)
             }
+            .background { scrollingAmbient }
             .containerRelativeFrame(.horizontal)
         }
         .ignoresSafeArea(edges: .top)
@@ -120,6 +121,25 @@ struct DetailView: View {
             Color(.systemBackground).opacity(0.55)
         }
         .ignoresSafeArea()
+    }
+
+    /// The ambient as a layer behind the SCROLL CONTENT itself. The
+    /// hero's masked melt fades into THIS layer, and this layer then
+    /// continues uninterrupted below the hero - one layer, no boundary
+    /// anywhere. Builds 53-57 faded the hero into the fixed viewport
+    /// background instead: a differently-framed copy of the same art,
+    /// whose local tone at the hero's lower edge never matched the
+    /// fade's end state, leaving the short step he flagged under the
+    /// play capsule. The fixed ambient stays on the ScrollView for
+    /// rubber-band regions only.
+    private var scrollingAmbient: some View {
+        ZStack {
+            heroBackdrop
+                .blur(radius: 26)
+                .scaleEffect(1.15)
+            Color(.systemBackground).opacity(0.55)
+        }
+        .clipped()
     }
 
     /// Fixed SenPlayer-style top chrome: a glass back circle on the left,
