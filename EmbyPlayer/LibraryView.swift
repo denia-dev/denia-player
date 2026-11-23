@@ -75,7 +75,7 @@ struct LibraryView: View {
     /// Fetch the next page when the scroll nears the end of what we have.
     private func maybeLoadMore(after item: EmbyItem) {
         guard searchText.isEmpty, !loadingMore else { return }
-        guard let totalCount, items.count < totalCount else { return }
+        guard let total = totalCount, items.count < total else { return }
         guard let index = items.firstIndex(where: { $0.Id == item.Id }),
               index >= items.count - 9 else { return }
         loadingMore = true
@@ -87,7 +87,7 @@ struct LibraryView: View {
                                                             limit: pageSize) else { return }
             let known = Set(items.map(\.Id))
             items.append(contentsOf: page.Items.filter { !known.contains($0.Id) })
-            totalCount = page.TotalRecordCount ?? totalCount
+            if let newTotal = page.TotalRecordCount { totalCount = newTotal }
         }
     }
 
