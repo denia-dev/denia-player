@@ -470,6 +470,7 @@ struct VLCPlayerView: View {
             try? AVAudioSession.sharedInstance().setActive(true)
             controller.prepare(url: route.url, startSeconds: startSeconds, preferredAudioOrdinal: route.preferredAudioOrdinal)
             scheduleHide()
+            if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .sheet(isPresented: $showDiag) { diagSheet }
         .onDisappear {
@@ -524,9 +525,11 @@ struct VLCPlayerView: View {
         VStack {
             HStack(spacing: 12) {
                 Spacer().frame(width: 34)
-                Text(item.Name ?? "")
-                    .font(.headline)
-                    .lineLimit(1)
+                if Prefs.showTitleInPlayer {
+                    Text(item.Name ?? "")
+                        .font(.headline)
+                        .lineLimit(1)
+                }
                 Spacer()
                 trackMenus
             }
@@ -554,7 +557,9 @@ struct VLCPlayerView: View {
                     }
                 }
                 .tint(.white)
-                Text(formatDuration(controller.duration))
+                Text(Prefs.timeMode == .remaining
+                     ? "-" + formatDuration(max(controller.duration - (scrubbing ? scrubValue : controller.position), 0))
+                     : formatDuration(controller.duration))
                     .font(.caption.monospacedDigit())
             }
             .padding(.horizontal, 16)
@@ -601,13 +606,15 @@ struct VLCPlayerView: View {
 
     private var trackMenus: some View {
         HStack(spacing: 14) {
+            if Prefs.showDiagnosticsButton {
             Button {
                 diagText = controller.diagnosticsDump()
                 showDiag = true
             } label: {
                 Image(systemName: "info.circle").font(.title3)
             }
-            if controller.audioTracks.count > 1 {
+            }
+            if Prefs.showAudioButton, controller.audioTracks.count > 1 {
                 Menu {
                     ForEach(Array(realAudioTracks.enumerated()), id: \.element.id) { ordinal, track in
                         Button {
@@ -621,7 +628,7 @@ struct VLCPlayerView: View {
                     Image(systemName: "waveform").font(.title3)
                 }
             }
-            if controller.subtitleTracks.count > 1 {
+            if Prefs.showSubtitleButton, controller.subtitleTracks.count > 1 {
                 Menu {
                     Text("引擎：VLCKit（PGS 字幕）")
                     Button {
@@ -746,8 +753,10 @@ struct VLCPlayerView: View {
 
     private func scheduleHide() {
         hideTask?.cancel()
+        let delay = Prefs.chromeHideSeconds
+        guard delay > 0 else { return }
         hideTask = Task {
-            try? await Task.sleep(for: .seconds(3.5))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             if controller.isPlaying { chromeVisible = false }
         }

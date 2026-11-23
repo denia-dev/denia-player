@@ -366,6 +366,12 @@ struct SettingsView: View {
                 .buttonStyle(.plain)
 
                 settingsGroup("通用") {
+                    NavigationLink(value: Route.interfacePrefs) {
+                        SettingRowContent(icon: "slider.horizontal.3", color: .indigo, title: "界面偏好",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
                     SettingRow(icon: "server.rack", color: .blue, title: "服务器管理") {
                         showServers = true
                     }

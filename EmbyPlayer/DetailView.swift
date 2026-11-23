@@ -10,13 +10,18 @@ struct DetailView: View {
     @Environment(AppStore.self) private var store
     @Environment(ShellState.self) private var shell
     let item: EmbyItem
-    let onBack: () -> Void
+    let onBack: () -> Int
     @State private var detail: EmbyItem?
     @State private var seasons: [EmbyItem] = []
     @State private var selectedSeasonID: String?
     @State private var episodes: [EmbyItem] = []
     @State private var episodeRange = 0
     @State private var playRequest: PlayRequest?
+    // Temporary back-navigation diagnostics (build 26): the badge and
+    // the in-content readout show whether taps reach the action and
+    // what the pop did to the owning stack's depth.
+    @State private var backTaps = 0
+    @State private var lastPopCount: Int?
     @State private var errorText: String?
     @State private var favOverride: Bool?
     @State private var playedOverride: Bool?
@@ -42,6 +47,25 @@ struct DetailView: View {
                         Text(errorText).foregroundStyle(.red).font(.footnote)
                     }
                     actionsRow
+
+            // Temporary diagnostics (build 26) - removed once the
+            // back button is proven working.
+            VStack(alignment: .leading, spacing: 6) {
+                Text("诊断：返回已点击 \(backTaps) 次 · 弹栈后路径计数 \(lastPopCount.map(String.init) ?? "-")")
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                Button {
+                    backTaps += 1
+                    lastPopCount = onBack()
+                } label: {
+                    Text("返回上一页（诊断按钮）")
+                        .font(.footnote.weight(.semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 8)
+                        .background(Color.accentColor.opacity(0.15), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
                     if let overview = current.Overview, !overview.isEmpty {
                         Text(overview)
                             .font(.subheadline)
@@ -108,19 +132,32 @@ struct DetailView: View {
     /// the ScrollView so it can never scroll away.
     private var topOverlay: some View {
         HStack(alignment: .top) {
-            Button { onBack() } label: {
+            Button {
+                backTaps += 1
+                lastPopCount = onBack()
+            } label: {
                 Image(systemName: "chevron.left")
                     .font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(.primary)
                     .frame(width: 40, height: 40)
                     .glassEffect(.regular.interactive(), in: Circle())
+                    .overlay(alignment: .topTrailing) {
+                        if backTaps > 0 {
+                            Text("\(backTaps)")
+                                .font(.caption2.bold())
+                                .foregroundStyle(.white)
+                                .padding(4)
+                                .background(Color.red, in: Circle())
+                                .offset(x: 5, y: -5)
+                        }
+                    }
             }
             .buttonStyle(.plain)
             Spacer()
             HStack(spacing: 22) {
                 Button {
                     shell.searchRequested = true
-                    onBack()
+                    _ = onBack()
                 } label: {
                     Image(systemName: "magnifyingglass")
                         .font(.system(size: 17, weight: .medium))

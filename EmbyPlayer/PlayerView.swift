@@ -158,11 +158,18 @@ struct PlayerView: View {
         .task { await progressLoop() }
         .onAppear {
             savedBrightness = UIScreen.main.brightness
-            requestOrientation(.landscape)
+            if Prefs.independentBrightness {
+                UIScreen.main.brightness = CGFloat(Prefs.playerBrightness)
+            }
+            applyEntryOrientation()
+            if !Prefs.toastTitleOnPlay { chromeVisible = false }
         }
         .onDisappear {
-            requestOrientation(.portrait)
+            if Prefs.playerOrientation != .auto { requestOrientation(.portrait) }
             hideTask?.cancel()
+            if Prefs.independentBrightness {
+                Prefs.playerBrightness = Double(UIScreen.main.brightness)
+            }
             UIScreen.main.brightness = savedBrightness
             if let session {
                 let client = store.client()
@@ -279,6 +286,14 @@ struct PlayerView: View {
         }
     }
 
+    private func applyEntryOrientation() {
+        switch Prefs.playerOrientation {
+        case .landscape: requestOrientation(Prefs.landscapeMask)
+        case .portrait: requestOrientation(.portrait)
+        case .auto: break
+        }
+    }
+
     private func requestOrientation(_ mask: UIInterfaceOrientationMask) {
         let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
         guard let scene = scenes.first(where: { $0.activationState == .foregroundActive }) ?? scenes.first else { return }
@@ -392,15 +407,19 @@ struct PlayerView: View {
             HStack(spacing: 14) {
                 // The always-on close button sits at the top-left; leave room.
                 Color.clear.frame(width: 34, height: 1)
+                if Prefs.showTitleInPlayer {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(item.Name).font(.subheadline.bold()).lineLimit(1)
                     if let series = item.SeriesName {
                         Text(series).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(1)
                     }
                 }
+                }
                 Spacer()
+                if Prefs.showDiagnosticsButton {
                 Button { showDiagnostics = true } label: {
                     Image(systemName: "info.circle").font(.title3)
+                }
                 }
                 trackMenus
             }
@@ -429,7 +448,9 @@ struct PlayerView: View {
                         }
                     }
                     .tint(.white)
-                    Text(formatDuration(player.duration.secondsValue))
+                    Text(Prefs.timeMode == .remaining
+                         ? "-" + formatDuration(max(player.duration.secondsValue - (scrubbing ? scrubValue : player.position.secondsValue), 0))
+                         : formatDuration(player.duration.secondsValue))
                         .font(.caption.monospacedDigit())
                 }
                 .padding(.horizontal, 16)
@@ -480,7 +501,7 @@ struct PlayerView: View {
 
     private var trackMenus: some View {
         HStack(spacing: 14) {
-            if !player.audioTracks.isEmpty {
+            if Prefs.showAudioButton, !player.audioTracks.isEmpty {
                 Menu {
                     ForEach(player.audioTracks, id: \.mpvID) { track in
                         Button {
@@ -493,7 +514,7 @@ struct PlayerView: View {
                     Image(systemName: "waveform").font(.title3)
                 }
             }
-            if !player.subtitleTracks.isEmpty {
+            if Prefs.showSubtitleButton, !player.subtitleTracks.isEmpty {
                 Menu {
                     Button("关闭字幕") { player.selectSubtitle(nil) }
                     ForEach(player.subtitleTracks, id: \.mpvID) { track in
@@ -565,8 +586,10 @@ struct PlayerView: View {
 
     private func scheduleHide() {
         hideTask?.cancel()
+        let delay = Prefs.chromeHideSeconds
+        guard delay > 0 else { return }
         hideTask = Task {
-            try? await Task.sleep(for: .seconds(3.5))
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             if !player.isPaused { chromeVisible = false }
         }

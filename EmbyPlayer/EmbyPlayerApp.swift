@@ -40,16 +40,50 @@ final class ShellState {
 enum Route: Hashable {
     case detail(EmbyItem)
     case library(EmbyItem)
+    case interfacePrefs
+    case osdPrefs
+    case buttonPrefs
+}
+
+/// The five tab stacks' navigation paths, held in a reference-type
+/// store so closures anywhere (including navigation destinations)
+/// mutate the one live instance - a captured @State struct copy was
+/// the prime suspect when detail-page pops silently did nothing.
+@MainActor
+@Observable
+final class NavStore {
+    var path0 = NavigationPath()
+    var path1 = NavigationPath()
+    var path2 = NavigationPath()
+    var path3 = NavigationPath()
+    var path4 = NavigationPath()
+
+    func popCounted(_ keyPath: ReferenceWritableKeyPath<NavStore, NavigationPath>) -> Int {
+        if !self[keyPath: keyPath].isEmpty { self[keyPath: keyPath].removeLast() }
+        return self[keyPath: keyPath].count
+    }
+
+    func binding(_ keyPath: ReferenceWritableKeyPath<NavStore, NavigationPath>) -> Binding<NavigationPath> {
+        Binding(get: { self[keyPath: keyPath] }, set: { self[keyPath: keyPath] = $0 })
+    }
 }
 
 extension View {
-    func routeDestinations(onPop: @escaping () -> Void) -> some View {
+    /// onPop pops the owning stack and returns its remaining depth,
+    /// which the detail page's temporary diagnostics display.
+    func routeDestinations(onPop: @escaping () -> Int) -> some View {
         navigationDestination(for: Route.self) { route in
             switch route {
             case .detail(let item):
                 DetailView(item: item, onBack: onPop)
             case .library(let item):
                 LibraryView(library: item)
+            case .interfacePrefs:
+                InterfacePrefsView()
+            case .osdPrefs:
+                OSDPrefsView()
+            case .buttonPrefs:
+                ButtonPrefsView()
             }
         }
     }
@@ -63,40 +97,36 @@ extension View {
 struct MainView: View {
     @State private var tab = 0
     @State private var shell = ShellState()
-    @State private var path0 = NavigationPath()
-    @State private var path1 = NavigationPath()
-    @State private var path2 = NavigationPath()
-    @State private var path3 = NavigationPath()
-    @State private var path4 = NavigationPath()
+    @State private var nav = NavStore()
 
     var body: some View {
         TabView(selection: $tab) {
-            NavigationStack(path: $path0) {
-                HomeView().routeDestinations { if !path0.isEmpty { path0.removeLast() } }
+            NavigationStack(path: nav.binding(\.path0)) {
+                HomeView().routeDestinations { nav.popCounted(\.path0) }
             }
             .tabItem { Label("首页", systemImage: "play.rectangle") }
             .tag(0)
 
-            NavigationStack(path: $path1) {
-                LibrariesTabView().routeDestinations { if !path1.isEmpty { path1.removeLast() } }
+            NavigationStack(path: nav.binding(\.path1)) {
+                LibrariesTabView().routeDestinations { nav.popCounted(\.path1) }
             }
             .tabItem { Label("资源库", systemImage: "externaldrive") }
             .tag(1)
 
-            NavigationStack(path: $path2) {
-                RecordsView().routeDestinations { if !path2.isEmpty { path2.removeLast() } }
+            NavigationStack(path: nav.binding(\.path2)) {
+                RecordsView().routeDestinations { nav.popCounted(\.path2) }
             }
             .tabItem { Label("记录", systemImage: "person.text.rectangle") }
             .tag(2)
 
-            NavigationStack(path: $path3) {
-                SettingsView().routeDestinations { if !path3.isEmpty { path3.removeLast() } }
+            NavigationStack(path: nav.binding(\.path3)) {
+                SettingsView().routeDestinations { nav.popCounted(\.path3) }
             }
             .tabItem { Label("设置", systemImage: "gearshape") }
             .tag(3)
 
-            NavigationStack(path: $path4) {
-                SearchTabView().routeDestinations { if !path4.isEmpty { path4.removeLast() } }
+            NavigationStack(path: nav.binding(\.path4)) {
+                SearchTabView().routeDestinations { nav.popCounted(\.path4) }
             }
             .tabItem { Label("搜索", systemImage: "magnifyingglass") }
             .tag(4)
