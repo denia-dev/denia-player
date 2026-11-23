@@ -240,12 +240,13 @@ struct RecordsView: View {
                             } label: {
                                 Text(label)
                                     .font(.subheadline.weight(segment == index ? .semibold : .regular))
+                                    .foregroundStyle(segment == index ? Color.accentColor : Color.primary)
                                     .padding(.horizontal, 26)
                                     .padding(.vertical, 8)
                                     .background {
                                         if segment == index {
                                             Color.clear
-                                                .glassEffect(.regular.tint(Color(.systemGray5).opacity(0.6)), in: Capsule())
+                                                .glassEffect(.regular.tint(Color.accentColor.opacity(0.15)), in: Capsule())
                                                 .glassEffectID("segmentSelection", in: segmentGlass)
                                         }
                                     }
@@ -257,6 +258,7 @@ struct RecordsView: View {
                     .background {
                         Color.clear.glassEffect(.regular, in: Capsule())
                     }
+                    .shadow(color: .black.opacity(0.10), radius: 12, y: 4)
                 }
                 Spacer()
             }

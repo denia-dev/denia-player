@@ -248,7 +248,34 @@ struct EmbyClient {
             URLQueryItem(name: "Fields", value: "Overview"),
         ]
         let response: EmbyItemsResponse = try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
-        return response.Items
+        let items = response.Items
+        // Servers happily mark individual episodes as favorites (some
+        // clients cascade a series favorite down to its episodes), and
+        // a favorites grid full of "Episode 294" cells is meaningless.
+        // Roll every favorited episode up to its series, once.
+        let seriesIDs = Array(Set(items.filter { $0.type == "Episode" }.compactMap { $0.SeriesId }))
+        var seriesByID: [String: EmbyItem] = [:]
+        if !seriesIDs.isEmpty {
+            let seriesQuery = [
+                URLQueryItem(name: "Ids", value: seriesIDs.joined(separator: ",")),
+                URLQueryItem(name: "Fields", value: "Overview"),
+            ]
+            if let seriesResponse: EmbyItemsResponse = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: seriesQuery)) {
+                for series in seriesResponse.Items { seriesByID[series.Id] = series }
+            }
+        }
+        var seen = Set<String>()
+        var result: [EmbyItem] = []
+        for item in items {
+            if item.type == "Episode" {
+                if let seriesID = item.SeriesId, let series = seriesByID[seriesID], seen.insert(seriesID).inserted {
+                    result.append(series)
+                }
+            } else if seen.insert(item.Id).inserted {
+                result.append(item)
+            }
+        }
+        return result
     }
 
     func historyItems() async throws -> [EmbyItem] {
