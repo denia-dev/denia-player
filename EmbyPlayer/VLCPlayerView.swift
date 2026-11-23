@@ -445,11 +445,6 @@ struct VLCPlayerView: View {
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
     @State private var sleepTask: Task<Void, Never>?
-    // Build 50 layout probe (temporary): real laid-out sizes, read from a
-    // screenshot to localize the torn-chrome bug.
-    @State private var probeRoot: CGSize = .zero
-    @State private var probeBottom: CGSize = .zero
-    @State private var probeStack: CGSize = .zero
 
     private enum DragMode { case scrub, brightness, volume }
 
@@ -481,7 +476,7 @@ struct VLCPlayerView: View {
                 Text(gestureHint)
                     .font(.headline)
                     .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Capsule().fill(.black.opacity(0.55)))
+                    .glassEffect(.regular, in: Capsule())
                     .foregroundStyle(.white)
             }
 
@@ -492,7 +487,7 @@ struct VLCPlayerView: View {
                             .font(.body.bold())
                             .foregroundStyle(.white)
                             .padding(10)
-                            .background(Circle().fill(.black.opacity(0.45)))
+                            .glassEffect(.regular.interactive(), in: Circle())
                             .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
                     }
                     Spacer()
@@ -505,19 +500,6 @@ struct VLCPlayerView: View {
             .opacity(chromeVisible ? 1 : 0)
             .animation(.easeInOut(duration: 0.25), value: chromeVisible)
             .allowsHitTesting(chromeVisible)
-
-            // Build 50 layout probe label (temporary).
-            VStack {
-                Text("VLC root \(Int(probeRoot.width))x\(Int(probeRoot.height)) bottom \(Int(probeBottom.width))x\(Int(probeBottom.height)) stack \(Int(probeStack.height)) screen \(Int(UIScreen.main.bounds.width))x\(Int(UIScreen.main.bounds.height))")
-                    .font(.caption2.monospaced())
-                    .padding(.horizontal, 8).padding(.vertical, 4)
-                    .background(Color.red.opacity(0.85), in: Capsule())
-                    .foregroundStyle(.white)
-                Spacer()
-            }
-            .padding(.top, 56)
-            .zIndex(50)
-            .allowsHitTesting(false)
 
             // Loading backdrop (see PlayerView): pretty glass from
             // the first second instead of glass over black.
@@ -547,7 +529,7 @@ struct VLCPlayerView: View {
                                 .font(.subheadline.bold())
                                 .foregroundStyle(.white)
                                 .padding(.horizontal, 16).padding(.vertical, 9)
-                                .background(Capsule().fill(.black.opacity(0.55)))
+                                .glassEffect(.regular.interactive(), in: Capsule())
                                 .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
                         }
                         .buttonStyle(.plain)
@@ -565,13 +547,6 @@ struct VLCPlayerView: View {
                 }
                 .foregroundStyle(.white)
                 .padding()
-            }
-        }
-        .background {
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { probeRoot = geo.size }
-                    .onChange(of: geo.size) { _, v in probeRoot = v }
             }
         }
         .statusBarHidden(true)
@@ -739,7 +714,7 @@ struct VLCPlayerView: View {
                             .font(.caption.monospacedDigit())
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Capsule().fill(.black.opacity(0.55)))
+                            .glassEffect(.regular, in: Capsule())
                         Slider(value: Binding(
                             get: { scrubbing ? scrubValue : controller.position },
                             set: { scrubValue = $0 }
@@ -758,7 +733,7 @@ struct VLCPlayerView: View {
                             .font(.caption.monospacedDigit())
                             .padding(.horizontal, 8)
                             .padding(.vertical, 3)
-                            .background(Capsule().fill(.black.opacity(0.55)))
+                            .glassEffect(.regular, in: Capsule())
                     }
                     .padding(.horizontal, 12)
                     .frame(height: 32)
@@ -777,7 +752,7 @@ struct VLCPlayerView: View {
                                     Image(systemName: "list.bullet").font(.title3)
                                 }
                             } else {
-                                Color.clear
+                                Color.clear.frame(width: 34, height: 34)
                             }
                         }
                         .frame(width: 34, alignment: .trailing)
@@ -785,24 +760,10 @@ struct VLCPlayerView: View {
                     .padding(.horizontal, 16)
                     .padding(.bottom, 10)
                 }
-                .background {
-                    GeometryReader { g in
-                        Color.clear
-                            .onAppear { probeStack = g.size }
-                            .onChange(of: g.size) { _, s in probeStack = s }
-                    }
-                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .foregroundStyle(.white)
-        .background {
-            GeometryReader { geo in
-                Color.clear
-                    .onAppear { probeBottom = geo.size }
-                    .onChange(of: geo.size) { _, v in probeBottom = v }
-            }
-        }
     }
 
     private var transportButtons: some View {
