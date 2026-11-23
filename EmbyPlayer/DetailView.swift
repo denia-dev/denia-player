@@ -345,35 +345,36 @@ struct DetailView: View {
 
     // MARK: - actions / cast
 
+    // SenPlayer's action row: a tight centered cluster of small muted
+    // glyphs directly under the play capsule — no edge-to-edge spacers,
+    // no filled discs (build 72, from his Sen screenshot).
     private var actionsRow: some View {
-        HStack {
+        HStack(spacing: 20) {
             if let target = playTarget {
                 actionButton(icon: "arrow.counterclockwise", active: false) {
                     playRequest = PlayRequest(item: target, startSeconds: 0)
                 }
-                Spacer()
             }
             actionButton(icon: isPlayed ? "checkmark.circle.fill" : "checkmark.circle", active: isPlayed) {
                 togglePlayed()
             }
-            Spacer()
             actionButton(icon: isFavorite ? "heart.fill" : "heart", active: isFavorite) {
                 toggleFavorite()
             }
             if item.isPlayable {
-                Spacer()
-                DownloadButton(item: item)
+                DownloadButton(item: item, plain: true)
             }
         }
-        .padding(.horizontal, 36)
-        .padding(.vertical, 2)
+        .frame(maxWidth: .infinity)
+        .padding(.top, -8)
     }
 
     private func actionButton(icon: String, active: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 25))
+                .font(.system(size: 24))
                 .foregroundStyle(active ? Color.purple : Color(red: 0.52, green: 0.50, blue: 0.62))
+                .frame(width: 34, height: 34)
         }
         .buttonStyle(.plain)
     }

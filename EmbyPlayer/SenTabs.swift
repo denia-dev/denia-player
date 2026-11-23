@@ -290,13 +290,9 @@ struct RecordsView: View {
                 // branch inside the shared one, this content never appeared
                 // on device (builds 68-70) while sibling branches rendered.
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 14) {
-                        Text("下载页标记 build71")
-                            .font(.caption2).foregroundStyle(.tertiary)
-                        DownloadsView()
-                    }
-                    .padding(.horizontal)
-                    .padding(.bottom, 92)
+                    DownloadsView()
+                        .padding(.horizontal)
+                        .padding(.bottom, 92)
                 }
             } else {
             ScrollView {

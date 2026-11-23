@@ -407,23 +407,29 @@ extension DownloadsManager: URLSessionDownloadDelegate {
 struct DownloadButton: View {
     let item: EmbyItem
     var mini: Bool = false
+    /// Bare glyph in the detail page's Sen-style action row: no disc,
+    /// muted tint, sized like its neighbouring action buttons.
+    var plain: Bool = false
     @Environment(AppStore.self) private var store
     @ObservedObject private var manager = DownloadsManager.shared
     @State private var showFailure = false
+
+    private var muted: Color { Color(red: 0.52, green: 0.50, blue: 0.62) }
 
     var body: some View {
         Group {
             if manager.isDownloaded(item.Id) {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(.green)
+                    .foregroundStyle(plain ? Color.purple : .green)
             } else if manager.isDownloading(item.Id) {
                 ZStack {
-                    Circle().stroke(Color.white.opacity(0.3), lineWidth: 2)
+                    Circle().stroke(plain ? muted.opacity(0.35) : Color.white.opacity(0.3), lineWidth: 2)
                     Circle()
                         .trim(from: 0, to: max(0.02, manager.progress[item.Id] ?? 0))
                         .stroke(Color.accentColor, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                         .rotationEffect(.degrees(-90))
-                    Image(systemName: "stop.fill").font(.system(size: 7)).foregroundStyle(.white)
+                    Image(systemName: "stop.fill").font(.system(size: plain ? 8 : 7))
+                        .foregroundStyle(plain ? muted : .white)
                 }
                 .onTapGesture { manager.cancel(itemID: item.Id) }
             } else if manager.failure(for: item.Id) != nil {
@@ -438,10 +444,10 @@ struct DownloadButton: View {
                 }
             }
         }
-        .font(mini ? .system(size: 15) : .system(size: 22))
-        .frame(width: mini ? 28 : 44, height: mini ? 28 : 44)
-        .background(mini ? Color.black.opacity(0.45) : Color.primary.opacity(0.06), in: Circle())
-        .foregroundStyle(mini ? .white : .primary)
+        .font(plain ? .system(size: 24) : (mini ? .system(size: 15) : .system(size: 22)))
+        .frame(width: plain ? 34 : (mini ? 28 : 44), height: plain ? 34 : (mini ? 28 : 44))
+        .background(plain ? Color.clear : (mini ? Color.black.opacity(0.45) : Color.primary.opacity(0.06)), in: Circle())
+        .foregroundStyle(plain ? muted : (mini ? .white : .primary))
         .alert("下载未完成", isPresented: $showFailure) {
             Button("稍后", role: .cancel) {}
             Button("重试下载") { if let client = store.client() { manager.enqueue(item: item, client: client) } }
@@ -489,10 +495,6 @@ struct DownloadsView: View {
                     .font(.caption).foregroundStyle(.secondary)
                     .padding(.top, 6)
             }
-            // Temporary diagnostic (build 69): what this view actually sees.
-            Text("诊断 A\(manager.activeIDs.count) P\(manager.pending.count) L\(manager.activeList.count) R\(manager.records.count)")
-                .font(.caption2).foregroundStyle(.tertiary)
-                .padding(.top, 10)
         }
         .fullScreenCover(item: $playing) { record in
             PlayerView(item: record.asItem,
