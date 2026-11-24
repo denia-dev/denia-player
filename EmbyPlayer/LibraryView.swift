@@ -53,7 +53,7 @@ struct LibraryView: View {
         .task(id: searchText) {
             await runSearch(searchText)
         }
-        .task(id: library.Id) { await load() }
+        .task(id: library.Id + "|" + library.Name) { await load() }
         .toolbar(.hidden, for: .tabBar)
     }
 

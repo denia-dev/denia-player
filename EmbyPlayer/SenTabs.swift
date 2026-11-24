@@ -230,7 +230,7 @@ struct LibrariesTabView: View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26) {
                 header
-                ForEach(libraries) { library in
+                ForEach(Array(libraries.enumerated()), id: \.offset) { _, library in
                     LibraryRailSection(library: library)
                 }
             }

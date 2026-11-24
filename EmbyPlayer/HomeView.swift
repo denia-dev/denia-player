@@ -193,7 +193,7 @@ struct HomeView: View {
                     sectionHeader("我的媒体库", count: nil)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(alignment: .top, spacing: 12) {
-                            ForEach(libraries) { library in
+                            ForEach(Array(libraries.enumerated()), id: \.offset) { _, library in
                                 NavigationLink(value: Route.library(library)) {
                                     VStack(alignment: .leading, spacing: 6) {
                                         ItemImage(item: library, client: client)
