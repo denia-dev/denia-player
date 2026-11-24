@@ -336,22 +336,41 @@ struct MPVPlayerScreen: View {
     @State private var preparedGeneration = -1
 
     static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput) -> MPVPlayer {
+        // Subtitle styling from the subtitle settings (build 92).
+        let subColorValue: String = {
+            switch Prefs.subColorName {
+            case "yellow": return "#FFFF00"
+            case "cyan": return "#00FFFF"
+            case "green": return "#7CFC00"
+            default: return "#FFFFFF"
+            }
+        }()
+        let subBorderValue: String = {
+            switch Prefs.subBorderStyle {
+            case "box": return "opaque-box"
+            case "none": return "none"
+            default: return "outline-and-shadow"
+            }
+        }()
         var options: [String: String] = [
             "sub-auto": "fuzzy",
             "slang": "zh-Hans,zh-CN,zh,chi,zho",
             "demuxer-max-bytes": "536870912",
             "demuxer-max-back-bytes": "268435456",
-            // Smoothness batch 2: keep a 120 s forward cache window (was
-            // 60 s readahead) so brief network stalls on the tunnel lines
-            // don't reach the decoder, and reconnect on network errors too,
-            // not just on stream errors.
+            // Smoothness batch 2: forward cache window (120 s default,
+            // adjustable in 视频设置 since build 92) so brief network
+            // stalls on the tunnel lines don't reach the decoder, and
+            // reconnect on network errors too, not just stream errors.
             "cache": "yes",
-            "cache-secs": "120",
-            "demuxer-readahead-secs": "120",
+            "cache-secs": "\(Prefs.cacheSeconds)",
+            "demuxer-readahead-secs": "\(Prefs.cacheSeconds)",
             "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_on_network_error=1,reconnect_delay_max=5",
             "vd-lavc-threads": "\(Prefs.softwareThreads)",
             "sub-scale": String(format: "%.2f", Prefs.subScale),
             "sub-delay": String(format: "%.1f", Prefs.subDelay),
+            "sub-color": subColorValue,
+            "sub-border-style": subBorderValue,
+            "sub-margin-y": "\(Prefs.subMarginY)",
         ]
         // MPVUI ships no fonts and iOS exposes no system font dir to libass,
         // so bundle a CJK font or every Chinese subtitle renders as tofu.
@@ -367,7 +386,7 @@ struct MPVPlayerScreen: View {
             dolbyVisionPolicy: Prefs.dvP7Convert ? .profile7Compatibility : .strict,
             hardwareDecoding: Prefs.decodeMode == "software" ? .disabled : (Prefs.decodeMode == "auto" ? .automatic : .videoToolbox),
             initialBufferDuration: .seconds(3),
-            networkCacheDuration: .seconds(120),
+            networkCacheDuration: .seconds(Prefs.cacheSeconds),
             rebufferDuration: .seconds(5),
             videoOutput: videoOutput
         ))

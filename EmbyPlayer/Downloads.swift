@@ -1,5 +1,6 @@
 import SwiftUI
 import Foundation
+import Network
 
 // MARK: - offline downloads
 //
@@ -71,6 +72,15 @@ final class DownloadsManager: NSObject, ObservableObject {
     }
     private var pendingContainer: [String: String] = [:]
 
+    /// Downloads resolved but waiting for a free slot (concurrency
+    /// limit / Wi-Fi-only gate, build 92). The pending row is already
+    /// published, so a queued item shows in the list at 0% until its
+    /// task actually starts.
+    private var startQueue: [(itemID: String, url: URL, skeleton: DownloadRecord, container: String)] = []
+    private let pathMonitor = NWPathMonitor()
+    /// Optimistic until the first path update lands.
+    private var pathIsWiFiLike = true
+
     private var root: URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("DeniaDownloads", isDirectory: true)
@@ -109,6 +119,15 @@ final class DownloadsManager: NSObject, ObservableObject {
         config.timeoutIntervalForResource = 60 * 60 * 12
         syncActiveList()
         session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            let wiFiLike = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
+            Task { @MainActor in
+                guard let self else { return }
+                self.pathIsWiFiLike = wiFiLike
+                self.pumpQueue()
+            }
+        }
+        pathMonitor.start(queue: DispatchQueue(label: "denia.downloads.path"))
         session.getAllTasks { [weak self] restoredTasks in
             Task { @MainActor in
                 guard let self else { return }
@@ -130,6 +149,31 @@ final class DownloadsManager: NSObject, ObservableObject {
     func record(for itemID: String) -> DownloadRecord? { records.first { $0.id == itemID } }
     func isDownloaded(_ itemID: String) -> Bool { record(for: itemID) != nil }
     func isDownloading(_ itemID: String) -> Bool { activeIDs.contains(itemID) }
+    /// Total size of completed downloads, for the settings page.
+    var downloadedBytes: Int64 {
+        records.reduce(0) { $0 + $1.sizeBytes }
+    }
+
+    private var downloadsGateOpen: Bool {
+        !Prefs.downloadWiFiOnly || pathIsWiFiLike
+    }
+
+    /// Starts queued downloads while a concurrency slot is free and
+    /// the network gate allows it. Called whenever a download is
+    /// queued, a task ends, or the network path changes.
+    private func pumpQueue() {
+        while downloadsGateOpen, tasks.count < Prefs.downloadMaxConcurrent, !startQueue.isEmpty {
+            let next = startQueue.removeFirst()
+            guard pending[next.itemID] != nil else { continue }
+            let task = session.downloadTask(with: next.url)
+            tasks[task.taskIdentifier] = next.itemID
+            recoveries[next.itemID] = DownloadRecovery(itemID: next.itemID, skeleton: next.skeleton,
+                                                       container: next.container, taskID: task.taskIdentifier)
+            saveRecoveries()
+            task.resume()
+        }
+    }
+
     func localURL(for record: DownloadRecord) -> URL { mediaDir.appendingPathComponent(record.fileName) }
     func posterURL(for record: DownloadRecord) -> URL? {
         record.posterFileName.map { posterDir.appendingPathComponent($0) }
@@ -230,13 +274,9 @@ final class DownloadsManager: NSObject, ObservableObject {
                     self.pending[item.Id] = skeleton
                     self.syncActiveList()
                     self.pendingContainer[item.Id] = source.Container ?? "mkv"
-                    let task = self.session.downloadTask(with: url)
-                    self.tasks[task.taskIdentifier] = item.Id
-                    let recovery = DownloadRecovery(itemID: item.Id, skeleton: skeleton,
-                                                    container: source.Container ?? "mkv", taskID: task.taskIdentifier)
-                    self.recoveries[item.Id] = recovery
-                    self.saveRecoveries()
-                    task.resume()
+                    self.startQueue.append((itemID: item.Id, url: url, skeleton: skeleton,
+                                            container: source.Container ?? "mkv"))
+                    self.pumpQueue()
                 }
                 // Poster alongside, best effort.
                 if let poster = client.imageURL(itemID: item.Id, kind: "Primary", maxHeight: 480) {
@@ -279,6 +319,7 @@ final class DownloadsManager: NSObject, ObservableObject {
     // MARK: internals
 
     private func finishWithFailure(_ itemID: String, message: String? = "下载失败，请检查网络后重试。") {
+        startQueue.removeAll { $0.itemID == itemID }
         speeds[itemID] = nil
         speedSamples[itemID] = nil
         activeIDs.remove(itemID)
@@ -291,6 +332,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         saveRecoveries()
         failures[itemID] = message
         saveFailures()
+        pumpQueue()
     }
 
     private func replace(_ record: DownloadRecord) {
@@ -332,6 +374,7 @@ final class DownloadsManager: NSObject, ObservableObject {
         saveRecoveries()
         failures[itemID] = nil
         saveFailures()
+        pumpQueue()
     }
 
     fileprivate func downloadFailed(taskID: Int) {

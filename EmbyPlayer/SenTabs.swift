@@ -490,6 +490,12 @@ struct SettingsView: View {
                 }
 
                 settingsGroup("数据") {
+                    NavigationLink(value: Route.downloadPrefs) {
+                        SettingRowContent(icon: "arrow.down.circle.fill", color: .blue, title: "下载设置",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
                     NavigationLink(value: Route.cachePrefs) {
                         SettingRowContent(icon: "internaldrive.fill", color: .brown, title: "缓存管理",
                                           value: nil, chevron: true)

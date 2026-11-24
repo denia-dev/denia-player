@@ -31,11 +31,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
 struct EmbyPlayerApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var store = AppStore()
+    @AppStorage("prefs.appearance") private var appearance = "system"
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .environment(store)
+                .preferredColorScheme(appearance == "light" ? .light : appearance == "dark" ? .dark : nil)
         }
     }
 }
@@ -146,6 +148,7 @@ enum Route: Hashable {
     case privacyPrefs
     case cachePrefs
     case listPrefs
+    case downloadPrefs
 }
 
 /// The five tab stacks' navigation paths, held in a reference-type
@@ -209,6 +212,8 @@ extension View {
                 CachePrefsView()
             case .listPrefs:
                 ListPrefsView()
+            case .downloadPrefs:
+                DownloadsPrefsView()
             }
         }
     }

@@ -132,6 +132,30 @@ enum Prefs {
         SubtitlePreference(rawValue: d.string(forKey: "prefs.subtitlePreference") ?? "") ?? .zhHans
     }
 
+    // Subtitle styling (build 92, SenPlayer parity; mpv text subtitles)
+    /// "white" | "yellow" | "cyan" | "green"
+    static var subColorName: String { d.string(forKey: "prefs.subColor") ?? "white" }
+    /// "outline" | "box" | "none"
+    static var subBorderStyle: String { d.string(forKey: "prefs.subBorder") ?? "outline" }
+    static var subMarginY: Int {
+        d.object(forKey: "prefs.subMarginY") == nil ? 20 : d.integer(forKey: "prefs.subMarginY")
+    }
+
+    // Appearance (build 92): "system" | "light" | "dark"
+    static var appearance: String { d.string(forKey: "prefs.appearance") ?? "system" }
+
+    // Forward cache window for the mpv player (build 92; was a
+    // hardcoded 120 s in makePlayer).
+    static var cacheSeconds: Int {
+        d.object(forKey: "prefs.cacheSeconds") == nil ? 120 : d.integer(forKey: "prefs.cacheSeconds")
+    }
+
+    // Downloads (build 92)
+    static var downloadMaxConcurrent: Int {
+        d.object(forKey: "prefs.downloadMaxConcurrent") == nil ? 2 : d.integer(forKey: "prefs.downloadMaxConcurrent")
+    }
+    static var downloadWiFiOnly: Bool { d.bool(forKey: "prefs.downloadWiFiOnly") }
+
     // Home modules + start tab
     static var showHomeResume: Bool {
         d.object(forKey: "prefs.showHomeResume") == nil ? true : d.bool(forKey: "prefs.showHomeResume")
@@ -446,6 +470,7 @@ struct VideoPrefsView: View {
     @AppStorage("prefs.decodeMode") private var decodeMode = "hardware"
     @AppStorage("prefs.softwareThreads") private var threads = 8
     @AppStorage("prefs.dvP7Convert") private var p7Convert = true
+    @AppStorage("prefs.cacheSeconds") private var cacheSeconds = 120
 
     var body: some View {
         ScrollView {
@@ -467,8 +492,15 @@ struct VideoPrefsView: View {
                         Button("8") { threads = 8 }
                         Button("16") { threads = 16 }
                     }
+                    prefsDivider
+                    prefsMenuRow("预读缓存", value: "\(cacheSeconds) 秒") {
+                        Button("60 秒") { cacheSeconds = 60 }
+                        Button("120 秒") { cacheSeconds = 120 }
+                        Button("180 秒") { cacheSeconds = 180 }
+                        Button("300 秒") { cacheSeconds = 300 }
+                    }
                 }
-                Text("硬解码：高效省电，基本不发热，能否硬解取决于设备与系统。软解码：兼容性强，但播放大文件容易发热且耗电量高。除非无法正常播放，否则不要使用软解码。以上设置作用于 mpv 引擎；VLCKit 引擎（PGS 字幕片源）使用其内置解码。")
+                Text("硬解码：高效省电，基本不发热，能否硬解取决于设备与系统。软解码：兼容性强，但播放大文件容易发热且耗电量高。除非无法正常播放，否则不要使用软解码。预读缓存越大越抗网络抖动，也越占内存；下次打开视频时生效。以上设置作用于 mpv 引擎；VLCKit 引擎（PGS 字幕片源）使用其内置解码。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -547,6 +579,9 @@ struct SubtitlePrefsView: View {
     @AppStorage("prefs.rememberSubtitleChoice") private var rememberSubtitleChoice = true
     @AppStorage("prefs.subScale") private var subScale = 1.0
     @AppStorage("prefs.subDelay") private var subDelay = 0.0
+    @AppStorage("prefs.subColor") private var subColor = "white"
+    @AppStorage("prefs.subBorder") private var subBorder = "outline"
+    @AppStorage("prefs.subMarginY") private var subMarginY = 20
 
     var body: some View {
         ScrollView {
@@ -580,7 +615,28 @@ struct SubtitlePrefsView: View {
                         Button("提前 2 秒") { subDelay = -2.0 }
                     }
                 }
-                Text("打开视频时自动挑选的字幕（内嵌与外挂字幕都算）；没有匹配的字幕时回退到片源默认字幕。选「关闭」则不自动开启字幕，仍可在播放器里手动选择。字幕大小与延迟在打开视频时应用，对 mpv 引擎的文字字幕生效；PGS 位图字幕（VLCKit）不受影响。")
+                prefsSectionLabel("样式").padding(.top, 8)
+                prefsCard {
+                    prefsMenuRow("字幕颜色", value: subColorLabel) {
+                        Button("白色") { subColor = "white" }
+                        Button("黄色") { subColor = "yellow" }
+                        Button("青色") { subColor = "cyan" }
+                        Button("绿色") { subColor = "green" }
+                    }
+                    prefsDivider
+                    prefsMenuRow("字幕描边", value: subBorderLabel) {
+                        Button("描边") { subBorder = "outline" }
+                        Button("背景框") { subBorder = "box" }
+                        Button("无") { subBorder = "none" }
+                    }
+                    prefsDivider
+                    prefsMenuRow("字幕位置", value: subMarginLabel) {
+                        Button("紧贴底部") { subMarginY = 8 }
+                        Button("标准") { subMarginY = 20 }
+                        Button("抬高") { subMarginY = 36 }
+                    }
+                }
+                Text("打开视频时自动挑选的字幕（内嵌与外挂字幕都算）；没有匹配的字幕时回退到片源默认字幕。选「关闭」则不自动开启字幕，仍可在播放器里手动选择。字幕大小、延迟与样式在打开视频时应用，对 mpv 引擎的文字字幕生效；PGS 位图字幕（VLCKit）不受影响。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -606,6 +662,31 @@ struct SubtitlePrefsView: View {
         return subDelay > 0 ? String(format: "延后 %g 秒", subDelay) : String(format: "提前 %g 秒", -subDelay)
     }
 
+    private var subColorLabel: String {
+        switch subColor {
+        case "yellow": return "黄色"
+        case "cyan": return "青色"
+        case "green": return "绿色"
+        default: return "白色"
+        }
+    }
+
+    private var subBorderLabel: String {
+        switch subBorder {
+        case "box": return "背景框"
+        case "none": return "无"
+        default: return "描边"
+        }
+    }
+
+    private var subMarginLabel: String {
+        switch subMarginY {
+        case 8: return "紧贴底部"
+        case 36: return "抬高"
+        default: return "标准"
+        }
+    }
+
     private var subtitleLabel: String {
         switch subtitlePreference {
         case "zhHant": return "繁体中文"
@@ -620,6 +701,7 @@ struct SubtitlePrefsView: View {
 
 struct AppPrefsView: View {
     @AppStorage("prefs.startTab") private var startTab = 0
+    @AppStorage("prefs.appearance") private var appearance = "system"
 
     private let tabNames = ["首页", "资源库", "记录", "设置", "搜索"]
 
@@ -634,12 +716,29 @@ struct AppPrefsView: View {
                         Button("上次使用") { startTab = -1 }
                     }
                 }
+
+                prefsSectionLabel("外观").padding(.top, 8)
+                prefsCard {
+                    prefsMenuRow("外观模式", value: appearanceLabel) {
+                        Button("跟随系统") { appearance = "system" }
+                        Button("浅色") { appearance = "light" }
+                        Button("深色") { appearance = "dark" }
+                    }
+                }
             }
             .padding()
         }
         .background(Color(.systemGroupedBackground))
         .navigationTitle("应用偏好")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    private var appearanceLabel: String {
+        switch appearance {
+        case "light": return "浅色"
+        case "dark": return "深色"
+        default: return "跟随系统"
+        }
     }
 }
 
@@ -751,6 +850,50 @@ struct CachePrefsView: View {
     }
 }
 
+
+// MARK: - 下载设置
+
+struct DownloadsPrefsView: View {
+    @AppStorage("prefs.downloadMaxConcurrent") private var maxConcurrent = 2
+    @AppStorage("prefs.downloadWiFiOnly") private var wiFiOnly = false
+    @ObservedObject private var manager = DownloadsManager.shared
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    prefsMenuRow("同时下载数", value: "\(maxConcurrent) 个") {
+                        Button("1 个") { maxConcurrent = 1 }
+                        Button("2 个") { maxConcurrent = 2 }
+                        Button("3 个") { maxConcurrent = 3 }
+                    }
+                    prefsDivider
+                    prefsToggleRow("仅 Wi-Fi 下载", isOn: $wiFiOnly)
+                }
+                Text("超过同时下载数的任务排队等待，前面的下完自动开始；仅 Wi-Fi 下载开启时，蜂窝网络下新任务等回到 Wi-Fi 才开始，已经在下的不受影响。对新开始的任务生效。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+
+                prefsSectionLabel("存储").padding(.top, 8)
+                prefsCard {
+                    HStack {
+                        Text("已下载内容")
+                        Spacer()
+                        Text("\(manager.records.count) 项 · \(ByteCountFormatter.string(fromByteCount: manager.downloadedBytes, countStyle: .file))")
+                            .foregroundStyle(.secondary)
+                    }
+                    .padding(.horizontal, 20)
+                    .frame(minHeight: 54)
+                }
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("下载设置")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
 
 // MARK: - 列表配置
 
