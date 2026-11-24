@@ -200,6 +200,8 @@ struct DetailView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .clipped()
             }
+        } else {
+            EmptyView()
         }
     }
 
@@ -338,6 +340,8 @@ struct DetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             }
+        } else {
+            EmptyView()
         }
     }
 
