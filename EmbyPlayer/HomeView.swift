@@ -157,64 +157,67 @@ struct HomeView: View {
         return count >= 3
     }
 
-    /// Builds the carousel batch: reshuffle the top-rated pool,
-    /// verify artwork (loads it into the memory cache, so heroes
-    /// paint instantly and blank art never shows), wait for the
-    /// rating lookups to settle, then admit only items with a
-    /// conclusive >= 3 rating count.
+    /// Builds the carousel batch. STRICT gate (his 2026-11-24 rule,
+    /// reaffirmed after v1.13 leaked sub-3 items through a "starved
+    /// gate" relaxation - that relaxation and the ungated fallback
+    /// are gone): an item enters ONLY with artwork verified loaded
+    /// and non-blank AND a conclusive >= 3 rating count. Candidates
+    /// are scanned in shuffled waves until 8 pass or the pool runs
+    /// out; fewer heroes is acceptable, unrated ones are not.
+    /// Called on every home entry (onAppear), so each visit deals a
+    /// fresh batch out of the top-rated pool.
+    @State private var heroPreparing = false
+    @State private var didInitialHeroLoad = false
+
     private func prepareHeroes(client: EmbyClient) async {
+        if heroPreparing { return }
+        heroPreparing = true
+        defer { heroPreparing = false }
         if heroCandidates.isEmpty {
             heroCandidates = await client.topRatedCandidates()
         }
         let eligible = heroCandidates.filter {
             $0.BackdropImageTags?.isEmpty == false && ($0.CommunityRating ?? 0) >= 6.8
-        }
-        let picks = Array(eligible.shuffled().prefix(14))
-        for item in picks {
-            ratingsStore.ensure(itemID: item.Id,
-                                imdbID: item.ProviderIds?["Imdb"],
-                                tmdbID: item.ProviderIds?["Tmdb"],
-                                type: item.type)
-        }
-        var artOK = Set<String>()
-        await withTaskGroup(of: String?.self) { group in
-            for item in picks {
-                group.addTask {
-                    guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080) else { return nil }
-                    return await ImageMemoryCache.shared.heroImage(for: url) != nil ? item.Id : nil
+        }.shuffled()
+        var ready: [EmbyItem] = []
+        var cursor = 0
+        while ready.count < 8, cursor < eligible.count {
+            let wave = Array(eligible[cursor..<min(cursor + 10, eligible.count)])
+            cursor += wave.count
+            for item in wave {
+                ratingsStore.ensure(itemID: item.Id,
+                                    imdbID: item.ProviderIds?["Imdb"],
+                                    tmdbID: item.ProviderIds?["Tmdb"],
+                                    type: item.type)
+            }
+            var artOK = Set<String>()
+            await withTaskGroup(of: String?.self) { group in
+                for item in wave {
+                    group.addTask {
+                        guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080) else { return nil }
+                        return await ImageMemoryCache.shared.heroImage(for: url) != nil ? item.Id : nil
+                    }
                 }
+                for await id in group { if let id { artOK.insert(id) } }
             }
-            for await id in group { if let id { artOK.insert(id) } }
-        }
-        // Bounded wait for the rating checks of art-verified picks.
-        let deadline = Date().addingTimeInterval(4)
-        while Date() < deadline {
-            let pending = picks.contains {
-                artOK.contains($0.Id)
-                    && ($0.ProviderIds?["Imdb"] != nil || $0.ProviderIds?["Tmdb"] != nil)
-                    && !ratingsStore.checked.contains($0.Id)
+            // Bounded wait for this wave's rating checks to settle.
+            let deadline = Date().addingTimeInterval(4)
+            while Date() < deadline {
+                let pending = wave.contains {
+                    artOK.contains($0.Id)
+                        && ($0.ProviderIds?["Imdb"] != nil || $0.ProviderIds?["Tmdb"] != nil)
+                        && !ratingsStore.checked.contains($0.Id)
+                }
+                if !pending { break }
+                try? await Task.sleep(for: .milliseconds(120))
             }
-            if !pending { break }
-            try? await Task.sleep(for: .milliseconds(120))
-        }
-        var ready = picks.filter { artOK.contains($0.Id) && heroRatingsVerdict($0) }
-        if ready.count < 4 {
-            // Starved gate: admit checked high scorers rather than
-            // leaving the home page without a carousel.
-            let extra = picks.filter { item in
-                artOK.contains(item.Id)
-                    && !ready.contains(where: { other in other.Id == item.Id })
-                    && (item.CommunityRating ?? 0) >= 7.5
-                    && ratingsStore.checked.contains(item.Id)
+            for item in wave where artOK.contains(item.Id) && heroRatingsVerdict(item) {
+                ready.append(item)
             }
-            ready += extra
         }
-        if ready.isEmpty {
-            // Safety net for servers with no rated catalog at all.
-            ready = latest.filter { $0.BackdropImageTags?.isEmpty == false }
-        }
-        heroReady = Array(ready.prefix(10))
+        heroReady = Array(ready.prefix(8))
         if heroReady.count > 1 { heroIndex = Int.random(in: 0..<heroReady.count) }
+        didInitialHeroLoad = true
         await loadHeroMeta(client: client)
     }
 
@@ -284,6 +287,15 @@ struct HomeView: View {
         .refreshable { await load() }
         .task { await load() }
         .task { await heroAutoAdvance() }
+        .onAppear {
+            // Every entry to Home deals a fresh hero batch. (v1.13
+            // built the batch only inside load(), which SwiftUI runs
+            // once per view identity - tab switches never re-ran it,
+            // so the batch never changed.)
+            if didInitialHeroLoad, let client = store.client() {
+                Task { await prepareHeroes(client: client) }
+            }
+        }
         .sheet(isPresented: $showServers) { ServersView() }
     }
 
