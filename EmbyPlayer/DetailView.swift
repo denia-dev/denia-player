@@ -118,14 +118,44 @@ struct DetailView: View {
     /// flat slab, which is exactly what he kept rejecting ("背景充满"
     /// means the art fills the page, not that a seam is blended).
     private var ambientBackground: some View {
+        frostedAmbient
+            .scaleEffect(1.2)
+            .ignoresSafeArea()
+    }
+
+    /// The ambient artwork with SenPlayer-style PROGRESSIVE defocus:
+    /// near the top the picture stays almost legible (blur 10), melting
+    /// into a heavy blur (36) further down, under a veil that deepens
+    /// toward the bottom. Builds 85-86 ran one uniform blur 40 plus a
+    /// flat 0.35 veil across the whole layer - enough processing to
+    /// homogenise ANY framing (fill-crop in 85, tiled in 86) into the
+    /// same pastel mush, which is why 86 looked unchanged to him while
+    /// Sen's background shapes stay readable. No scaleEffect here: the
+    /// scrolling layer must keep the tiles' framing aligned with the
+    /// hero's art for the melt; only the fixed background scales up.
+    private var frostedAmbient: some View {
         ZStack {
             ambientBackdrop
-                .blur(radius: 40)
-                .saturation(1.3)
-                .scaleEffect(1.3)
-            Color(.systemBackground).opacity(0.35)
+                .blur(radius: 36)
+                .saturation(1.2)
+            ambientBackdrop
+                .blur(radius: 10)
+                .saturation(1.2)
+                .mask(
+                    LinearGradient(
+                        gradient: Gradient(stops: [
+                            .init(color: .white, location: 0),
+                            .init(color: .white, location: 0.35),
+                            .init(color: .clear, location: 0.7),
+                            .init(color: .clear, location: 1)
+                        ]),
+                        startPoint: .top, endPoint: .bottom)
+                )
+            LinearGradient(
+                colors: [Color(.systemBackground).opacity(0.10),
+                         Color(.systemBackground).opacity(0.50)],
+                startPoint: .top, endPoint: .bottom)
         }
-        .ignoresSafeArea()
     }
 
     /// Full-bleed artwork for the ambient layers ONLY. The hero renders
@@ -178,14 +208,8 @@ struct DetailView: View {
     /// play capsule. The fixed ambient stays on the ScrollView for
     /// rubber-band regions only.
     private var scrollingAmbient: some View {
-        ZStack {
-            ambientBackdrop
-                .blur(radius: 40)
-                .saturation(1.3)
-                .scaleEffect(1.2)
-            Color(.systemBackground).opacity(0.35)
-        }
-        .clipped()
+        frostedAmbient
+            .clipped()
     }
 
     /// Fixed SenPlayer-style top chrome: a glass back circle on the left,
