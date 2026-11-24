@@ -43,7 +43,7 @@ struct EmbyItem: Decodable, Identifiable {
         case CollectionType, SeriesName, SeriesId, SeasonId, IndexNumber, ParentIndexNumber
         case Overview, ProductionYear, RunTimeTicks, ChildCount, ImageTags, BackdropImageTags
         case Genres, CommunityRating, CriticRating, PremiereDate, People, Chapters
-        case UserData, MediaSources
+        case UserData, MediaSources, ProviderIds
     }
 
     var id: String { Id }
@@ -67,6 +67,9 @@ struct EmbyItem: Decodable, Identifiable {
     let BackdropImageTags: [String]?
     let UserData: EmbyUserData?
     let MediaSources: [EmbyMediaSource]?
+    /// External database IDs (Imdb / Tmdb / Tvdb...), the key to
+    /// looking up the multi-source ratings SenPlayer shows.
+    let ProviderIds: [String: String]?
 
     var isPlayable: Bool { type == "Movie" || type == "Episode" || type == "Video" }
     var resumeSeconds: Double {

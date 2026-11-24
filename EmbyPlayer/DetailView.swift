@@ -27,6 +27,7 @@ struct DetailView: View {
     /// Nil until load()'s series fetch lands - artworkSource reads the
     /// difference (see its comment).
     @State private var seriesBackdropTags: [String]? = nil
+    @State private var ratingsStore = RatingsStore.shared
 
     private var current: EmbyItem { detail ?? item }
     private var isSeries: Bool { current.type == "Series" }
@@ -451,26 +452,18 @@ struct DetailView: View {
         return parts
     }
 
-    /// SenPlayer-style centered ratings strip: community score plus the
-    /// critic percentage when the server provides them. Nothing is
-    /// labelled with a brand the data did not come from.
+    /// Centered multi-source ratings strip (MDBList external scores
+    /// over the server's own two). Nothing is labelled with a brand
+    /// the data did not come from.
     @ViewBuilder
     private var ratingsRow: some View {
-        if current.CommunityRating != nil || current.CriticRating != nil {
+        let external = ratingsStore.byItemID[item.Id]
+        if external != nil || current.CommunityRating != nil || current.CriticRating != nil {
             HStack(spacing: 18) {
                 Spacer()
-                if let rating = current.CommunityRating {
-                    HStack(spacing: 5) {
-                        Image(systemName: "star.fill").foregroundStyle(.orange).font(.footnote)
-                        Text(String(format: "%.1f", rating)).font(.subheadline.weight(.semibold))
-                    }
-                }
-                if let critic = current.CriticRating {
-                    HStack(spacing: 5) {
-                        Image(systemName: "popcorn").foregroundStyle(.red).font(.footnote)
-                        Text("\(Int(critic.rounded()))%").font(.subheadline.weight(.semibold))
-                    }
-                }
+                RatingsStrip(external: external,
+                             fallbackCommunity: current.CommunityRating,
+                             fallbackCritic: current.CriticRating)
                 Spacer()
             }
         }
@@ -909,11 +902,24 @@ struct DetailView: View {
     private func load() async {
         guard let client = store.client() else { return }
         detail = try? await client.item(id: item.Id)
+        // Multi-source ratings: movies/series look up their own
+        // provider IDs; episodes use the series' (fetched below).
+        if current.type != "Episode" {
+            ratingsStore.ensure(itemID: item.Id,
+                                imdbID: current.ProviderIds?["Imdb"],
+                                tmdbID: current.ProviderIds?["Tmdb"],
+                                type: current.type)
+        }
         // Episode pages brand with the SERIES artwork (SenPlayer's
         // choice), so fetch the series item's backdrop set for every
         // episode, whether or not the episode carries its own tags.
         if current.type == "Episode", let seriesID = current.SeriesId {
-            seriesBackdropTags = (try? await client.item(id: seriesID))?.BackdropImageTags ?? []
+            let seriesItem = try? await client.item(id: seriesID)
+            seriesBackdropTags = seriesItem?.BackdropImageTags ?? []
+            ratingsStore.ensure(itemID: item.Id,
+                                imdbID: seriesItem?.ProviderIds?["Imdb"],
+                                tmdbID: seriesItem?.ProviderIds?["Tmdb"],
+                                type: "Series")
         }
         if item.type == "Movie" || item.type == "Series" {
             similar = (try? await client.similarItems(itemID: item.Id)) ?? []

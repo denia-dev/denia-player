@@ -230,7 +230,7 @@ struct EmbyClient {
         // (found on-device 2026-11-24 - the section existed since the
         // Sen rebuild but its data was never requested).
         let query = [
-            URLQueryItem(name: "Fields", value: "Overview,Genres,People,Chapters,MediaSources"),
+            URLQueryItem(name: "Fields", value: "Overview,Genres,People,Chapters,MediaSources,ProviderIds"),
         ]
         return try await send(makeRequest(path: "/Users/\(server.userID)/Items/\(id)", query: query))
     }
@@ -241,12 +241,13 @@ struct EmbyClient {
     /// response carries them - so the home hero hydrates its items
     /// through here (found on-device 2026-11-24: two list-sourced
     /// series in a row showed genres/overview but no year or rating).
-    func itemMeta(id: String) async -> (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)? {
-        let query = [URLQueryItem(name: "Fields", value: "Overview")]
+    func itemMeta(id: String) async -> (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?, imdbID: String?, tmdbID: String?)? {
+        let query = [URLQueryItem(name: "Fields", value: "Overview,ProviderIds")]
         guard let item: EmbyItem = try? await send(makeRequest(path: "/Users/\(server.userID)/Items/\(id)", query: query)) else {
             return nil
         }
-        return (item.ProductionYear, item.CommunityRating, item.CriticRating, item.RunTimeTicks)
+        return (item.ProductionYear, item.CommunityRating, item.CriticRating, item.RunTimeTicks,
+                item.ProviderIds?["Imdb"], item.ProviderIds?["Tmdb"])
     }
 
     /// Latest additions inside one library, newest first, for the

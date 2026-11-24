@@ -127,7 +127,7 @@ private struct PosterFrame: ViewModifier {
 final class CatalogCache {
     static let shared = CatalogCache()
 
-    typealias ItemMeta = (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)
+    typealias ItemMeta = (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?, imdbID: String?, tmdbID: String?)
 
     struct SectionData {
         var items: [EmbyItem] = []

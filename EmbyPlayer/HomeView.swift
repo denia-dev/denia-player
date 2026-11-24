@@ -118,7 +118,8 @@ struct HomeView: View {
     @State private var heroIndex = 0
     /// Year/ratings/runtime hydrated per hero item from the
     /// single-item endpoint (list responses omit them on goemby).
-    @State private var heroMeta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)] = [:]
+    @State private var heroMeta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?, imdbID: String?, tmdbID: String?)] = [:]
+    @State private var ratingsStore = RatingsStore.shared
     @State private var showServers = false
     @State private var errorText: String?
     /// Hero items dropped at runtime because their artwork came back
@@ -406,25 +407,10 @@ struct HomeView: View {
         let community = item.CommunityRating ?? meta?.community ?? nil
         let critic = item.CriticRating ?? meta?.critic ?? nil
         let ticks = item.RunTimeTicks ?? meta?.runTimeTicks ?? nil
-        if community != nil || critic != nil || (item.type == "Movie" && ticks != nil) {
+        let external = ratingsStore.byItemID[item.Id]
+        if external != nil || community != nil || critic != nil || (item.type == "Movie" && ticks != nil) {
             HStack(spacing: 18) {
-                if let community {
-                    HStack(spacing: 6) {
-                        ratingBadge("TMDB", fill: AnyShapeStyle(LinearGradient(
-                            colors: [Color(red: 0.01, green: 0.71, blue: 0.89),
-                                     Color(red: 0.56, green: 0.81, blue: 0.63)],
-                            startPoint: .leading, endPoint: .trailing)))
-                        Text(String(format: "%.1f", community))
-                            .font(.system(size: 15, weight: .bold))
-                    }
-                }
-                if let critic {
-                    HStack(spacing: 6) {
-                        ratingBadge("RT", fill: AnyShapeStyle(Color(red: 0.85, green: 0.2, blue: 0.15)))
-                        Text("\(Int(critic.rounded()))%")
-                            .font(.system(size: 15, weight: .bold))
-                    }
-                }
+                RatingsStrip(external: external, fallbackCommunity: community, fallbackCritic: critic, large: true)
                 if item.type == "Movie", let ticks, ticks > 0 {
                     Text(runtimeText(seconds: Double(ticks) / 10_000_000))
                         .font(.subheadline.weight(.medium))
@@ -433,15 +419,6 @@ struct HomeView: View {
             }
             .padding(.top, 2)
         }
-    }
-
-    private func ratingBadge(_ label: String, fill: AnyShapeStyle) -> some View {
-        Text(label)
-            .font(.system(size: 9, weight: .black))
-            .foregroundStyle(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(fill, in: Capsule())
     }
 
     private func runtimeText(seconds: Double) -> String {
@@ -493,13 +470,22 @@ struct HomeView: View {
     /// concurrent; failures just leave the line without that field).
     private func loadHeroMeta(client: EmbyClient) async {
         let items = heroItems
-        await withTaskGroup(of: (String, (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)?).self) { group in
+        await withTaskGroup(of: (String, (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?, imdbID: String?, tmdbID: String?)?).self) { group in
             for item in items where item.ProductionYear == nil || item.CommunityRating == nil {
                 group.addTask { (item.Id, await client.itemMeta(id: item.Id)) }
             }
             for await (id, meta) in group {
                 if let meta { heroMeta[id] = meta }
             }
+        }
+        // Kick off multi-source rating lookups for the heroes; the
+        // strip fills in as MDBList answers land.
+        for item in items {
+            let meta = heroMeta[item.Id]
+            ratingsStore.ensure(itemID: item.Id,
+                                imdbID: item.ProviderIds?["Imdb"] ?? meta?.imdbID ?? nil,
+                                tmdbID: item.ProviderIds?["Tmdb"] ?? meta?.tmdbID ?? nil,
+                                type: item.type)
         }
     }
 }
