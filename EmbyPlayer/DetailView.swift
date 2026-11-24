@@ -175,6 +175,7 @@ struct DetailView: View {
     /// in their horizontal lanes, and under the callers' blur + veil
     /// the stack reads as one long defocused artwork behind the page.
     @ViewBuilder
+    @ViewBuilder
     private var ambientBackdrop: some View {
         if let client = store.client() {
             ZStack(alignment: .top) {
@@ -329,6 +330,7 @@ struct DetailView: View {
         return item.Id
     }
 
+    @ViewBuilder
     private var heroBackdrop: some View {
         if let client = store.client() {
             ZStack {
