@@ -404,6 +404,7 @@ struct MPVPlayerScreen: View {
     }
 
     @State private var chromeVisible = true
+    @State private var ratingsStore = RatingsStore.shared
     @State private var controlsLocked = false
     @State private var pressStart: Date?
     @State private var pressBoosted = false
@@ -593,6 +594,7 @@ struct MPVPlayerScreen: View {
         }
         .overlay(alignment: .top) { osdBar }
         .task { await osdTicker() }
+        .task { await ensurePlayerRatings() }
         .task { await startPlayback() }
         .task { await progressLoop() }
         .onAppear {
@@ -1307,6 +1309,17 @@ struct MPVPlayerScreen: View {
             .padding(.horizontal)
             .padding(.top, 8)
 
+            // Multi-source ratings under the title (his 2026-11-24
+            // ask: 播放控件加上评分）. Rides the chrome's visibility -
+            // it appears with the controls and fades with them.
+            if !controlsLocked, Prefs.showTitleInPlayer,
+               ratingsStore.byItemID[item.Id] != nil || item.CommunityRating != nil || item.CriticRating != nil {
+                RatingsStrip(external: ratingsStore.byItemID[item.Id],
+                             fallbackCommunity: item.CommunityRating,
+                             fallbackCritic: item.CriticRating)
+                    .padding(.top, 4)
+            }
+
             Spacer()
 
             if controlsLocked {
@@ -1615,6 +1628,25 @@ struct MPVPlayerScreen: View {
         if let fps = media.framesPerSecond { parts.append("\(Int(fps.rounded())) fps") }
         if let dimensions = media.dimensions { parts.append("\(dimensions.width)×\(dimensions.height)") }
         return parts.joined(separator: " · ")
+    }
+
+    /// Ratings for the chrome strip: episodes rate the SERIES
+    /// (same rule as the detail page), everything else rates
+    /// itself. Items handed over without provider IDs (list
+    /// models) simply leave the strip on its fallbacks.
+    private func ensurePlayerRatings() async {
+        if item.type == "Episode", let seriesID = item.SeriesId, let client = store.client() {
+            let series = try? await client.item(id: seriesID)
+            ratingsStore.ensure(itemID: item.Id,
+                                imdbID: series?.ProviderIds?["Imdb"],
+                                tmdbID: series?.ProviderIds?["Tmdb"],
+                                type: "Series")
+        } else {
+            ratingsStore.ensure(itemID: item.Id,
+                                imdbID: item.ProviderIds?["Imdb"],
+                                tmdbID: item.ProviderIds?["Tmdb"],
+                                type: item.type)
+        }
     }
 
     private func osdTicker() async {
