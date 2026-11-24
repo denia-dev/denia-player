@@ -140,32 +140,21 @@ struct HomeView: View {
         heroReady.filter { !heroExcluded.contains($0.Id) }
     }
 
-    /// His 2026-11-24 rule: 没有三个评分的都不要出现在轮播 - a hero
-    /// needs at least three rating sources, counted from the
-    /// external lookup plus the server's own two.
-    private func heroRatingsVerdict(_ item: EmbyItem) -> Bool {
-        let external = ratingsStore.byItemID[item.Id]
-        let meta = heroMeta[item.Id]
-        var count = 0
-        if item.CommunityRating != nil || meta?.community != nil || external?.tmdb != nil { count += 1 }
-        if external?.imdb != nil { count += 1 }
-        if item.CriticRating != nil || meta?.critic != nil || external?.rtCritics != nil { count += 1 }
-        if external?.rtAudience != nil { count += 1 }
-        if external?.letterboxd != nil { count += 1 }
-        if external?.metacritic != nil { count += 1 }
-        if external?.trakt != nil { count += 1 }
-        return count >= 3
+    /// Anime test for the hero pool (his 2026-11-24 call: 全放动漫）.
+    /// Genre names arrive as "Anime" on English metadata, 动画 on
+    /// Chinese metadata.
+    private func isAnime(_ item: EmbyItem) -> Bool {
+        (item.Genres ?? []).contains { $0 == "Anime" || $0.contains("动画") }
     }
 
-    /// Builds the carousel batch. STRICT gate (his 2026-11-24 rule,
-    /// reaffirmed after v1.13 leaked sub-3 items through a "starved
-    /// gate" relaxation - that relaxation and the ungated fallback
-    /// are gone): an item enters ONLY with artwork verified loaded
-    /// and non-blank AND a conclusive >= 3 rating count. Candidates
-    /// are scanned in shuffled waves until 8 pass or the pool runs
-    /// out; fewer heroes is acceptable, unrated ones are not.
-    /// Called on every home entry (onAppear), so each visit deals a
-    /// fresh batch out of the top-rated pool.
+    /// Builds the carousel batch, SenPlayer-style (his 2026-11-24
+    /// screenshot, after the multi-source gate starved v1.15's
+    /// carousel to empty): the hero needs NOTHING external - an
+    /// anime title from the top-rated pool with a server score
+    /// >= 7.0 and artwork verified loaded and non-blank. The
+    /// multi-source strip stays on the detail page and player,
+    /// where it belongs. Called on every home entry (onAppear),
+    /// so each visit deals a fresh shuffled batch.
     @State private var heroPreparing = false
     @State private var didInitialHeroLoad = false
 
@@ -174,22 +163,18 @@ struct HomeView: View {
         heroPreparing = true
         defer { heroPreparing = false }
         if heroCandidates.isEmpty {
-            heroCandidates = await client.topRatedCandidates()
+            heroCandidates = await client.topRatedCandidates(limit: 100)
         }
         let eligible = heroCandidates.filter {
-            $0.BackdropImageTags?.isEmpty == false && ($0.CommunityRating ?? 0) >= 6.8
+            $0.BackdropImageTags?.isEmpty == false
+                && ($0.CommunityRating ?? 0) >= 7.0
+                && isAnime($0)
         }.shuffled()
         var ready: [EmbyItem] = []
         var cursor = 0
         while ready.count < 8, cursor < eligible.count {
             let wave = Array(eligible[cursor..<min(cursor + 10, eligible.count)])
             cursor += wave.count
-            for item in wave {
-                ratingsStore.ensure(itemID: item.Id,
-                                    imdbID: item.ProviderIds?["Imdb"],
-                                    tmdbID: item.ProviderIds?["Tmdb"],
-                                    type: item.type)
-            }
             var artOK = Set<String>()
             await withTaskGroup(of: String?.self) { group in
                 for item in wave {
@@ -200,18 +185,7 @@ struct HomeView: View {
                 }
                 for await id in group { if let id { artOK.insert(id) } }
             }
-            // Bounded wait for this wave's rating checks to settle.
-            let deadline = Date().addingTimeInterval(4)
-            while Date() < deadline {
-                let pending = wave.contains {
-                    artOK.contains($0.Id)
-                        && ($0.ProviderIds?["Imdb"] != nil || $0.ProviderIds?["Tmdb"] != nil)
-                        && !ratingsStore.checked.contains($0.Id)
-                }
-                if !pending { break }
-                try? await Task.sleep(for: .milliseconds(120))
-            }
-            for item in wave where artOK.contains(item.Id) && heroRatingsVerdict(item) {
+            for item in wave where artOK.contains(item.Id) {
                 ready.append(item)
             }
         }
@@ -437,7 +411,6 @@ struct HomeView: View {
                         .multilineTextAlignment(.center)
                         .frame(maxWidth: .infinity, alignment: .center)
                 }
-                heroRatingsRow(item)
             }
         .padding(.horizontal, 28)
         .padding(.bottom, 30)
@@ -471,47 +444,27 @@ struct HomeView: View {
         .clipped()
     }
 
-    /// The hero meta line (SenPlayer layout): year · type · genres.
-    /// Ratings live on their own row (heroRatingsRow).
+    /// The hero meta line, exactly SenPlayer's (his 2026-11-24
+    /// screenshot): year · ★ server score. Nothing else - the
+    /// multi-source strip does not belong on the hero.
     private func heroMetaLine(_ item: EmbyItem) -> some View {
         let productionYear = item.ProductionYear ?? heroMeta[item.Id]?.year ?? nil
+        let community = item.CommunityRating ?? heroMeta[item.Id]?.community ?? nil
         return HStack(spacing: 7) {
             if let year = productionYear {
                 Text(String(year))
             }
-            Text(item.type == "Series" ? "剧集" : "电影")
-            if let genres = item.Genres, !genres.isEmpty {
-                Text(genres.prefix(2).joined(separator: " / "))
+            if let community {
+                HStack(spacing: 3) {
+                    Image(systemName: "star.fill")
+                        .foregroundStyle(.yellow)
+                    Text(String(format: "%.1f", community))
+                }
             }
         }
         .font(.subheadline.weight(.medium))
         .foregroundStyle(.secondary)
         .lineLimit(1)
-    }
-
-    /// Ratings on their own row, SenPlayer style: a source badge +
-    /// score per source. The server gives us two scores: the
-    /// community rating (TMDB's in Emby metadata) and the critic
-    /// rating (Rotten Tomatoes %). There is no separate IMDb score
-    /// field in the item data, so no IMDb chip.
-    @ViewBuilder
-    private func heroRatingsRow(_ item: EmbyItem) -> some View {
-        let meta = heroMeta[item.Id]
-        let community = item.CommunityRating ?? meta?.community ?? nil
-        let critic = item.CriticRating ?? meta?.critic ?? nil
-        let ticks = item.RunTimeTicks ?? meta?.runTimeTicks ?? nil
-        let external = ratingsStore.byItemID[item.Id]
-        if external != nil || community != nil || critic != nil || (item.type == "Movie" && ticks != nil) {
-            HStack(spacing: 18) {
-                RatingsStrip(external: external, fallbackCommunity: community, fallbackCritic: critic, large: true)
-                if item.type == "Movie", let ticks, ticks > 0 {
-                    Text(runtimeText(seconds: Double(ticks) / 10_000_000))
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.top, 2)
-        }
     }
 
     private func runtimeText(seconds: Double) -> String {
@@ -567,15 +520,6 @@ struct HomeView: View {
             for await (id, meta) in group {
                 if let meta { heroMeta[id] = meta }
             }
-        }
-        // Kick off multi-source rating lookups for the heroes; the
-        // strip fills in as MDBList answers land.
-        for item in items {
-            let meta = heroMeta[item.Id]
-            ratingsStore.ensure(itemID: item.Id,
-                                imdbID: item.ProviderIds?["Imdb"] ?? meta?.imdbID ?? nil,
-                                tmdbID: item.ProviderIds?["Tmdb"] ?? meta?.tmdbID ?? nil,
-                                type: item.type)
         }
     }
 }
