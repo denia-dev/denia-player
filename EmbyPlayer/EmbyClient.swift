@@ -286,6 +286,77 @@ struct EmbyClient {
         return response.Items
     }
 
+    /// Build-81 diagnostic (temporary): repeats the exact item-detail and
+    /// similar requests and reports, for each, the HTTP status, payload
+    /// size, whether the RAW payload even contains People/Actor data, and
+    /// the precise decode outcome - including the DecodingError coding
+    /// path when decoding throws. The detail page renders this verbatim
+    /// so one screenshot settles why the cast/similar sections are empty
+    /// (server sends nothing vs. client decode silently dropping it).
+    /// Remove together with DetailView.diagSection once fixed.
+    func detailDiagnostic(itemID: String) async -> String {
+        var lines: [String] = []
+        do {
+            let req = try makeRequest(path: "/Users/\(server.userID)/Items/\(itemID)", query: [
+                URLQueryItem(name: "Fields", value: "Overview,Genres,People,Chapters,MediaSources"),
+            ])
+            let (data, response) = try await dataWithRetry(req)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            let text = String(decoding: data, as: UTF8.self)
+            let actorHits = text.components(separatedBy: "\"Actor\"").count - 1
+            lines.append("详情 HTTP \(code)，\(data.count) 字节")
+            lines.append("原文含 \"People\": \(text.contains("\"People\"") ? "是" : "否")；\"Actor\" 出现 \(actorHits) 次")
+            do {
+                let decoded = try JSONDecoder().decode(EmbyItem.self, from: data)
+                lines.append("详情解码 OK：People \(decoded.People?.count ?? -1)，Chapters \(decoded.Chapters?.count ?? -1)，MediaSources \(decoded.MediaSources?.count ?? -1)")
+            } catch {
+                lines.append("详情解码失败：\(Self.describeDecode(error))")
+            }
+        } catch {
+            lines.append("详情请求失败：\(error.localizedDescription)")
+        }
+        do {
+            let req = try makeRequest(path: "/Items/\(itemID)/Similar", query: [
+                URLQueryItem(name: "UserId", value: server.userID),
+                URLQueryItem(name: "Limit", value: "12"),
+                URLQueryItem(name: "Fields", value: "Overview,Genres"),
+            ])
+            let (data, response) = try await dataWithRetry(req)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            lines.append("相似 HTTP \(code)，\(data.count) 字节")
+            do {
+                let decoded = try JSONDecoder().decode(EmbyItemsResponse.self, from: data)
+                lines.append("相似解码 OK：\(decoded.Items.count) 条")
+            } catch {
+                lines.append("相似解码失败：\(Self.describeDecode(error))")
+            }
+        } catch {
+            lines.append("相似请求失败：\(error.localizedDescription)")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func describeDecode(_ error: Error) -> String {
+        func path(_ ctx: DecodingError.Context) -> String {
+            ctx.codingPath.map(\.stringValue).joined(separator: ".")
+        }
+        if let d = error as? DecodingError {
+            switch d {
+            case .keyNotFound(let key, let ctx):
+                return "缺字段 \(key.stringValue) @ \(path(ctx))"
+            case .typeMismatch(let type, let ctx):
+                return "类型不符 \(type) @ \(path(ctx))（\(ctx.debugDescription)）"
+            case .valueNotFound(let type, let ctx):
+                return "值为空 \(type) @ \(path(ctx))"
+            case .dataCorrupted(let ctx):
+                return "数据损坏 @ \(path(ctx))（\(ctx.debugDescription)）"
+            @unknown default:
+                return "解码错误 \(d)"
+            }
+        }
+        return error.localizedDescription
+    }
+
     /// Everything in the library featuring one person, newest first -
     /// backs the cast tap-through page.
     func itemsByPerson(personID: String) async throws -> [EmbyItem] {
