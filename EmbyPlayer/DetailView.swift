@@ -119,13 +119,41 @@ struct DetailView: View {
     /// means the art fills the page, not that a seam is blended).
     private var ambientBackground: some View {
         ZStack {
-            heroBackdrop
+            ambientBackdrop
                 .blur(radius: 40)
                 .saturation(1.3)
                 .scaleEffect(1.3)
             Color(.systemBackground).opacity(0.35)
         }
         .ignoresSafeArea()
+    }
+
+    /// Full-bleed artwork for the ambient layers ONLY. The hero renders
+    /// the same art sharp and fit-width (build 84), but the ambient must
+    /// FILL its whole frame - when it reused the hero's fit-width view,
+    /// the blurred wash stopped where the sharp art ended and everything
+    /// below read as one flat white sheet with a hard line at the art's
+    /// lower edge (his build-84 report). Blurred and scaled here, the
+    /// fill crop is invisible; what matters is that the frosted artwork
+    /// continues down the entire page, so the content below the hero
+    /// sits on a blurred card of the art itself, not on white.
+    @ViewBuilder
+    private var ambientBackdrop: some View {
+        if let client = store.client() {
+            if let art = artworkSource {
+                AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 720)) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+            } else {
+                ItemImage(item: current, client: client, kind: wideImageKind(current))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
+        }
     }
 
     /// The ambient as a layer behind the SCROLL CONTENT itself. The
@@ -139,7 +167,7 @@ struct DetailView: View {
     /// rubber-band regions only.
     private var scrollingAmbient: some View {
         ZStack {
-            heroBackdrop
+            ambientBackdrop
                 .blur(radius: 40)
                 .saturation(1.3)
                 .scaleEffect(1.2)
