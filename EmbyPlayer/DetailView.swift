@@ -133,20 +133,32 @@ struct DetailView: View {
     /// FILL its whole frame - when it reused the hero's fit-width view,
     /// the blurred wash stopped where the sharp art ended and everything
     /// below read as one flat white sheet with a hard line at the art's
-    /// lower edge (his build-84 report). Blurred and scaled here, the
-    /// fill crop is invisible; what matters is that the frosted artwork
-    /// continues down the entire page, so the content below the hero
-    /// sits on a blurred card of the art itself, not on white.
+    /// lower edge (his build-84 report). Build 85 filled the frame with
+    /// a center-crop zoom of the art instead: blur yes, but all color
+    /// and no picture - his verdict was the IMAGE ITSELF has to be
+    /// pulled down the page like SenPlayer's. So the ambient now tiles
+    /// the artwork at its natural full-width aspect down the whole
+    /// layer, each tile mirrored against the previous one (the
+    /// reflection trick): every seam is pixel-continuous, shapes stay
+    /// in their horizontal lanes, and under the callers' blur + veil
+    /// the stack reads as one long defocused artwork behind the page.
     @ViewBuilder
     private var ambientBackdrop: some View {
         if let client = store.client() {
             if let art = artworkSource {
-                AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 720)) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
+                VStack(spacing: 0) {
+                    ForEach(0..<10, id: \.self) { tile in
+                        AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 720)) { phase in
+                            if case .success(let image) = phase {
+                                image.resizable().scaledToFill()
+                            }
+                        }
+                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                        .scaleEffect(y: tile % 2 == 1 ? -1 : 1)
+                        .clipped()
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .clipped()
             } else {
                 ItemImage(item: current, client: client, kind: wideImageKind(current))
