@@ -32,6 +32,12 @@ struct DetailView: View {
     /// rendered in it (his 2026-11-24 reference screenshot). Nil
     /// until the artwork lands; the blurred ambient stands in.
     @State private var tint: Color? = nil
+    /// One-shot entrance: the hero's foreground content and the
+    /// sections below rise and fade in as the artwork lands, instead
+    /// of the whole page scaling in as one slab (his 2026-11-25
+    /// note that entering pages feels less refined than SenPlayer).
+    /// Never reset, so returning from the player does not replay it.
+    @State private var entered = false
 
     /// What the hero melts into: the page tint once known, the
     /// system background before that.
@@ -72,6 +78,9 @@ struct DetailView: View {
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 40)
+                .opacity(entered ? 1 : 0)
+                .offset(y: entered ? 0 : 18)
+                .animation(.spring(response: 0.6, dampingFraction: 0.9).delay(0.12), value: entered)
             }
             .containerRelativeFrame(.horizontal)
         }
@@ -89,7 +98,7 @@ struct DetailView: View {
             .ignoresSafeArea()
         }
         .environment(\.colorScheme, .dark)
-        .zoomDestination(id: item.Id, ns: zoomNS)
+        .onAppear { entered = true }
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -307,6 +316,12 @@ struct DetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             }
+            // The zoom morph targets the artwork itself, not the
+            // whole page: the tapped poster grows into THIS frame
+            // while the rest of the page fades in around it. With the
+            // destination on the page root, text and all scaled as
+            // one slab - the crude feel he flagged on 2026-11-25.
+            .zoomDestination(id: item.Id, ns: zoomNS)
         } else {
             EmptyView()
         }
@@ -331,6 +346,9 @@ struct DetailView: View {
         .padding(.horizontal, 24)
         .padding(.bottom, 6)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .opacity(entered ? 1 : 0)
+        .offset(y: entered ? 0 : 10)
+        .animation(.spring(response: 0.55, dampingFraction: 0.9).delay(0.06), value: entered)
         .background {
             ZStack {
                 heroBackdrop
