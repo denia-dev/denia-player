@@ -645,7 +645,7 @@ struct SettingsView: View {
                 }
 
                 settingsGroup("关于") {
-                    SettingRowContent(icon: "info.circle", color: .gray, title: "版本", value: "1.0 (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))", chevron: false)
+                    SettingRowContent(icon: "info.circle", color: .gray, title: "版本", value: "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"))", chevron: false)
                     Divider().padding(.leading, 58)
                     SettingRowContent(icon: "play.rectangle.on.rectangle", color: .purple, title: "播放内核", value: "mpv · VLCKit", chevron: false)
                 }
