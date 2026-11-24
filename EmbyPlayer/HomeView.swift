@@ -247,17 +247,18 @@ struct HomeView: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                 }
+                // SenPlayer hero layout: title, meta line, overview,
+                // then the ratings on their own row above the dots.
+                heroMetaLine(item)
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
-                // Ratings/year/genres sit last in the cell, directly
-                // above the page dots.
-                heroMetaLine(item)
+                heroRatingsRow(item)
             }
         .padding(.horizontal, 28)
         .padding(.bottom, 30)
@@ -289,28 +290,11 @@ struct HomeView: View {
         .clipped()
     }
 
-    /// One info line under the hero title: ratings first (star +
-    /// popcorn), then year, type/genres and runtime for movies.
+    /// The hero meta line (SenPlayer layout): year · type · genres.
+    /// Ratings live on their own row (heroRatingsRow).
     private func heroMetaLine(_ item: EmbyItem) -> some View {
-        let meta = heroMeta[item.Id]
-        let communityRating = item.CommunityRating ?? meta?.community ?? nil
-        let criticRating = item.CriticRating ?? meta?.critic ?? nil
-        let productionYear = item.ProductionYear ?? meta?.year ?? nil
-        let runtimeSeconds = item.durationSeconds > 0 ? item.durationSeconds
-            : Double(meta?.runTimeTicks ?? 0) / 10_000_000
+        let productionYear = item.ProductionYear ?? heroMeta[item.Id]?.year ?? nil
         return HStack(spacing: 7) {
-            if let rating = communityRating {
-                HStack(spacing: 3) {
-                    Image(systemName: "star.fill").foregroundStyle(.orange)
-                    Text(String(format: "%.1f", rating)).fontWeight(.semibold).foregroundStyle(.primary)
-                }
-            }
-            if let critic = criticRating {
-                HStack(spacing: 3) {
-                    Image(systemName: "popcorn").foregroundStyle(.red)
-                    Text("\(Int(critic.rounded()))%").fontWeight(.semibold).foregroundStyle(.primary)
-                }
-            }
             if let year = productionYear {
                 Text(String(year))
             }
@@ -318,20 +302,49 @@ struct HomeView: View {
             if let genres = item.Genres, !genres.isEmpty {
                 Text(genres.prefix(2).joined(separator: " / "))
             }
-            if item.type == "Movie", runtimeSeconds > 0 {
-                Text(runtimeText(seconds: runtimeSeconds))
-            }
         }
         .font(.subheadline.weight(.medium))
         .foregroundStyle(.secondary)
         .lineLimit(1)
     }
 
-    private func runtimeText(seconds: Double) -> String {
-        let totalMinutes = Int(seconds) / 60
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        return hours > 0 ? "\(hours)小时\(minutes)分" : "\(minutes)分钟"
+    /// Ratings on their own row, SenPlayer style: a source badge +
+    /// score per source. The server gives us two scores: the
+    /// community rating (TMDB's in Emby metadata) and the critic
+    /// rating (Rotten Tomatoes %). There is no separate IMDb score
+    /// field in the item data, so no IMDb chip.
+    @ViewBuilder
+    private func heroRatingsRow(_ item: EmbyItem) -> some View {
+        let meta = heroMeta[item.Id]
+        let community = item.CommunityRating ?? meta?.community ?? nil
+        let critic = item.CriticRating ?? meta?.critic ?? nil
+        if community != nil || critic != nil {
+            HStack(spacing: 20) {
+                if let community {
+                    HStack(spacing: 6) {
+                        ratingBadge("TMDB", background: Color(red: 0.05, green: 0.65, blue: 0.85))
+                        Text(String(format: "%.1f", community))
+                            .font(.subheadline.weight(.bold))
+                    }
+                }
+                if let critic {
+                    HStack(spacing: 6) {
+                        ratingBadge("RT", background: Color(red: 0.85, green: 0.2, blue: 0.15))
+                        Text("\(Int(critic.rounded()))%")
+                            .font(.subheadline.weight(.bold))
+                    }
+                }
+            }
+        }
+    }
+
+    private func ratingBadge(_ label: String, background: Color) -> some View {
+        Text(label)
+            .font(.system(size: 9, weight: .black))
+            .foregroundStyle(.white)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2.5)
+            .background(background, in: RoundedRectangle(cornerRadius: 4))
     }
 
     private func sectionHeader(_ title: String, count: Int?, action: (() -> Void)? = nil) -> some View {
