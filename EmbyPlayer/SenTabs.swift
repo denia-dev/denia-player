@@ -117,39 +117,12 @@ struct LibrariesTabView: View {
     @State private var libraries: [EmbyItem] = []
     @State private var showServers = false
 
-    private let columns = [GridItem(.flexible(), spacing: 14), GridItem(.flexible(), spacing: 14)]
-
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                HStack {
-                    Text("资源库").font(.system(size: 32, weight: .bold))
-                    Spacer()
-                    HStack(spacing: 18) {
-                        Button { showServers = true } label: {
-                            Image(systemName: "plus").font(.system(size: 19, weight: .medium))
-                        }
-                        Menu {
-                            Button { Task { await load() } } label: { Label("刷新", systemImage: "arrow.clockwise") }
-                            Button { showServers = true } label: { Label("管理服务器", systemImage: "server.rack") }
-                        } label: {
-                            Image(systemName: "ellipsis.circle").font(.system(size: 19))
-                        }
-                    }
-                    .foregroundStyle(.primary)
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 9)
-                    .glassEffect(.regular, in: Capsule())
-                }
-
-                LazyVGrid(columns: columns, spacing: 14) {
-                    serverCard
-                    ForEach(Array(libraries.enumerated()), id: \.element.Id) { index, library in
-                        NavigationLink(value: Route.library(library)) {
-                            libraryCard(library, index: index)
-                        }
-                        .buttonStyle(.plain)
-                    }
+            LazyVStack(alignment: .leading, spacing: 26) {
+                header
+                ForEach(libraries) { library in
+                    LibraryRailSection(library: library)
                 }
             }
             .padding(.horizontal)
@@ -161,72 +134,138 @@ struct LibrariesTabView: View {
         .sheet(isPresented: $showServers) { ServersView() }
     }
 
-    private var serverCard: some View {
-        VStack(alignment: .leading) {
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 3) {
+    /// SenPlayer-style header: a server pill (tap to manage/switch
+    /// servers) instead of a big title.
+    private var header: some View {
+        HStack(spacing: 10) {
+            Button { showServers = true } label: {
+                HStack(spacing: 8) {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(Color.green)
+                        .frame(width: 30, height: 30)
+                        .overlay(Image(systemName: "play.fill").font(.system(size: 13)).foregroundStyle(.white))
                     Text(store.activeServer?.name ?? "服务器")
-                        .font(.headline).lineLimit(2)
-                    Text("Emby").font(.caption).foregroundStyle(.secondary)
+                        .font(.system(size: 16, weight: .semibold))
+                        .lineLimit(1)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
                 }
-                Spacer()
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Color.green)
-                    .frame(width: 42, height: 42)
-                    .overlay(Image(systemName: "play.fill").foregroundStyle(.white))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .glassEffect(.regular, in: Capsule())
             }
+            .buttonStyle(.plain)
             Spacer()
-            HStack {
-                Text("主线路").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                HStack(spacing: 4) {
-                    Circle().fill(.green).frame(width: 7, height: 7)
-                    Text("在线").font(.caption).foregroundStyle(.secondary)
-                }
+            Menu {
+                Button { Task { await load() } } label: { Label("刷新", systemImage: "arrow.clockwise") }
+                Button { showServers = true } label: { Label("管理服务器", systemImage: "server.rack") }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 22))
+                    .foregroundStyle(.primary)
             }
-        }
-        .padding(14)
-        .frame(height: 148)
-        .background(Color.green.opacity(0.14), in: RoundedRectangle(cornerRadius: 24))
-    }
-
-    private func libraryCard(_ library: EmbyItem, index: Int) -> some View {
-        let style = cardStyle(for: library)
-        return VStack(alignment: .leading) {
-            HStack(alignment: .top) {
-                Text(library.Name).font(.headline).lineLimit(2)
-                Spacer()
-                Image(systemName: style.icon)
-                    .font(.system(size: 30))
-                    .foregroundStyle(style.color)
-            }
-            Spacer()
-            HStack {
-                Text(style.label).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if let count = library.ChildCount {
-                    Text("\(count) 项").font(.caption).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .padding(14)
-        .frame(height: 148)
-        .background(style.color.opacity(0.13), in: RoundedRectangle(cornerRadius: 24))
-    }
-
-    private func cardStyle(for library: EmbyItem) -> (icon: String, color: Color, label: String) {
-        switch library.CollectionType {
-        case "movies": return ("film.fill", .blue, "电影")
-        case "tvshows": return ("tv.fill", .purple, "剧集")
-        case "music": return ("music.note", .pink, "音乐")
-        case "photos": return ("photo.fill", .orange, "照片")
-        default: return ("folder.fill", .yellow, "媒体库")
         }
     }
 
     private func load() async {
         guard let client = store.client() else { return }
         libraries = (try? await client.libraries()) ?? []
+    }
+}
+
+/// One library as a SenPlayer-style section: a header row (name,
+/// total count, chevron into the full grid) over a horizontal rail
+/// of its latest additions. Poster cells always render their title
+/// and a titled placeholder when the server has no usable image, so
+/// a missing poster never leaves a blank hole in the rail.
+private struct LibraryRailSection: View {
+    @Environment(AppStore.self) private var store
+    let library: EmbyItem
+    @State private var items: [EmbyItem] = []
+    @State private var count: Int?
+    @State private var meta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)] = [:]
+    @State private var loaded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            NavigationLink(value: Route.library(library)) {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(library.Name).font(.system(size: 21, weight: .bold))
+                    Spacer()
+                    if let count {
+                        Text("\(count)").foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .buttonStyle(.plain)
+            if !items.isEmpty, let client = store.client() {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(items) { item in
+                            NavigationLink(value: Route.detail(item)) {
+                                railCell(item, client: client)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .task { await load() }
+    }
+
+    private func railCell(_ item: EmbyItem, client: EmbyClient) -> some View {
+        let rating = item.CommunityRating ?? meta[item.Id]?.community ?? nil
+        let year = item.ProductionYear ?? meta[item.Id]?.year ?? nil
+        return VStack(alignment: .leading, spacing: 6) {
+            ItemImage(item: item, client: client)
+                .frame(width: 110, height: 165)
+                .clipShape(RoundedRectangle(cornerRadius: 12))
+                .overlay(alignment: .bottomTrailing) {
+                    if let rating {
+                        Text(String(format: "%.1f", rating))
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 6))
+                            .padding(6)
+                    }
+                }
+            Text(item.Name)
+                .font(.system(size: 14, weight: .medium))
+                .lineLimit(1)
+            if let year {
+                Text(String(year))
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: 110)
+    }
+
+    private func load() async {
+        guard !loaded, let client = store.client() else { return }
+        loaded = true
+        async let fetchedCount = client.libraryItemCount(parentID: library.Id)
+        if let fetched = try? await client.latestInLibrary(parentID: library.Id) {
+            items = fetched
+        }
+        count = await fetchedCount
+        // List payloads on this server omit year/rating (same gap the
+        // home hero hydrates around): fill them in per item.
+        let missing = items.filter { $0.ProductionYear == nil || $0.CommunityRating == nil }
+        await withTaskGroup(of: (String, (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)?).self) { group in
+            for item in missing {
+                group.addTask { (item.Id, await client.itemMeta(id: item.Id)) }
+            }
+            for await (id, fetched) in group {
+                if let fetched { meta[id] = fetched }
+            }
+        }
     }
 }
 

@@ -249,6 +249,36 @@ struct EmbyClient {
         return (item.ProductionYear, item.CommunityRating, item.CriticRating, item.RunTimeTicks)
     }
 
+    /// Latest additions inside one library, newest first, for the
+    /// library tab's per-library poster rails.
+    func latestInLibrary(parentID: String, limit: Int = 15) async throws -> [EmbyItem] {
+        let query = [
+            URLQueryItem(name: "ParentId", value: parentID),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
+            URLQueryItem(name: "SortBy", value: "DateCreated"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "Fields", value: "Overview,Genres"),
+            URLQueryItem(name: "Limit", value: String(limit)),
+        ]
+        let response: EmbyItemsResponse = try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+        return response.Items
+    }
+
+    /// Total movie/series count under a library (recursive).
+    func libraryItemCount(parentID: String) async -> Int? {
+        let query = [
+            URLQueryItem(name: "ParentId", value: parentID),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
+            URLQueryItem(name: "StartIndex", value: "0"),
+            URLQueryItem(name: "Limit", value: "1"),
+            URLQueryItem(name: "EnableTotalRecordCount", value: "true"),
+        ]
+        let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+        return response?.TotalRecordCount
+    }
+
     func seasons(seriesID: String) async throws -> [EmbyItem] {
         let query = [URLQueryItem(name: "UserId", value: server.userID)]
         let response: EmbyItemsResponse = try await send(makeRequest(path: "/Shows/\(seriesID)/Seasons", query: query))
