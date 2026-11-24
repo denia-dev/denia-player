@@ -24,7 +24,6 @@ struct DetailView: View {
     @State private var playedOverride: Bool?
     @State private var overviewExpanded = false
     @State private var showAllEpisodes = false
-    @State private var diagText = "诊断加载中…"
 
     private var current: EmbyItem { detail ?? item }
     private var isSeries: Bool { current.type == "Series" }
@@ -57,7 +56,6 @@ struct DetailView: View {
                     castSection
                     mediaInfoSection
                     similarSection
-                    diagSection
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 40)
@@ -388,7 +386,12 @@ struct DetailView: View {
 
     @ViewBuilder
     private var castSection: some View {
-        if let people = current.People?.filter({ $0.type == "Actor" }), !people.isEmpty, let client = store.client() {
+        // No Type filtering: goemby's People carry no "Actor" type at all
+        // (build-81 diagnostic: 27 people, zero "Actor" strings in the raw
+        // payload), so the old type == "Actor" filter emptied the section.
+        // The section is 演职人员 (cast AND crew) anyway - show everyone,
+        // the role line under each name says who did what.
+        if let people = current.People, !people.isEmpty, let client = store.client() {
             VStack(alignment: .leading, spacing: 10) {
                 Text("演职人员").font(.title3.bold())
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -717,23 +720,9 @@ struct DetailView: View {
         Task { await store.client()?.setPlayed(itemID: current.Id, next) }
     }
 
-    /// Build-81 temporary diagnostic block: shows what the detail and
-    /// similar requests actually returned (see EmbyClient.detailDiagnostic).
-    /// Remove together with the client helper once the cast bug is fixed.
-    private var diagSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("诊断（临时）").font(.caption.bold()).foregroundStyle(.secondary)
-            Text(diagText)
-                .font(.system(size: 11, design: .monospaced))
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
-        }
-    }
-
     private func load() async {
         guard let client = store.client() else { return }
         detail = try? await client.item(id: item.Id)
-        diagText = await client.detailDiagnostic(itemID: item.Id)
         if item.type == "Movie" || item.type == "Series" {
             similar = (try? await client.similarItems(itemID: item.Id)) ?? []
         }
