@@ -303,6 +303,53 @@ struct PlayerView: View {
 
 }
 
+/// Shared state for the PiP caption overlay. MPVUI rasterizes the
+/// video overlay into PiP frames from a separate copy of the view,
+/// so the current cue must live in a shared observable model rather
+/// than in view state.
+@MainActor
+@Observable
+final class PiPSubtitleModel {
+    var snapshot = TextSubtitleSnapshot()
+}
+
+/// Captions rendered by the app itself, carried into PiP by MPVUI's
+/// video overlay. Shown only while PiP is active on a Dolby Vision
+/// title: every other case already has mpv's subtitles in (or over)
+/// the picture, and drawing them here as well would double them.
+/// This is the one route that gives DV titles PiP subtitles - the
+/// native DV frames themselves can never carry composited text.
+private struct PiPSubtitleCaption: View {
+    let player: MPVPlayer
+    let model: PiPSubtitleModel
+
+    var body: some View {
+        if player.pictureInPicture.isActive,
+           player.dolbyVisionStatus.sourceProfile != nil,
+           !model.snapshot.isEmpty {
+            MPVTextSubtitleOverlay(
+                snapshot: model.snapshot,
+                videoSize: player.mediaInformation.dimensions.map { CGSize(width: $0.width, height: $0.height) }
+            ) { region in
+                Text(region.text)
+                    .font(.system(size: 20 * CGFloat(Prefs.subScale), weight: .medium))
+                    .foregroundStyle(captionColor)
+                    .shadow(color: .black.opacity(0.85), radius: 2, x: 0, y: 1)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private var captionColor: Color {
+        switch Prefs.subColorName {
+        case "yellow": return .yellow
+        case "cyan": return .cyan
+        case "green": return .green
+        default: return .white
+        }
+    }
+}
+
 /// The mpv player screen. Layout rule (from the post-mortem): the
 /// rendering view is created once and never moves; gestures live on their
 /// own transparent layer; chrome is a sibling overlay animated by opacity
@@ -472,6 +519,8 @@ struct MPVPlayerScreen: View {
     @State private var softwareFallbackUsed = false
     /// Start position for a rebuilt player (hardware fallback).
     @State private var resumeOverride: Double?
+    /// Current text-subtitle cue for the PiP caption overlay.
+    @State private var pipSubtitles = PiPSubtitleModel()
 
     var body: some View {
         ZStack {
@@ -479,6 +528,9 @@ struct MPVPlayerScreen: View {
 
             // Rendering layer — constant, full-bleed, never re-laid out.
             MPVVideoPlayer(player: player)
+                .videoOverlay(alignment: .bottom) {
+                    PiPSubtitleCaption(player: player, model: pipSubtitles)
+                }
                 .id(playerGeneration)
                 .ignoresSafeArea()
 
@@ -643,6 +695,7 @@ struct MPVPlayerScreen: View {
         .task { await osdTicker() }
         .task { await ensurePlayerRatings() }
         .task { await startPlayback() }
+        .task(id: playerGeneration) { await consumePiPSubtitles() }
         .task { await progressLoop() }
         .onAppear {
             if !Prefs.toastTitleOnPlay { chromeVisible = false }
@@ -750,6 +803,16 @@ struct MPVPlayerScreen: View {
         fetchChapters()
         fetchSegments()
         endWatchTask = Task { await watchForEnd() }
+    }
+
+    /// Feed the PiP caption overlay from mpv's text-subtitle
+    /// snapshots (the selected text track; bitmap tracks emit
+    /// nothing). Keyed by player generation so a rebuilt player
+    /// (hardware fallback) re-subscribes to its own stream.
+    private func consumePiPSubtitles() async {
+        for await snapshot in player.makeTextSubtitleStream() {
+            pipSubtitles.snapshot = snapshot
+        }
     }
 
     // MARK: - subtitles & orientation
@@ -1012,11 +1075,24 @@ struct MPVPlayerScreen: View {
             guard let best = scored
                     ?? subs.first(where: { $0.isDefault })
                     ?? subs.first else { continue }
+            var pick = best
+            // In a Dolby Vision handoff session the bitmap (PGS)
+            // track renders nowhere - not inline, not in PiP - while
+            // a text track both shows inline and feeds the PiP
+            // caption overlay. Prefer the text track when one exists.
+            if continuingVLCSession, player.dolbyVisionStatus.sourceProfile != nil,
+               (best.codec ?? "").lowercased().contains("pgs"),
+               let textTrack = subs.first(where: { track in
+                   let c = (track.codec ?? "").lowercased()
+                   return c.contains("subrip") || c.contains("ass") || c.contains("vtt") || c.contains("text")
+               }) {
+                pick = textTrack
+            }
             try? await Task.sleep(for: .seconds(1))
             guard generation == playerGeneration else { return }
             if !player.subtitleTracks.contains(where: { $0.isSelected }) {
                 player.requestVideoFeatures([.nativeSubtitles])
-                player.selectSubtitle(best.id)
+                player.selectSubtitle(pick.id)
                 player.setSubtitlesVisible(true)
             }
             return
