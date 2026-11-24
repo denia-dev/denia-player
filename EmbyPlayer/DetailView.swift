@@ -177,14 +177,21 @@ struct DetailView: View {
     @ViewBuilder
     private var ambientBackdrop: some View {
         if let client = store.client() {
-            if let art = artworkSource {
+            ZStack(alignment: .top) {
+                // Fallback wash (poster for items without artwork),
+                // frozen on the entry item like the hero placeholder.
+                ItemImage(item: item, client: client, kind: wideImageKind(item))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
                 VStack(spacing: 0) {
                     ForEach(0..<10, id: \.self) { tile in
                         // Same URL as the hero's artwork (1080): one
                         // shared fetch/decode feeds the hero and every
-                        // tile via ImageMemoryCache, instead of twenty
-                        // AsyncImages each downloading their own copy.
-                        SharedImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080))
+                        // tile via ImageMemoryCache. Requested from the
+                        // first frame (artworkItemID needs no fetch);
+                        // when there is no artwork the tiles stay
+                        // empty and the wash underneath shows through.
+                        SharedImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080))
                             .aspectRatio(16.0 / 9.0, contentMode: .fit)
                             .scaleEffect(y: tile % 2 == 1 ? -1 : 1)
                             .clipped()
@@ -192,10 +199,6 @@ struct DetailView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .clipped()
-            } else {
-                ItemImage(item: current, client: client, kind: wideImageKind(current))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
             }
         }
     }
@@ -288,7 +291,13 @@ struct DetailView: View {
     /// flashes through during the push (his build-88 screen recording).
     @ViewBuilder
     private func heroPlaceholder(client: EmbyClient) -> some View {
-        ItemImage(item: current, client: client, kind: wideImageKind(current))
+        // Frozen on the ENTRY item (never `current`): when load()'s
+        // detail lands, `current` changes identity and a placeholder
+        // bound to it re-requests its image - the detail DTO's tags
+        // can even flip wideImageKind - swapping the hero's underlay
+        // mid-entry. The entry item is what the tapped cell showed,
+        // so this layer must never change after the push.
+        ItemImage(item: item, client: client, kind: wideImageKind(item))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
     }
@@ -303,17 +312,29 @@ struct DetailView: View {
     /// next to Sen's big filled one. The hero's gradient + mask melt
     /// fades the enlarged art into the ambient below.
     @ViewBuilder
+    /// The item whose backdrop brands this page: the series for an
+    /// episode, the item itself otherwise. Derived from the ENTRY
+    /// item, so it is known in the very first frame - the hero and the
+    /// ambient request the artwork immediately instead of waiting for
+    /// load()'s two round trips (detail, then series) to resolve
+    /// artworkSource. Builds 88-90 gated the artwork on that late
+    /// state, so the page always swapped images mid-entry; 90's fade
+    /// only made the swap slower, as he put it.
+    private var artworkItemID: String {
+        if item.type == "Episode", let seriesID = item.SeriesId {
+            return seriesID
+        }
+        return item.Id
+    }
+
     private var heroBackdrop: some View {
         if let client = store.client() {
-            if let art = artworkSource {
-                ZStack {
-                    heroPlaceholder(client: client)
-                    SharedImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080), fadeIn: true)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .clipped()
-                }
-            } else {
-                ItemImage(item: current, client: client, kind: wideImageKind(current))
+            ZStack {
+                heroPlaceholder(client: client)
+                // Ungated on purpose: when the item has no backdrop
+                // this request 404s, SharedImage stays empty, and the
+                // placeholder below simply remains the hero.
+                SharedImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), fadeIn: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
             }
