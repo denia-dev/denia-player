@@ -415,6 +415,9 @@ struct MPVPlayerScreen: View {
     @State private var scrubValue: Double = 0
     @State private var gestureHint: String?
     @State private var showDiagnostics = false
+    @State private var showOnlineSubs = false
+    @State private var osdTimeText = ""
+    @State private var batteryPercent = -1
     @State private var currentRate: Double = 1
     @State private var boostSavedRate: Double?
     @State private var nextEpisode: EmbyItem?
@@ -549,6 +552,12 @@ struct MPVPlayerScreen: View {
         } message: {
             Text(translateError ?? "")
         }
+        .sheet(isPresented: $showOnlineSubs) {
+            OnlineSubtitleSearchView(defaultQuery: onlineSubQuery) { url in
+                player.loadExternalSubtitle(url, selecting: .primary)
+                player.setSubtitlesVisible(true)
+            }
+        }
         .sheet(isPresented: $showDiagnostics) {
             NavigationStack {
                 ScrollView {
@@ -573,12 +582,14 @@ struct MPVPlayerScreen: View {
         // Keep the full-screen cover and the same player mounted during PiP.
         // MPVUI restores the attached surface; only an actual dismissal tears it down.
         .onChange(of: playbackScenePhase) { _, phase in
-            if phase == .background, !player.pictureInPicture.isActive,
+            if phase == .background, !Prefs.backgroundAudio, !player.pictureInPicture.isActive,
                !player.pictureInPicture.isTransitioning { player.pause() }
         }
         .onChange(of: player.pictureInPicture.isActive) { wasActive, active in
-            if wasActive && !active && playbackScenePhase == .background { player.pause() }
+            if wasActive && !active && playbackScenePhase == .background && !Prefs.backgroundAudio { player.pause() }
         }
+        .overlay(alignment: .top) { osdBar }
+        .task { await osdTicker() }
         .task { await startPlayback() }
         .task { await progressLoop() }
         .onAppear {
@@ -1434,6 +1445,9 @@ struct MPVPlayerScreen: View {
                             }
                         }
                     }
+                    Section("在线字幕") {
+                        Button("搜索在线字幕（ASSRT）") { showOnlineSubs = true }
+                    }
                 } label: { circleLabel("captions.bubble") }
             }
             Menu {
@@ -1518,6 +1532,54 @@ struct MPVPlayerScreen: View {
     }
 
     // MARK: - diagnostics
+
+    /// ASSRT search prefilled with the series name + SxxExx when known.
+    private var onlineSubQuery: String {
+        var query = item.SeriesName ?? item.Name
+        if let season = item.ParentIndexNumber, let episode = item.IndexNumber {
+            query += String(format: " S%02dE%02d", season, episode)
+        }
+        return query
+    }
+
+    // MARK: OSD top info strip (clock / battery / fps+resolution)
+
+    @ViewBuilder
+    private var osdBar: some View {
+        if Prefs.osdShowClock || Prefs.osdShowBattery || Prefs.osdShowStats {
+            HStack(spacing: 10) {
+                if Prefs.osdShowClock { Text(osdTimeText) }
+                if Prefs.osdShowStats { Text(osdStatsText) }
+                if Prefs.osdShowBattery, batteryPercent >= 0 { Text("\(batteryPercent)%") }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(.white.opacity(0.9))
+            .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
+            .padding(.top, 4)
+            .allowsHitTesting(false)
+        }
+    }
+
+    private var osdStatsText: String {
+        let media = player.mediaInformation
+        var parts: [String] = []
+        if let fps = media.framesPerSecond { parts.append("\(Int(fps.rounded())) fps") }
+        if let dimensions = media.dimensions { parts.append("\(dimensions.width)×\(dimensions.height)") }
+        return parts.joined(separator: " · ")
+    }
+
+    private func osdTicker() async {
+        guard Prefs.osdShowClock || Prefs.osdShowBattery || Prefs.osdShowStats else { return }
+        UIDevice.current.isBatteryMonitoringEnabled = true
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        while !Task.isCancelled {
+            osdTimeText = formatter.string(from: Date())
+            let level = UIDevice.current.batteryLevel
+            batteryPercent = level >= 0 ? Int(level * 100) : -1
+            try? await Task.sleep(for: .seconds(5))
+        }
+    }
 
     private func diagnosticsText() -> String {
         let caps = player.videoFeatureCapabilities

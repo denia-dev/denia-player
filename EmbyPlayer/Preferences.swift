@@ -139,6 +139,13 @@ enum Prefs {
     /// Skip intro/outro automatically instead of waiting for the button.
     static var autoSkipSegments: Bool { d.bool(forKey: "prefs.autoSkipSegments") }
     static var audioDelay: Double { d.double(forKey: "prefs.audioDelay") }
+    /// "Listen mode": keep the audio playing when the app goes to the
+    /// background instead of auto-pausing (mpv player).
+    static var backgroundAudio: Bool { d.bool(forKey: "prefs.backgroundAudio") }
+    // Player top info strip (OSD): clock / battery / fps+resolution.
+    static var osdShowClock: Bool { d.bool(forKey: "prefs.osdClock") }
+    static var osdShowBattery: Bool { d.bool(forKey: "prefs.osdBattery") }
+    static var osdShowStats: Bool { d.bool(forKey: "prefs.osdStats") }
 
     // AI subtitle translation (OpenAI-compatible chat completions API;
     // the key itself lives in the Keychain, not UserDefaults)
@@ -337,6 +344,9 @@ struct InterfacePrefsView: View {
 struct OSDPrefsView: View {
     @AppStorage("prefs.showTitleInPlayer") private var showTitle = true
     @AppStorage("prefs.showDiagnosticsButton") private var showDiagnostics = true
+    @AppStorage("prefs.osdClock") private var osdClock = false
+    @AppStorage("prefs.osdBattery") private var osdBattery = false
+    @AppStorage("prefs.osdStats") private var osdStats = false
 
     var body: some View {
         ScrollView {
@@ -346,6 +356,17 @@ struct OSDPrefsView: View {
                     prefsDivider
                     prefsToggleRow("显示诊断按钮", isOn: $showDiagnostics)
                 }
+                prefsCard {
+                    prefsToggleRow("顶部信息条：时间", isOn: $osdClock)
+                    prefsDivider
+                    prefsToggleRow("顶部信息条：电量", isOn: $osdBattery)
+                    prefsDivider
+                    prefsToggleRow("顶部信息条：帧率与分辨率", isOn: $osdStats)
+                }
+                Text("顶部信息条在播放画面上方常驻显示（mpv 播放器），控制条收起时也在。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
                 Text("在播放器控制栏顶部显示的标题与诊断入口。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -561,6 +582,7 @@ struct AudioPrefsView: View {
     @AppStorage("prefs.rememberAudioChoice") private var rememberChoice = true
     @AppStorage("prefs.audioLanguage") private var audioLanguage = "zh"
     @AppStorage("prefs.audioDelay") private var audioDelay = 0.0
+    @AppStorage("prefs.backgroundAudio") private var backgroundAudio = false
 
     var body: some View {
         ScrollView {
@@ -586,6 +608,13 @@ struct AudioPrefsView: View {
                         Button("提前 2 秒") { audioDelay = -2.0 }
                     }
                 }
+                prefsCard {
+                    prefsToggleRow("后台音频播放（听视频）", isOn: $backgroundAudio)
+                }
+                Text("后台音频播放：开启后 mpv 播放器切到后台或锁屏时不暂停，继续放声音；画中画开启时仍走画中画。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
                 Text("记住所选音轨：在播放器里手动切换的音轨会按剧记住，同一部剧的其它集自动沿用，优先级高于首选语言。首选语言：在没有记住的音轨时，打开视频自动选该语言的音轨，并避开 TrueHD；「默认」即片源的第一条音轨。两个引擎（mpv / VLCKit）都遵循。音频延迟仅 mpv 播放器生效。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -626,6 +655,7 @@ struct SubtitlePrefsView: View {
     @AppStorage("prefs.subBorder") private var subBorder = "outline"
     @AppStorage("prefs.subMarginY") private var subMarginY = 20
     @AppStorage("prefs.secondarySubtitle") private var secondarySubtitle = "off"
+    @State private var assrtToken = ""
 
     var body: some View {
         ScrollView {
@@ -646,6 +676,26 @@ struct SubtitlePrefsView: View {
                     }
                 }
                 Text("副字幕：再挂一条其它语言的字幕同时显示（双字幕），开播时自动选轨；仅 mpv 播放器支持，播放器字幕菜单里也能临时选。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+                prefsSectionLabel("在线字幕").padding(.top, 8)
+                prefsCard {
+                    HStack {
+                        Text("ASSRT Token").font(.system(size: 15))
+                        Spacer(minLength: 12)
+                        SecureField("留空用公共额度", text: $assrtToken)
+                            .multilineTextAlignment(.trailing)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .frame(maxWidth: 190)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                }
+                Text("在线字幕来自 ASSRT（assrt.net）：播放时在字幕菜单选「搜索在线字幕」，按片名搜到后点一条即下载挂上（仅 mpv 播放器）。公共额度是开源播放器共用的 token，繁忙时会限流；想稳定可在 assrt.net 免费注册自己的 token 填在这里。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -701,6 +751,10 @@ struct SubtitlePrefsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("字幕设置")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { assrtToken = KeychainStore.get("assrtToken") ?? "" }
+        .onChange(of: assrtToken) { _, newValue in
+            KeychainStore.set(newValue, for: "assrtToken")
+        }
     }
 
     private var subScaleLabel: String {
