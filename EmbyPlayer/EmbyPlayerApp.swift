@@ -278,6 +278,7 @@ extension View {
 /// hand-rolled glass bar did not. Pushed pages hide it with
 /// .toolbar(.hidden, for: .tabBar).
 struct MainView: View {
+    @Environment(AppStore.self) private var store
     @State private var tab: Int
 
     init() {
@@ -321,6 +322,16 @@ struct MainView: View {
             .tag(4)
         }
         .tint(.blue)
+        .task {
+            // Warm the libraries catalog in the background so the
+            // 资源库 tab opens already populated instead of loading
+            // section by section.
+            let catalog = CatalogCache.shared
+            catalog.syncKey(store.activeServer?.id)
+            if let client = store.client() {
+                await catalog.ensureLibraries(client: client)
+            }
+        }
         .environment(shell)
         .environment(\.zoomNS, zoomNS)
         .onChange(of: tab) { _, newValue in

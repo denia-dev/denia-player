@@ -112,10 +112,119 @@ private struct PosterFrame: ViewModifier {
 
 // MARK: - 资源库 (sources + libraries)
 
+/// Session-resident catalog data for the libraries tab. Sections
+/// used to fetch for themselves inside a LazyVStack: scrolled-off
+/// sections were destroyed, their state reset, and coming back
+/// re-ran the whole fetch chain (list + count + a per-item meta
+/// call each), so the page rebuilt itself frame by frame on every
+/// visit. The data now lives here, keyed by server: views render
+/// whatever is cached instantly, stale entries revalidate in the
+/// background WITHOUT clearing what is on screen, and a gentle
+/// sequential prefetch warms every section after the library list
+/// lands.
+@MainActor
+@Observable
+final class CatalogCache {
+    static let shared = CatalogCache()
+
+    typealias ItemMeta = (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)
+
+    struct SectionData {
+        var items: [EmbyItem] = []
+        var count: Int?
+        var meta: [String: ItemMeta] = [:]
+    }
+
+    private(set) var serverKey: String?
+    private(set) var libraries: [EmbyItem] = []
+    private(set) var sections: [String: SectionData] = [:]
+
+    private var librariesLoadedAt: Date?
+    private var sectionLoadedAt: [String: Date] = [:]
+    private var loadingLibraries = false
+    private var loadingSections: Set<String> = []
+    private var prefetchTask: Task<Void, Never>?
+
+    private let staleInterval: TimeInterval = 600
+
+    private func isFresh(_ date: Date?) -> Bool {
+        guard let date else { return false }
+        return Date().timeIntervalSince(date) < staleInterval
+    }
+
+    /// Point the cache at a server; switching servers drops the old
+    /// server's data.
+    func syncKey(_ key: String?) {
+        guard serverKey != key else { return }
+        serverKey = key
+        libraries = []
+        sections = [:]
+        librariesLoadedAt = nil
+        sectionLoadedAt = [:]
+        prefetchTask?.cancel()
+        prefetchTask = nil
+    }
+
+    func ensureLibraries(client: EmbyClient, force: Bool = false) async {
+        if loadingLibraries { return }
+        if !force, librariesLoadedAt != nil, isFresh(librariesLoadedAt) { return }
+        loadingLibraries = true
+        defer { loadingLibraries = false }
+        if let fetched = try? await client.libraries() {
+            libraries = fetched
+            librariesLoadedAt = Date()
+        }
+        guard librariesLoadedAt != nil else { return }
+        // Warm the sections one at a time in the background; a
+        // section already on screen reads the cache the moment its
+        // data lands.
+        prefetchTask?.cancel()
+        let libs = libraries
+        prefetchTask = Task { [weak self] in
+            for lib in libs {
+                if Task.isCancelled { return }
+                await self?.ensureSection(libraryID: lib.Id, client: client, force: force)
+            }
+        }
+    }
+
+    func ensureSection(libraryID: String, client: EmbyClient, force: Bool = false) async {
+        if loadingSections.contains(libraryID) { return }
+        if !force, sections[libraryID] != nil, isFresh(sectionLoadedAt[libraryID]) { return }
+        loadingSections.insert(libraryID)
+        defer { loadingSections.remove(libraryID) }
+        async let fetchedCount = client.libraryItemCount(parentID: libraryID)
+        guard let fetched = try? await client.latestInLibrary(parentID: libraryID) else { return }
+        var data = sections[libraryID] ?? SectionData()
+        data.items = fetched
+        if let count = await fetchedCount { data.count = count }
+        sections[libraryID] = data
+        sectionLoadedAt[libraryID] = Date()
+        // Hydrate year/rating for items the list payload omitted;
+        // results persist in the cache, so this runs once per item
+        // per session instead of on every visit.
+        let missing = fetched.filter {
+            ($0.ProductionYear == nil || $0.CommunityRating == nil) && data.meta[$0.Id] == nil
+        }
+        guard !missing.isEmpty else { return }
+        await withTaskGroup(of: (String, ItemMeta?).self) { group in
+            for item in missing {
+                group.addTask { (item.Id, await client.itemMeta(id: item.Id)) }
+            }
+            for await (id, fetchedMeta) in group {
+                if let fetchedMeta { data.meta[id] = fetchedMeta }
+            }
+        }
+        sections[libraryID] = data
+    }
+}
+
 struct LibrariesTabView: View {
     @Environment(AppStore.self) private var store
-    @State private var libraries: [EmbyItem] = []
+    @State private var catalog = CatalogCache.shared
     @State private var showServers = false
+
+    private var libraries: [EmbyItem] { catalog.libraries }
 
     var body: some View {
         ScrollView {
@@ -158,7 +267,7 @@ struct LibrariesTabView: View {
             .buttonStyle(.plain)
             Spacer()
             Menu {
-                Button { Task { await load() } } label: { Label("刷新", systemImage: "arrow.clockwise") }
+                Button { Task { await load(force: true) } } label: { Label("刷新", systemImage: "arrow.clockwise") }
                 Button { showServers = true } label: { Label("管理服务器", systemImage: "server.rack") }
             } label: {
                 Image(systemName: "ellipsis.circle").font(.system(size: 22))
@@ -167,9 +276,10 @@ struct LibrariesTabView: View {
         }
     }
 
-    private func load() async {
+    private func load(force: Bool = false) async {
+        catalog.syncKey(store.activeServer?.id)
         guard let client = store.client() else { return }
-        libraries = (try? await client.libraries()) ?? []
+        await catalog.ensureLibraries(client: client, force: force)
     }
 }
 
@@ -177,14 +287,17 @@ struct LibrariesTabView: View {
 /// total count, chevron into the full grid) over a horizontal rail
 /// of its latest additions. Poster cells always render their title
 /// and a titled placeholder when the server has no usable image, so
-/// a missing poster never leaves a blank hole in the rail.
+/// a missing poster never leaves a blank hole in the rail. All data
+/// comes from CatalogCache, so a section recreated by the lazy stack
+/// renders its content immediately instead of refetching.
 private struct LibraryRailSection: View {
     @Environment(AppStore.self) private var store
+    @State private var catalog = CatalogCache.shared
     let library: EmbyItem
-    @State private var items: [EmbyItem] = []
-    @State private var count: Int?
-    @State private var meta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)] = [:]
-    @State private var loaded = false
+
+    private var data: CatalogCache.SectionData? { catalog.sections[library.Id] }
+    private var items: [EmbyItem] { data?.items ?? [] }
+    private var count: Int? { data?.count }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -214,12 +327,16 @@ private struct LibraryRailSection: View {
                 }
             }
         }
-        .task { await load() }
+        .task {
+            if let client = store.client() {
+                await catalog.ensureSection(libraryID: library.Id, client: client)
+            }
+        }
     }
 
     private func railCell(_ item: EmbyItem, client: EmbyClient) -> some View {
-        let rating = item.CommunityRating ?? meta[item.Id]?.community ?? nil
-        let year = item.ProductionYear ?? meta[item.Id]?.year ?? nil
+        let rating = item.CommunityRating ?? data?.meta[item.Id]?.community ?? nil
+        let year = item.ProductionYear ?? data?.meta[item.Id]?.year ?? nil
         return VStack(alignment: .leading, spacing: 6) {
             ItemImage(item: item, client: client)
                 .frame(width: 110, height: 165)
@@ -245,27 +362,6 @@ private struct LibraryRailSection: View {
             }
         }
         .frame(width: 110)
-    }
-
-    private func load() async {
-        guard !loaded, let client = store.client() else { return }
-        loaded = true
-        async let fetchedCount = client.libraryItemCount(parentID: library.Id)
-        if let fetched = try? await client.latestInLibrary(parentID: library.Id) {
-            items = fetched
-        }
-        count = await fetchedCount
-        // List payloads on this server omit year/rating (same gap the
-        // home hero hydrates around): fill them in per item.
-        let missing = items.filter { $0.ProductionYear == nil || $0.CommunityRating == nil }
-        await withTaskGroup(of: (String, (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)?).self) { group in
-            for item in missing {
-                group.addTask { (item.Id, await client.itemMeta(id: item.Id)) }
-            }
-            for await (id, fetched) in group {
-                if let fetched { meta[id] = fetched }
-            }
-        }
     }
 }
 
