@@ -31,7 +31,7 @@ struct ItemImage: View {
         }
     }
 
-    private var url: URL {
+    private var url: URL? {
         let sourceID = (kind == "Primary" && item.type == "Episode" && item.ImageTags?["Primary"] == nil)
             ? (item.SeriesId ?? item.Id) : item.Id
         return client.imageURL(itemID: sourceID, kind: kind)
@@ -48,6 +48,7 @@ struct ItemImage: View {
             }
         }
         .task(id: url) {
+            guard let url else { failed = true; return }
             if let hit = ImageMemoryCache.shared.cached(url) {
                 uiImage = hit
                 return
@@ -88,7 +89,10 @@ private struct HeroArtwork: View {
             }
         }
         .task(id: item.Id) {
-            let url = client.imageURL(itemID: item.Id, kind: wideImageKind(item))
+            guard let url = client.imageURL(itemID: item.Id, kind: wideImageKind(item)) else {
+                onBlank(item.Id)
+                return
+            }
             if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
                 uiImage = loaded
                 return
