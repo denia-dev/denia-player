@@ -378,39 +378,24 @@ struct EmbyClient {
         return response?.Items ?? []
     }
 
-    /// The home hero's rotation pool: a mix instead of one
-    /// "recently added" list (his 2026-11-24 verdict: 全是这些
-    /// 没意思的电影）. A few newest, a few highest-rated, a few
-    /// random - the random slice makes every launch a different
-    /// batch. Round-robin interleaved and deduped, best-effort:
-    /// any slice may come back empty without sinking the others.
-    func heroPool() async -> [EmbyItem] {
-        func slice(sortBy: String, limit: Int) async -> [EmbyItem] {
-            let query = [
-                URLQueryItem(name: "Recursive", value: "true"),
-                URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
-                URLQueryItem(name: "SortBy", value: sortBy),
-                URLQueryItem(name: "SortOrder", value: "Descending"),
-                URLQueryItem(name: "Limit", value: String(limit)),
-                URLQueryItem(name: "Fields", value: "Overview,Genres,ProviderIds"),
-                URLQueryItem(name: "EnableUserData", value: "true"),
-            ]
-            let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
-            return response?.Items ?? []
-        }
-        async let newest = slice(sortBy: "DateCreated", limit: 8)
-        async let topRated = slice(sortBy: "CommunityRating", limit: 8)
-        async let random = slice(sortBy: "Random", limit: 8)
-        let slices = await [newest, topRated, random]
-        var merged: [EmbyItem] = []
-        var seen = Set<String>()
-        for index in 0..<8 {
-            for sliceItems in slices where index < sliceItems.count {
-                let item = sliceItems[index]
-                if seen.insert(item.Id).inserted { merged.append(item) }
-            }
-        }
-        return Array(merged.prefix(12))
+    /// The home hero's candidate pool: the library's highest-rated
+    /// movies/series, fetched wide (60) so HomeView can reshuffle
+    /// a fresh batch out of it on every entry (his 2026-11-24 ask:
+    /// 每次进去都随机轮播高分影片） instead of rotating one fixed
+    /// list. Best-effort: an empty answer just leaves the hero to
+    /// its fallback.
+    func topRatedCandidates(limit: Int = 60) async -> [EmbyItem] {
+        let query = [
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
+            URLQueryItem(name: "SortBy", value: "CommunityRating"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "Limit", value: String(limit)),
+            URLQueryItem(name: "Fields", value: "Overview,Genres,ProviderIds"),
+            URLQueryItem(name: "EnableUserData", value: "true"),
+        ]
+        let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+        return response?.Items ?? []
     }
 
     func favoriteItems() async throws -> [EmbyItem] {

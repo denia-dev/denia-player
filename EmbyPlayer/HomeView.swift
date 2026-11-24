@@ -126,36 +126,26 @@ struct HomeView: View {
     /// missing or blank (session-scoped; a relaunch retries them).
     @State private var heroExcluded: Set<String> = []
 
-    /// The mixed rotation pool (newest + top-rated + random from
-    /// EmbyClient.heroPool). Empty until its fetch lands.
-    @State private var heroPool: [EmbyItem] = []
+    /// The wide top-rated candidate pool, fetched once per load;
+    /// prepareHeroes reshuffles a fresh batch out of it every time.
+    @State private var heroCandidates: [EmbyItem] = []
 
-    /// Carousel candidates: the mixed pool first (latest list, then
-    /// resume, as fallbacks), minus anything with no artwork at all
-    /// and anything whose art already proved blank in this session.
+    /// Verified heroes only: an item enters the carousel AFTER its
+    /// artwork has loaded and passed the blank check AND its rating
+    /// count is conclusively >= 3 (prepareHeroes). Nothing appears
+    /// provisionally and vanishes again (his 2026-11-24 report).
+    @State private var heroReady: [EmbyItem] = []
+
     private var heroItems: [EmbyItem] {
-        let source = !heroPool.isEmpty ? heroPool : (latest.isEmpty ? resume : latest)
-        return source.filter {
-            !heroExcluded.contains($0.Id)
-                && ($0.BackdropImageTags?.isEmpty == false || $0.ImageTags?["Primary"] != nil)
-                && heroRatingsVerdict($0)
-        }
+        heroReady.filter { !heroExcluded.contains($0.Id) }
     }
 
     /// His 2026-11-24 rule: 没有三个评分的都不要出现在轮播 - a hero
-    /// needs at least three rating sources. The count is conclusive
-    /// once the MDBList lookup has completed (or the item has no
-    /// provider IDs to look up at all, leaving only the server's
-    /// two); while a lookup is still in flight the item stays
-    /// provisionally and drops out the moment its count lands < 3.
+    /// needs at least three rating sources, counted from the
+    /// external lookup plus the server's own two.
     private func heroRatingsVerdict(_ item: EmbyItem) -> Bool {
         let external = ratingsStore.byItemID[item.Id]
         let meta = heroMeta[item.Id]
-        let hasIDs = item.ProviderIds?["Imdb"] != nil || item.ProviderIds?["Tmdb"] != nil
-            || meta?.imdbID != nil || meta?.tmdbID != nil
-        if external == nil, hasIDs, !ratingsStore.checked.contains(item.Id) {
-            return true
-        }
         var count = 0
         if item.CommunityRating != nil || meta?.community != nil || external?.tmdb != nil { count += 1 }
         if external?.imdb != nil { count += 1 }
@@ -165,6 +155,67 @@ struct HomeView: View {
         if external?.metacritic != nil { count += 1 }
         if external?.trakt != nil { count += 1 }
         return count >= 3
+    }
+
+    /// Builds the carousel batch: reshuffle the top-rated pool,
+    /// verify artwork (loads it into the memory cache, so heroes
+    /// paint instantly and blank art never shows), wait for the
+    /// rating lookups to settle, then admit only items with a
+    /// conclusive >= 3 rating count.
+    private func prepareHeroes(client: EmbyClient) async {
+        if heroCandidates.isEmpty {
+            heroCandidates = await client.topRatedCandidates()
+        }
+        let eligible = heroCandidates.filter {
+            $0.BackdropImageTags?.isEmpty == false && ($0.CommunityRating ?? 0) >= 6.8
+        }
+        let picks = Array(eligible.shuffled().prefix(14))
+        for item in picks {
+            ratingsStore.ensure(itemID: item.Id,
+                                imdbID: item.ProviderIds?["Imdb"],
+                                tmdbID: item.ProviderIds?["Tmdb"],
+                                type: item.type)
+        }
+        var artOK = Set<String>()
+        await withTaskGroup(of: String?.self) { group in
+            for item in picks {
+                group.addTask {
+                    guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080) else { return nil }
+                    return await ImageMemoryCache.shared.heroImage(for: url) != nil ? item.Id : nil
+                }
+            }
+            for await id in group { if let id { artOK.insert(id) } }
+        }
+        // Bounded wait for the rating checks of art-verified picks.
+        let deadline = Date().addingTimeInterval(4)
+        while Date() < deadline {
+            let pending = picks.contains {
+                artOK.contains($0.Id)
+                    && ($0.ProviderIds?["Imdb"] != nil || $0.ProviderIds?["Tmdb"] != nil)
+                    && !ratingsStore.checked.contains($0.Id)
+            }
+            if !pending { break }
+            try? await Task.sleep(for: .milliseconds(120))
+        }
+        var ready = picks.filter { artOK.contains($0.Id) && heroRatingsVerdict($0) }
+        if ready.count < 4 {
+            // Starved gate: admit checked high scorers rather than
+            // leaving the home page without a carousel.
+            let extra = picks.filter { item in
+                artOK.contains(item.Id)
+                    && !ready.contains(where: { $0.Id == item.Id })
+                    && ($0.CommunityRating ?? 0) >= 7.5
+                    && ratingsStore.checked.contains(item.Id)
+            }
+            ready += extra
+        }
+        if ready.isEmpty {
+            // Safety net for servers with no rated catalog at all.
+            ready = latest.filter { $0.BackdropImageTags?.isEmpty == false }
+        }
+        heroReady = Array(ready.prefix(10))
+        if heroReady.count > 1 { heroIndex = Int.random(in: 0..<heroReady.count) }
+        await loadHeroMeta(client: client)
     }
 
     var body: some View {
@@ -487,11 +538,7 @@ struct HomeView: View {
             libraries = try await client.libraries()
             resume = try await client.resumeItems()
             latest = await client.latestItems()
-            heroPool = await client.heroPool()
-            // Start (and refresh) on a random hero so the home page
-            // does not open on the same title every time.
-            if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
-            await loadHeroMeta(client: client)
+            await prepareHeroes(client: client)
         } catch {
             errorText = error.localizedDescription
         }
