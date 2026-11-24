@@ -185,60 +185,91 @@ struct RatingsStrip: View {
             || external?.letterboxd != nil || external?.metacritic != nil || external?.trakt != nil
     }
 
+    private var sourceCount: Int {
+        [tmdb != nil, external?.imdb != nil, rtCritics != nil, external?.rtAudience != nil,
+         external?.letterboxd != nil, external?.metacritic != nil, external?.trakt != nil]
+            .filter { $0 }.count
+    }
+
+    /// Five or more sources cannot share one row at phone width:
+    /// the row compresses until labels wrap letter-by-letter into
+    /// vertical strips (his v1.09 home screenshot). Split into two
+    /// centered rows instead - and every chip is fixedSize with
+    /// lineLimit(1) so a chip can never wrap, whatever the width.
     var body: some View {
-        HStack(spacing: large ? 18 : 14) {
-            if let tmdb {
-                chip("TMDB", fill: AnyShapeStyle(LinearGradient(
-                    colors: [Color(red: 0.01, green: 0.71, blue: 0.89),
-                             Color(red: 0.56, green: 0.81, blue: 0.63)],
-                    startPoint: .leading, endPoint: .trailing)), textColor: .white) {
-                    Text(String(format: "%.1f", tmdb))
-                }
+        if sourceCount > 4 {
+            VStack(spacing: 6) {
+                HStack(spacing: large ? 12 : 10) { firstGroup }
+                HStack(spacing: large ? 12 : 10) { secondGroup }
             }
-            if let imdb = external?.imdb {
-                chip("IMDb", fill: AnyShapeStyle(Color(red: 0.96, green: 0.77, blue: 0.09)), textColor: .black) {
-                    Text(String(format: "%.1f", imdb))
-                }
+        } else {
+            HStack(spacing: large ? 12 : 10) {
+                firstGroup
+                secondGroup
             }
-            if let rtCritics {
-                chip("RT", fill: AnyShapeStyle(Color(red: 0.85, green: 0.2, blue: 0.15)), textColor: .white) {
-                    Text("\(Int(rtCritics.rounded()))%")
-                }
+        }
+    }
+
+    @ViewBuilder
+    private var firstGroup: some View {
+        if let tmdb {
+            chip("TMDB", fill: AnyShapeStyle(LinearGradient(
+                colors: [Color(red: 0.01, green: 0.71, blue: 0.89),
+                         Color(red: 0.56, green: 0.81, blue: 0.63)],
+                startPoint: .leading, endPoint: .trailing)), textColor: .white) {
+                Text(String(format: "%.1f", tmdb))
             }
-            if let audience = external?.rtAudience {
-                chip("观众", fill: AnyShapeStyle(Color(red: 0.98, green: 0.55, blue: 0.1)), textColor: .white) {
-                    Text("\(Int(audience.rounded()))%")
-                }
+        }
+        if let imdb = external?.imdb {
+            chip("IMDb", fill: AnyShapeStyle(Color(red: 0.96, green: 0.77, blue: 0.09)), textColor: .black) {
+                Text(String(format: "%.1f", imdb))
             }
-            if let letterboxd = external?.letterboxd {
-                chip("LB", fill: AnyShapeStyle(Color(red: 0.13, green: 0.13, blue: 0.14)), textColor: .white) {
-                    Text(String(format: "%.1f", letterboxd * 2))
-                }
+        }
+        if let rtCritics {
+            chip("RT", fill: AnyShapeStyle(Color(red: 0.85, green: 0.2, blue: 0.15)), textColor: .white) {
+                Text("\(Int(rtCritics.rounded()))%")
             }
-            if let metacritic = external?.metacritic {
-                chip("MC", fill: AnyShapeStyle(Color(red: 0.0, green: 0.65, blue: 0.35)), textColor: .white) {
-                    Text("\(Int(metacritic.rounded()))%")
-                }
+        }
+        if let audience = external?.rtAudience {
+            chip("观众", fill: AnyShapeStyle(Color(red: 0.98, green: 0.55, blue: 0.1)), textColor: .white) {
+                Text("\(Int(audience.rounded()))%")
             }
-            if let trakt = external?.trakt {
-                chip("Trakt", fill: AnyShapeStyle(Color(red: 0.93, green: 0.11, blue: 0.14)), textColor: .white) {
-                    Text(String(format: "%.1f", Self.tenScale(trakt)))
-                }
+        }
+    }
+
+    @ViewBuilder
+    private var secondGroup: some View {
+        if let letterboxd = external?.letterboxd {
+            chip("LB", fill: AnyShapeStyle(Color(red: 0.13, green: 0.13, blue: 0.14)), textColor: .white) {
+                Text(String(format: "%.1f", letterboxd * 2))
+            }
+        }
+        if let metacritic = external?.metacritic {
+            chip("MC", fill: AnyShapeStyle(Color(red: 0.0, green: 0.65, blue: 0.35)), textColor: .white) {
+                Text("\(Int(metacritic.rounded()))%")
+            }
+        }
+        if let trakt = external?.trakt {
+            chip("Trakt", fill: AnyShapeStyle(Color(red: 0.93, green: 0.11, blue: 0.14)), textColor: .white) {
+                Text(String(format: "%.1f", Self.tenScale(trakt)))
             }
         }
     }
 
     private func chip<Value: View>(_ label: String, fill: AnyShapeStyle, textColor: Color,
                                    @ViewBuilder value: () -> Value) -> some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 4) {
             Text(label)
                 .font(.system(size: large ? 9 : 8.5, weight: .black))
                 .foregroundStyle(textColor)
+                .lineLimit(1)
                 .padding(.horizontal, large ? 6 : 5)
                 .padding(.vertical, large ? 3 : 2.5)
                 .background(fill, in: Capsule())
             value()
-                .font(large ? .system(size: 15, weight: .bold) : .subheadline.weight(.semibold))
+                .font(large ? .system(size: 13.5, weight: .bold) : .subheadline.weight(.semibold))
+                .lineLimit(1)
         }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }

@@ -126,11 +126,15 @@ struct HomeView: View {
     /// missing or blank (session-scoped; a relaunch retries them).
     @State private var heroExcluded: Set<String> = []
 
-    /// Carousel candidates: the latest list (resume as fallback),
-    /// minus anything with no artwork at all and anything whose art
-    /// already proved blank in this session.
+    /// The mixed rotation pool (newest + top-rated + random from
+    /// EmbyClient.heroPool). Empty until its fetch lands.
+    @State private var heroPool: [EmbyItem] = []
+
+    /// Carousel candidates: the mixed pool first (latest list, then
+    /// resume, as fallbacks), minus anything with no artwork at all
+    /// and anything whose art already proved blank in this session.
     private var heroItems: [EmbyItem] {
-        let source = latest.isEmpty ? resume : latest
+        let source = !heroPool.isEmpty ? heroPool : (latest.isEmpty ? resume : latest)
         return source.filter {
             !heroExcluded.contains($0.Id)
                 && ($0.BackdropImageTags?.isEmpty == false || $0.ImageTags?["Primary"] != nil)
@@ -457,6 +461,7 @@ struct HomeView: View {
             libraries = try await client.libraries()
             resume = try await client.resumeItems()
             latest = await client.latestItems()
+            heroPool = await client.heroPool()
             // Start (and refresh) on a random hero so the home page
             // does not open on the same title every time.
             if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
