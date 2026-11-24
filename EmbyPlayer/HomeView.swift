@@ -112,7 +112,7 @@ struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(ShellState.self) private var shell
     @Environment(\.zoomNS) private var zoomNS
-    @State private var libraries: [EmbyItem] = []
+
     @State private var resume: [EmbyItem] = []
     @State private var latest: [EmbyItem] = []
     @State private var heroIndex = 0
@@ -182,26 +182,6 @@ struct HomeView: View {
                                 NavigationLink(value: Route.detail(item)) {
                                     WideCard(item: item, client: client)
                                         .frame(width: 292)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal)
-                    }
-                }
-                if Prefs.showHomeLibraries, !libraries.isEmpty, let client = store.client() {
-                    sectionHeader("我的媒体库", count: nil)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 12) {
-                            ForEach(Array(libraries.enumerated()), id: \.offset) { _, library in
-                                NavigationLink(value: Route.library(library)) {
-                                    VStack(alignment: .leading, spacing: 6) {
-                                        ItemImage(item: library, client: client)
-                                            .frame(width: 104, height: 156)
-                                            .clipShape(RoundedRectangle(cornerRadius: 14))
-                                        Text(library.Name).font(.caption).lineLimit(1)
-                                            .frame(width: 104, alignment: .leading)
-                                    }
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -484,7 +464,6 @@ struct HomeView: View {
         guard let client = store.client() else { return }
         errorText = nil
         do {
-            libraries = try await client.libraries()
             resume = try await client.resumeItems()
             latest = await client.latestItems()
             heroPool = await client.heroPool()
