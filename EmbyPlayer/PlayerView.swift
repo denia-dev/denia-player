@@ -368,6 +368,7 @@ struct MPVPlayerScreen: View {
             "vd-lavc-threads": "\(Prefs.softwareThreads)",
             "sub-scale": String(format: "%.2f", Prefs.subScale),
             "sub-delay": String(format: "%.1f", Prefs.subDelay),
+            "audio-delay": String(format: "%.1f", Prefs.audioDelay),
             "sub-color": subColorValue,
             "sub-border-style": subBorderValue,
             "sub-margin-y": "\(Prefs.subMarginY)",
@@ -419,6 +420,7 @@ struct MPVPlayerScreen: View {
     @State private var nextEpisode: EmbyItem?
     @State private var previousEpisode: EmbyItem?
     @State private var segments: [MediaSegment] = []
+    @State private var autoSkippedStarts: Set<Double> = []
     @State private var activeSegment: MediaSegment?
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
@@ -620,6 +622,7 @@ struct MPVPlayerScreen: View {
             currentRate = Prefs.defaultRate
             if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
             Task { await prepareAudio() }
+            Task { await applySecondarySubtitle() }
             scheduleHide()
             startSleepTimer()
             endWatchTask = Task { await watchForEnd() }
@@ -639,6 +642,7 @@ struct MPVPlayerScreen: View {
         if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
         Task { await prepareSubtitles() }
         Task { await prepareAudio() }
+        Task { await applySecondarySubtitle() }
         if !continuingVLCSession {
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: launch.sessionID, positionSeconds: startSeconds)
         }
@@ -681,9 +685,9 @@ struct MPVPlayerScreen: View {
     }
 
     /// Lower scores win; nil means the track does not match the
-    /// configured subtitle preference at all.
-    private func subtitlePrefScore(language: String?, title: String?) -> Int? {
-        switch Prefs.subtitlePreference {
+    /// given subtitle preference at all.
+    private func subtitleScore(_ pref: Prefs.SubtitlePreference, language: String?, title: String?) -> Int? {
+        switch pref {
         case .zhHans:
             if isSimplifiedSub(language: language, title: title) { return 0 }
             if isChineseSub(language: language, title: title) { return 1 }
@@ -696,6 +700,35 @@ struct MPVPlayerScreen: View {
             return isEnglishSub(language: language, title: title) ? 0 : nil
         case .off:
             return nil
+        }
+    }
+
+    private func subtitlePrefScore(language: String?, title: String?) -> Int? {
+        subtitleScore(Prefs.subtitlePreference, language: language, title: title)
+    }
+
+    /// Dual subtitles: when a secondary language is configured, pick the
+    /// best matching track that is not the primary and show it as the
+    /// secondary track. Runs once at playback start; manual picks in
+    /// the subtitle menu afterwards are untouched.
+    private func applySecondarySubtitle() async {
+        let pref = Prefs.secondarySubtitlePreference
+        guard pref != .off else { return }
+        let generation = playerGeneration
+        for _ in 0..<24 {
+            try? await Task.sleep(for: .milliseconds(500))
+            guard generation == playerGeneration, !Task.isCancelled else { return }
+            let subs = player.subtitleTracks
+            guard subs.count > 1 else { continue }
+            if subs.contains(where: { $0.subtitleRole == .secondary }) { return }
+            guard let primary = subs.first(where: { $0.isSelected }) else { continue }
+            let best = subs
+                .filter { $0.id != primary.id && subtitleScore(pref, language: $0.language, title: $0.title) != nil }
+                .min(by: { (subtitleScore(pref, language: $0.language, title: $0.title) ?? Int.max) < (subtitleScore(pref, language: $1.language, title: $1.title) ?? Int.max) })
+            guard let best else { return }
+            player.selectSubtitle(best.id, for: .secondary)
+            player.setSubtitlesVisible(true)
+            return
         }
     }
 
@@ -1032,6 +1065,14 @@ struct MPVPlayerScreen: View {
             position >= $0.startSeconds && position <= $0.endSeconds - 2 && ($0.isIntro || $0.isOutro)
         }
         if hit?.startSeconds != activeSegment?.startSeconds { activeSegment = hit }
+        // Auto-skip: same action as the button, once per segment per
+        // playback, and never while paused (a deliberate seek into the
+        // intro while paused must not yank him out of it).
+        if Prefs.autoSkipSegments, let hit, !player.isPaused,
+           !autoSkippedStarts.contains(hit.startSeconds) {
+            autoSkippedStarts.insert(hit.startSeconds)
+            skipActiveSegment()
+        }
     }
 
     private func skipActiveSegment() {

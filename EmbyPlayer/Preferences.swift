@@ -131,6 +131,14 @@ enum Prefs {
     static var subtitlePreference: SubtitlePreference {
         SubtitlePreference(rawValue: d.string(forKey: "prefs.subtitlePreference") ?? "") ?? .zhHans
     }
+    /// Dual subtitles: language auto-picked as the secondary track at
+    /// playback start (mpv only). Defaults off.
+    static var secondarySubtitlePreference: SubtitlePreference {
+        SubtitlePreference(rawValue: d.string(forKey: "prefs.secondarySubtitle") ?? "") ?? .off
+    }
+    /// Skip intro/outro automatically instead of waiting for the button.
+    static var autoSkipSegments: Bool { d.bool(forKey: "prefs.autoSkipSegments") }
+    static var audioDelay: Double { d.double(forKey: "prefs.audioDelay") }
 
     // Subtitle styling (build 92, SenPlayer parity; mpv text subtitles)
     /// "white" | "yellow" | "cyan" | "green"
@@ -371,6 +379,7 @@ struct PlaybackPrefsView: View {
     @AppStorage("prefs.sleepTimerMinutes") private var sleepMinutes = 0
     @AppStorage("prefs.autoPlayNext") private var autoPlayNext = true
     @AppStorage("prefs.skipSegments") private var skipSegments = true
+    @AppStorage("prefs.autoSkipSegments") private var autoSkipSegments = false
 
     var body: some View {
         ScrollView {
@@ -401,6 +410,8 @@ struct PlaybackPrefsView: View {
                     prefsToggleRow("自动播放下一集", isOn: $autoPlayNext)
                     prefsDivider
                     prefsToggleRow("跳过片头片尾按钮", isOn: $skipSegments)
+                    prefsDivider
+                    prefsToggleRow("自动跳过片头片尾", isOn: $autoSkipSegments)
                 }
                 Text("快进 / 快退秒数同时作用于播放器中央按钮与双击快进；默认播放速度在每次打开播放器时生效。")
                     .font(.footnote)
@@ -534,6 +545,7 @@ struct VideoPrefsView: View {
 struct AudioPrefsView: View {
     @AppStorage("prefs.rememberAudioChoice") private var rememberChoice = true
     @AppStorage("prefs.audioLanguage") private var audioLanguage = "zh"
+    @AppStorage("prefs.audioDelay") private var audioDelay = 0.0
 
     var body: some View {
         ScrollView {
@@ -548,8 +560,18 @@ struct AudioPrefsView: View {
                         Button("日语") { audioLanguage = "ja" }
                         Button("韩语") { audioLanguage = "ko" }
                     }
+                    prefsDivider
+                    prefsMenuRow("音频延迟", value: audioDelayLabel) {
+                        Button("延后 2 秒") { audioDelay = 2.0 }
+                        Button("延后 1 秒") { audioDelay = 1.0 }
+                        Button("延后 0.5 秒") { audioDelay = 0.5 }
+                        Button("无延迟") { audioDelay = 0 }
+                        Button("提前 0.5 秒") { audioDelay = -0.5 }
+                        Button("提前 1 秒") { audioDelay = -1.0 }
+                        Button("提前 2 秒") { audioDelay = -2.0 }
+                    }
                 }
-                Text("记住所选音轨：在播放器里手动切换的音轨会按剧记住，同一部剧的其它集自动沿用，优先级高于首选语言。首选语言：在没有记住的音轨时，打开视频自动选该语言的音轨，并避开 TrueHD；「默认」即片源的第一条音轨。两个引擎（mpv / VLCKit）都遵循。")
+                Text("记住所选音轨：在播放器里手动切换的音轨会按剧记住，同一部剧的其它集自动沿用，优先级高于首选语言。首选语言：在没有记住的音轨时，打开视频自动选该语言的音轨，并避开 TrueHD；「默认」即片源的第一条音轨。两个引擎（mpv / VLCKit）都遵循。音频延迟仅 mpv 播放器生效。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -570,6 +592,12 @@ struct AudioPrefsView: View {
         default: return "中文"
         }
     }
+
+    private var audioDelayLabel: String {
+        if audioDelay > 0 { return "延后 \(audioDelay.formatted()) 秒" }
+        if audioDelay < 0 { return "提前 \((-audioDelay).formatted()) 秒" }
+        return "无延迟"
+    }
 }
 
 // MARK: - 字幕设置
@@ -582,6 +610,7 @@ struct SubtitlePrefsView: View {
     @AppStorage("prefs.subColor") private var subColor = "white"
     @AppStorage("prefs.subBorder") private var subBorder = "outline"
     @AppStorage("prefs.subMarginY") private var subMarginY = 20
+    @AppStorage("prefs.secondarySubtitle") private var secondarySubtitle = "off"
 
     var body: some View {
         ScrollView {
@@ -593,7 +622,18 @@ struct SubtitlePrefsView: View {
                         Button("英文") { subtitlePreference = "en" }
                         Button("关闭") { subtitlePreference = "off" }
                     }
+                    prefsDivider
+                    prefsMenuRow("副字幕", value: secondarySubtitleLabel) {
+                        Button("关闭") { secondarySubtitle = "off" }
+                        Button("简体中文") { secondarySubtitle = "zhHans" }
+                        Button("繁体中文") { secondarySubtitle = "zhHant" }
+                        Button("英文") { secondarySubtitle = "en" }
+                    }
                 }
+                Text("副字幕：再挂一条其它语言的字幕同时显示（双字幕），开播时自动选轨；仅 mpv 播放器支持，播放器字幕菜单里也能临时选。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
                 prefsCard {
                     prefsToggleRow("记住每部剧的字幕选择", isOn: $rememberSubtitleChoice)
                 }
@@ -693,6 +733,15 @@ struct SubtitlePrefsView: View {
         case "en": return "英文"
         case "off": return "关闭"
         default: return "简体中文"
+        }
+    }
+
+    private var secondarySubtitleLabel: String {
+        switch secondarySubtitle {
+        case "zhHans": return "简体中文"
+        case "zhHant": return "繁体中文"
+        case "en": return "英文"
+        default: return "关闭"
         }
     }
 }

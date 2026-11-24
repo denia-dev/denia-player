@@ -453,6 +453,7 @@ struct VLCPlayerView: View {
     @State private var nextEpisode: EmbyItem?
     @State private var previousEpisode: EmbyItem?
     @State private var segments: [MediaSegment] = []
+    @State private var autoSkippedStarts: Set<Double> = []
     @State private var activeSegment: MediaSegment?
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
@@ -1059,6 +1060,13 @@ struct VLCPlayerView: View {
             position >= $0.startSeconds && position <= $0.endSeconds - 2 && ($0.isIntro || $0.isOutro)
         }
         if hit?.startSeconds != activeSegment?.startSeconds { activeSegment = hit }
+        // Auto-skip mirrors the mpv player: same action as the button,
+        // once per segment per playback, only while actually playing.
+        if Prefs.autoSkipSegments, let hit, controller.isPlaying,
+           !autoSkippedStarts.contains(hit.startSeconds) {
+            autoSkippedStarts.insert(hit.startSeconds)
+            skipActiveSegment()
+        }
     }
 
     private func skipActiveSegment() {
