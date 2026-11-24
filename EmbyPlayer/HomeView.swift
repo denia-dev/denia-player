@@ -89,7 +89,7 @@ private struct HeroArtwork: View {
             }
         }
         .task(id: item.Id) {
-            guard let url = client.imageURL(itemID: item.Id, kind: wideImageKind(item)) else {
+            guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080) else {
                 onBlank(item.Id)
                 return
             }
@@ -129,17 +129,46 @@ struct HomeView: View {
     /// The mixed rotation pool (newest + top-rated + random from
     /// EmbyClient.heroPool). Empty until its fetch lands.
     @State private var heroPool: [EmbyItem] = []
+    @State private var heroTints: [String: Color] = [:]
 
     /// Carousel candidates: the mixed pool first (latest list, then
     /// resume, as fallbacks), minus anything with no artwork at all
     /// and anything whose art already proved blank in this session.
     private var heroItems: [EmbyItem] {
-        let source = !heroPool.isEmpty ? heroPool : (latest.isEmpty ? resume : latest)
+        let source = heroPool
         return source.filter {
             !heroExcluded.contains($0.Id)
-                && ($0.BackdropImageTags?.isEmpty == false || $0.ImageTags?["Primary"] != nil)
+                && hasHighQualityAnimeBackdrop($0)
                 && heroRatingsVerdict($0)
         }
+    }
+
+    /// Strictly include Japanese animation only: a generic Animation genre
+    /// is not enough (it would admit western animation). Accept an explicit
+    /// anime tag/genre, or require both Animation and a Japan production
+    /// location. HeroArtwork separately rejects missing/blank backdrop art.
+    private func hasHighQualityAnimeBackdrop(_ item: EmbyItem) -> Bool {
+        guard item.BackdropImageTags?.isEmpty == false else { return false }
+        let genres = (item.Genres ?? []).map { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) }
+        let tags = (item.Tags ?? []).map { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) }
+        let locations = (item.ProductionLocations ?? []).map { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) }
+        let explicitAnime = (genres + tags).contains { value in
+            ["anime", "japanese animation", "japanese anime", "日本动画", "日本動畫", "日漫", "アニメ"].contains(value)
+                || value.contains("japanese animation") || value.contains("日本动画") || value.contains("日本動畫")
+        }
+        let animated = genres.contains { value in
+            ["animation", "animated", "动画", "動畫", "アニメーション"].contains(value)
+                || value.contains("animation") || value.contains("动画") || value.contains("動畫")
+        }
+        let japanMade = locations.contains { value in
+            value == "japan" || value == "日本" || value.contains("japan") || value.contains("日本")
+        }
+        return explicitAnime || (animated && japanMade)
+    }
+
+    private var currentHeroTint: Color? {
+        guard let item = currentHeroItem else { return nil }
+        return heroTints[item.Id]
     }
 
     /// His 2026-11-24 rule: 没有三个评分的都不要出现在轮播 - a hero
@@ -212,6 +241,7 @@ struct HomeView: View {
         .toolbar(.hidden, for: .navigationBar)
         .refreshable { await load() }
         .task { await load() }
+        .task(id: currentHeroItem?.Id) { await loadCurrentHeroTint() }
         .task { await heroAutoAdvance() }
         .sheet(isPresented: $showServers) { ServersView() }
     }
@@ -234,16 +264,26 @@ struct HomeView: View {
     private func ambientLayer(scale: CGFloat) -> some View {
         ZStack {
             if let item = currentHeroItem, let client = store.client() {
-                AmbientImageView(url: client.imageURL(itemID: item.Id, kind: wideImageKind(item)))
+                if let tint = currentHeroTint {
+                    tint
+                } else {
+                    Color(.systemBackground)
+                }
+                AmbientImageView(url: client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                     .scaleEffect(scale)
+                    .opacity(currentHeroTint == nil ? 0.85 : 0.25)
                     .id(item.Id)
                     .transition(.opacity)
+                LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.24)],
+                               startPoint: .top, endPoint: .bottom)
+            } else {
+                Color(.systemBackground)
             }
-            Color(.systemBackground).opacity(0.55)
         }
-        .animation(.easeInOut(duration: 0.45), value: currentHeroItem?.Id)
+        .animation(.easeInOut(duration: 0.55), value: currentHeroItem?.Id)
+        .animation(.easeInOut(duration: 0.55), value: currentHeroTint != nil)
     }
 
     private var homeAmbientScrolling: some View {
@@ -333,31 +373,30 @@ struct HomeView: View {
     }
 
     private func heroCell(_ item: EmbyItem, client: EmbyClient) -> some View {
-        VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 10) {
                 if item.ImageTags?["Logo"] != nil {
                     SharedImage(url: client.imageURL(itemID: item.Id, kind: "Logo"), fill: false)
-                        .frame(maxWidth: 280, maxHeight: 84)
+                        .frame(maxWidth: 280, maxHeight: 84, alignment: .leading)
                 } else {
                     Text(item.Name)
                         .font(.system(size: 27, weight: .bold))
-                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.leading)
                         .lineLimit(2)
                 }
-                // SenPlayer hero layout: title, meta line, overview,
-                // then the ratings on their own row above the dots.
                 heroMetaLine(item)
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.82))
                         .lineLimit(2)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 heroRatingsRow(item)
             }
-        .padding(.horizontal, 28)
-        .padding(.bottom, 30)
+        .padding(.horizontal, 30)
+        .padding(.bottom, 34)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .background {
             ZStack {
@@ -367,12 +406,13 @@ struct HomeView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
                 .zoomSource(id: item.Id, ns: zoomNS)
+                let meltTint = heroTints[item.Id] ?? Color(.systemBackground)
                 LinearGradient(stops: [
                     .init(color: .clear, location: 0),
-                    .init(color: .clear, location: 0.35),
-                    .init(color: Color(.systemBackground).opacity(0.45), location: 0.62),
-                    .init(color: Color(.systemBackground).opacity(0.55), location: 0.85),
-                    .init(color: Color(.systemBackground).opacity(0.55), location: 1.0),
+                    .init(color: .clear, location: 0.30),
+                    .init(color: meltTint.opacity(0.48), location: 0.60),
+                    .init(color: meltTint.opacity(0.78), location: 0.86),
+                    .init(color: meltTint, location: 1.0),
                 ], startPoint: .top, endPoint: .bottom)
             }
             .mask {
@@ -402,7 +442,7 @@ struct HomeView: View {
             }
         }
         .font(.subheadline.weight(.medium))
-        .foregroundStyle(.secondary)
+        .foregroundStyle(.white.opacity(0.82))
         .lineLimit(1)
     }
 
@@ -454,10 +494,22 @@ struct HomeView: View {
 
     private func heroAutoAdvance() async {
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: .seconds(7))
             guard !heroItems.isEmpty else { continue }
             withAnimation { heroIndex = (heroIndex + 1) % heroItems.count }
         }
+    }
+
+    private func loadCurrentHeroTint() async {
+        guard let item = currentHeroItem, let client = store.client(),
+              let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080) else { return }
+        if let cached = ImageMemoryCache.shared.dominantTintCached(url) {
+            heroTints[item.Id] = cached
+            return
+        }
+        guard let tint = await ImageMemoryCache.shared.dominantTint(for: url), !Task.isCancelled,
+              currentHeroItem?.Id == item.Id else { return }
+        heroTints[item.Id] = tint
     }
 
     private func load() async {

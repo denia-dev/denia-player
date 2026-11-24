@@ -43,6 +43,7 @@ struct EmbyItem: Decodable, Identifiable {
         case CollectionType, SeriesName, SeriesId, SeasonId, IndexNumber, ParentIndexNumber
         case Overview, ProductionYear, RunTimeTicks, ChildCount, ImageTags, BackdropImageTags
         case Genres, CommunityRating, CriticRating, PremiereDate, People, Chapters
+        case Tags, ProductionLocations, OriginalTitle
         case UserData, MediaSources, ProviderIds
     }
 
@@ -58,6 +59,9 @@ struct EmbyItem: Decodable, Identifiable {
     let RunTimeTicks: Int64?
     let ChildCount: Int?
     let Genres: [String]?
+    let Tags: [String]?
+    let ProductionLocations: [String]?
+    let OriginalTitle: String?
     let CommunityRating: Double?
     let CriticRating: Double?
     let PremiereDate: String?
