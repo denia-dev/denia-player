@@ -175,7 +175,6 @@ struct DetailView: View {
     /// in their horizontal lanes, and under the callers' blur + veil
     /// the stack reads as one long defocused artwork behind the page.
     @ViewBuilder
-    @ViewBuilder
     private var ambientBackdrop: some View {
         if let client = store.client() {
             ZStack(alignment: .top) {
@@ -314,7 +313,6 @@ struct DetailView: View {
     /// with the source fixed, the small banner-like hero read as wrong
     /// next to Sen's big filled one. The hero's gradient + mask melt
     /// fades the enlarged art into the ambient below.
-    @ViewBuilder
     /// The item whose backdrop brands this page: the series for an
     /// episode, the item itself otherwise. Derived from the ENTRY
     /// item, so it is known in the very first frame - the hero and the
