@@ -143,15 +143,15 @@ struct HomeView: View {
         }
     }
 
-    /// Strictly include Japanese animation only: a generic Animation genre
-    /// is not enough (it would admit western animation). Accept an explicit
-    /// anime tag/genre, or require both Animation and a Japan production
-    /// location. HeroArtwork separately rejects missing/blank backdrop art.
+    /// Anime only, matched on genre/tag text. An earlier cut also demanded
+    /// a Japan production location, but servers almost never populate
+    /// ProductionLocations, so that requirement filtered out every
+    /// candidate and left the hero empty (v1.22, confirmed on device).
+    /// HeroArtwork separately rejects missing/blank backdrop art.
     private func hasHighQualityAnimeBackdrop(_ item: EmbyItem) -> Bool {
         guard item.BackdropImageTags?.isEmpty == false else { return false }
         let genres = (item.Genres ?? []).map { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) }
         let tags = (item.Tags ?? []).map { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) }
-        let locations = (item.ProductionLocations ?? []).map { $0.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current) }
         let explicitAnime = (genres + tags).contains { value in
             ["anime", "japanese animation", "japanese anime", "日本动画", "日本動畫", "日漫", "アニメ"].contains(value)
                 || value.contains("japanese animation") || value.contains("日本动画") || value.contains("日本動畫")
@@ -160,10 +160,7 @@ struct HomeView: View {
             ["animation", "animated", "动画", "動畫", "アニメーション"].contains(value)
                 || value.contains("animation") || value.contains("动画") || value.contains("動畫")
         }
-        let japanMade = locations.contains { value in
-            value == "japan" || value == "日本" || value.contains("japan") || value.contains("日本")
-        }
-        return explicitAnime || (animated && japanMade)
+        return explicitAnime || animated
     }
 
     private var currentHeroTint: Color? {
