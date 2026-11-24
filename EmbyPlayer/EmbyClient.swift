@@ -235,6 +235,20 @@ struct EmbyClient {
         return try await send(makeRequest(path: "/Users/\(server.userID)/Items/\(id)", query: query))
     }
 
+    /// Year/ratings/runtime for one item. goemby's LIST responses
+    /// (/Items/Latest etc.) omit ProductionYear and CommunityRating
+    /// even though the items have them - only the single-item
+    /// response carries them - so the home hero hydrates its items
+    /// through here (found on-device 2026-11-24: two list-sourced
+    /// series in a row showed genres/overview but no year or rating).
+    func itemMeta(id: String) async -> (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)? {
+        let query = [URLQueryItem(name: "Fields", value: "Overview")]
+        guard let item: EmbyItem = try? await send(makeRequest(path: "/Users/\(server.userID)/Items/\(id)", query: query)) else {
+            return nil
+        }
+        return (item.ProductionYear, item.CommunityRating, item.CriticRating, item.RunTimeTicks)
+    }
+
     func seasons(seriesID: String) async throws -> [EmbyItem] {
         let query = [URLQueryItem(name: "UserId", value: server.userID)]
         let response: EmbyItemsResponse = try await send(makeRequest(path: "/Shows/\(seriesID)/Seasons", query: query))

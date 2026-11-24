@@ -51,6 +51,9 @@ struct HomeView: View {
     @State private var resume: [EmbyItem] = []
     @State private var latest: [EmbyItem] = []
     @State private var heroIndex = 0
+    /// Year/ratings/runtime hydrated per hero item from the
+    /// single-item endpoint (list responses omit them on goemby).
+    @State private var heroMeta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)] = [:]
     @State private var showServers = false
     @State private var errorText: String?
 
@@ -289,28 +292,34 @@ struct HomeView: View {
     /// One info line under the hero title: ratings first (star +
     /// popcorn), then year, type/genres and runtime for movies.
     private func heroMetaLine(_ item: EmbyItem) -> some View {
-        HStack(spacing: 7) {
-            if let rating = item.CommunityRating {
+        let meta = heroMeta[item.Id]
+        let communityRating = item.CommunityRating ?? meta?.community ?? nil
+        let criticRating = item.CriticRating ?? meta?.critic ?? nil
+        let productionYear = item.ProductionYear ?? meta?.year ?? nil
+        let runtimeSeconds = item.durationSeconds > 0 ? item.durationSeconds
+            : Double(meta?.runTimeTicks ?? 0) / 10_000_000
+        return HStack(spacing: 7) {
+            if let rating = communityRating {
                 HStack(spacing: 3) {
                     Image(systemName: "star.fill").foregroundStyle(.orange)
                     Text(String(format: "%.1f", rating)).fontWeight(.semibold).foregroundStyle(.primary)
                 }
             }
-            if let critic = item.CriticRating {
+            if let critic = criticRating {
                 HStack(spacing: 3) {
                     Image(systemName: "popcorn").foregroundStyle(.red)
                     Text("\(Int(critic.rounded()))%").fontWeight(.semibold).foregroundStyle(.primary)
                 }
             }
-            if let year = item.ProductionYear {
+            if let year = productionYear {
                 Text(String(year))
             }
             Text(item.type == "Series" ? "剧集" : "电影")
             if let genres = item.Genres, !genres.isEmpty {
                 Text(genres.prefix(2).joined(separator: " / "))
             }
-            if item.type == "Movie", item.durationSeconds > 0 {
-                Text(runtimeText(seconds: item.durationSeconds))
+            if item.type == "Movie", runtimeSeconds > 0 {
+                Text(runtimeText(seconds: runtimeSeconds))
             }
         }
         .font(.subheadline.weight(.medium))
@@ -357,8 +366,23 @@ struct HomeView: View {
             // Start (and refresh) on a random hero so the home page
             // does not open on the same title every time.
             if latest.count > 1 { heroIndex = Int.random(in: 0..<latest.count) }
+            await loadHeroMeta(client: client)
         } catch {
             errorText = error.localizedDescription
+        }
+    }
+
+    /// Fills heroMeta for the current hero items (best-effort,
+    /// concurrent; failures just leave the line without that field).
+    private func loadHeroMeta(client: EmbyClient) async {
+        let items = heroItems
+        await withTaskGroup(of: (String, (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)?).self) { group in
+            for item in items where item.ProductionYear == nil || item.CommunityRating == nil {
+                group.addTask { (item.Id, await client.itemMeta(id: item.Id)) }
+            }
+            for await (id, meta) in group {
+                if let meta { heroMeta[id] = meta }
+            }
         }
     }
 }
