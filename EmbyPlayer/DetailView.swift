@@ -68,7 +68,18 @@ struct DetailView: View {
             .containerRelativeFrame(.horizontal)
         }
         .ignoresSafeArea(edges: .top)
-        .background { ambientBackground }
+        .background {
+            // An opaque base from the very first frame: without it
+            // the page is translucent until the ambient art lands,
+            // and the page behind bleeds through the whole push/zoom
+            // transition (the ghosted double-exposure in his
+            // 2026-11-24 screen recording).
+            ZStack {
+                Color(.systemBackground)
+                ambientBackground
+            }
+            .ignoresSafeArea()
+        }
         .zoomDestination(id: item.Id, ns: zoomNS)
         .toolbar(.hidden, for: .tabBar)
         .toolbarBackground(.hidden, for: .navigationBar)
@@ -137,12 +148,8 @@ struct DetailView: View {
     /// hero's art for the melt; only the fixed background scales up.
     private var frostedAmbient: some View {
         ZStack {
-            ambientBackdrop
-                .blur(radius: 36)
-                .saturation(1.2)
-            ambientBackdrop
-                .blur(radius: 10)
-                .saturation(1.2)
+            ambientBackdrop(heavy: true)
+            ambientBackdrop(heavy: false)
                 .mask(
                     LinearGradient(
                         gradient: Gradient(stops: [
@@ -174,13 +181,20 @@ struct DetailView: View {
     /// reflection trick): every seam is pixel-continuous, shapes stay
     /// in their horizontal lanes, and under the callers' blur + veil
     /// the stack reads as one long defocused artwork behind the page.
+    /// The defocus is BAKED into cached bitmaps (heavy/light
+    /// variants in ImageMemoryCache) instead of two live .blur()
+    /// passes over this stack: the live version recomposited four
+    /// huge filtered surfaces on every frame of the push/zoom
+    /// transition and every scroll tick, which read as stiffness
+    /// when entering the page (and let the page behind bleed
+    /// through while the filters warmed up).
     @ViewBuilder
-    private var ambientBackdrop: some View {
+    private func ambientBackdrop(heavy: Bool) -> some View {
         if let client = store.client() {
             ZStack(alignment: .top) {
                 // Fallback wash (poster for items without artwork),
                 // frozen on the entry item like the hero placeholder.
-                ItemImage(item: item, client: client, kind: wideImageKind(item))
+                AmbientVariantImage(url: washURL(client: client), heavy: heavy)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                 VStack(spacing: 0) {
@@ -191,7 +205,7 @@ struct DetailView: View {
                         // first frame (artworkItemID needs no fetch);
                         // when there is no artwork the tiles stay
                         // empty and the wash underneath shows through.
-                        SharedImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080))
+                        AmbientVariantImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), heavy: heavy)
                             .aspectRatio(16.0 / 9.0, contentMode: .fit)
                             .scaleEffect(y: tile % 2 == 1 ? -1 : 1)
                             .clipped()
@@ -203,6 +217,15 @@ struct DetailView: View {
         } else {
             EmptyView()
         }
+    }
+
+    /// The wash's image URL with ItemImage's episode rule: an
+    /// episode without its own Primary image borrows the series one.
+    private func washURL(client: EmbyClient) -> URL? {
+        let kind = wideImageKind(item)
+        let sourceID = (kind == "Primary" && item.type == "Episode" && item.ImageTags?["Primary"] == nil)
+            ? (item.SeriesId ?? item.Id) : item.Id
+        return client.imageURL(itemID: sourceID, kind: kind)
     }
 
     /// The ambient as a layer behind the SCROLL CONTENT itself. The

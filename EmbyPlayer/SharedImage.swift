@@ -119,6 +119,50 @@ final class ImageMemoryCache {
         ambientCache.setObject(result, forKey: url as NSURL)
         return result
     }
+
+    // MARK: - baked progressive-defocus variants (detail page)
+
+    private let variantCache = NSCache<NSString, UIImage>()
+
+    func ambientVariantCached(_ url: URL, heavy: Bool) -> UIImage? {
+        variantCache.object(forKey: (url.absoluteString + (heavy ? "#heavy" : "#light")) as NSString)
+    }
+
+    /// The detail page's ambient used to run TWO live Gaussian blurs
+    /// (radius 36 + 10, saturation on top) over a 10-tile artwork
+    /// stack, in both the fixed and the scrolling layer - four huge
+    /// filtered surfaces recomposited on every frame of the zoom
+    /// transition and every scroll tick, which is what made entering
+    /// a detail page feel stiff. These variants bake the same
+    /// progressive defocus (saturation 1.2 + blur, heavy or light)
+    /// into a small bitmap once; the layers then composite as plain
+    /// textured quads.
+    func ambientVariant(for url: URL, heavy: Bool) async -> UIImage? {
+        if let hit = ambientVariantCached(url, heavy: heavy) { return hit }
+        guard let image = await image(for: url) else { return nil }
+        let targetWidth: CGFloat = 480
+        let scale = targetWidth / max(image.size.width, 1)
+        let targetSize = CGSize(width: targetWidth, height: max(1, image.size.height * scale))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let small = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        var result = small
+        if let cg = small.cgImage {
+            let ci = CIImage(cgImage: cg).clampedToExtent()
+            let saturated = ci.applyingFilter("CIColorControls", parameters: [kCIInputSaturationKey: 1.2])
+            if let filter = CIFilter(name: "CIGaussianBlur",
+                                     parameters: [kCIInputImageKey: saturated,
+                                                  kCIInputRadiusKey: heavy ? 12.0 : 4.0]),
+               let output = filter.outputImage,
+               let baked = Self.ciContext.createCGImage(output, from: CIImage(cgImage: cg).extent) {
+                result = UIImage(cgImage: baked)
+            }
+        }
+        variantCache.setObject(result, forKey: (url.absoluteString + (heavy ? "#heavy" : "#light")) as NSString)
+        return result
+    }
 }
 
 /// AsyncImage replacement backed by ImageMemoryCache. Renders empty
@@ -152,6 +196,39 @@ struct SharedImage: View {
         .task(id: url) {
             if uiImage == nil, let url {
                 uiImage = await ImageMemoryCache.shared.image(for: url)
+            }
+        }
+    }
+}
+
+/// Fill view rendering one baked defocus variant of an image (see
+/// ImageMemoryCache.ambientVariant), with a soft fade-in so a detail
+/// page's background wash arrives gently instead of popping.
+struct AmbientVariantImage: View {
+    let url: URL?
+    let heavy: Bool
+
+    @State private var uiImage: UIImage?
+
+    init(url: URL?, heavy: Bool) {
+        self.url = url
+        self.heavy = heavy
+        _uiImage = State(initialValue: url.flatMap { ImageMemoryCache.shared.ambientVariantCached($0, heavy: heavy) })
+    }
+
+    var body: some View {
+        ZStack {
+            if let uiImage {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+        }
+        .opacity(uiImage == nil ? 0 : 1)
+        .animation(.easeOut(duration: 0.3), value: uiImage != nil)
+        .task(id: url) {
+            if uiImage == nil, let url {
+                uiImage = await ImageMemoryCache.shared.ambientVariant(for: url, heavy: heavy)
             }
         }
     }
