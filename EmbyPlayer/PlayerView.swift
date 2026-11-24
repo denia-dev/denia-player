@@ -556,6 +556,9 @@ struct MPVPlayerScreen: View {
             OnlineSubtitleSearchView(defaultQuery: onlineSubQuery) { url in
                 player.loadExternalSubtitle(url, selecting: .primary)
                 player.setSubtitlesVisible(true)
+                if Prefs.rememberSubtitleChoice {
+                    RememberedExternalSubtitle.save(url, for: item.SeriesId ?? item.Id)
+                }
             }
         }
         .sheet(isPresented: $showDiagnostics) {
@@ -641,8 +644,9 @@ struct MPVPlayerScreen: View {
             player.load(localFileURL, startTime: startSeconds > 0 ? .seconds(startSeconds) : nil)
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
-            currentRate = Prefs.defaultRate
-            if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
+            let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
+            currentRate = startRate
+            if startRate != 1.0 { player.setPlaybackRate(startRate) }
             Task { await prepareAudio() }
             Task { await applySecondarySubtitle() }
             scheduleHide()
@@ -660,8 +664,9 @@ struct MPVPlayerScreen: View {
         player.load(launch.url, startTime: startSeconds > 0 ? .seconds(startSeconds) : nil)
         player.requestVideoFeatures([.nativeSubtitles])
         player.setSubtitlesVisible(true)
-        currentRate = Prefs.defaultRate
-        if Prefs.defaultRate != 1.0 { player.setPlaybackRate(Prefs.defaultRate) }
+        let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
+        currentRate = startRate
+        if startRate != 1.0 { player.setPlaybackRate(startRate) }
         Task { await prepareSubtitles() }
         Task { await prepareAudio() }
         Task { await applySecondarySubtitle() }
@@ -734,8 +739,11 @@ struct MPVPlayerScreen: View {
     /// secondary track. Runs once at playback start; manual picks in
     /// the subtitle menu afterwards are untouched.
     private func applySecondarySubtitle() async {
+        let remembered = Prefs.rememberSubtitleChoice
+            ? Prefs.rememberedSecondarySubtitleIndex(for: item.SeriesId ?? item.Id) : nil
+        if remembered == -1 { return }
         let pref = Prefs.secondarySubtitlePreference
-        guard pref != .off else { return }
+        guard remembered != nil || pref != .off else { return }
         let generation = playerGeneration
         for _ in 0..<24 {
             try? await Task.sleep(for: .milliseconds(500))
@@ -743,6 +751,18 @@ struct MPVPlayerScreen: View {
             let subs = player.subtitleTracks
             guard subs.count > 1 else { continue }
             if subs.contains(where: { $0.subtitleRole == .secondary }) { return }
+            // A remembered manual pick for this series wins over the
+            // language-based auto-pick below.
+            if let remembered, remembered >= 0 {
+                guard let primary = subs.first(where: { $0.isSelected }) else { continue }
+                let streams = (currentSource?.MediaStreams ?? []).filter { $0.type == "Subtitle" }.sorted { $0.Index < $1.Index }
+                if let ordinal = streams.firstIndex(where: { $0.Index == remembered }),
+                   ordinal < subs.count, subs[ordinal].id != primary.id {
+                    player.selectSubtitle(subs[ordinal].id, for: .secondary)
+                    player.setSubtitlesVisible(true)
+                }
+                return
+            }
             guard let primary = subs.first(where: { $0.isSelected }) else { continue }
             let best = subs
                 .filter { $0.id != primary.id && subtitleScore(pref, language: $0.language, title: $0.title) != nil }
@@ -865,6 +885,18 @@ struct MPVPlayerScreen: View {
         preparedGeneration = generation
 
         let externals = client.externalSubtitles(itemID: item.Id, source: source)
+        // A subtitle the user picked from an online source for this
+        // series is the remembered primary: load it first and keep
+        // the server's own external files available but unselected.
+        if Prefs.rememberSubtitleChoice,
+           let rememberedExternal = RememberedExternalSubtitle.url(for: item.SeriesId ?? item.Id) {
+            player.loadExternalSubtitle(rememberedExternal, selecting: .primary)
+            player.setSubtitlesVisible(true)
+            for ext in externals {
+                player.loadExternalSubtitle(ext.url, selecting: nil)
+            }
+            return
+        }
         if !externals.isEmpty {
             if Prefs.subtitlePreference == .off {
                 for ext in externals {
@@ -1423,11 +1455,21 @@ struct MPVPlayerScreen: View {
                     }
                     if player.subtitleTracks.count > 1 {
                         Section("副字幕（双字幕）") {
-                            Button("关闭副字幕") { player.selectSubtitle(nil, for: .secondary) }
+                            Button("关闭副字幕") {
+                                player.selectSubtitle(nil, for: .secondary)
+                                if Prefs.rememberSubtitleChoice {
+                                    Prefs.rememberSecondarySubtitle(index: -1, for: item.SeriesId ?? item.Id)
+                                }
+                            }
                             ForEach(player.subtitleTracks, id: \.mpvID) { track in
                                 Button {
                                     player.selectSubtitle(track.id, for: .secondary)
                                     player.setSubtitlesVisible(true)
+                                    if Prefs.rememberSubtitleChoice,
+                                       let ordinal = player.subtitleTracks.firstIndex(where: { $0.id == track.id }),
+                                       let streamIndex = subtitleStreamIndex(ordinal: ordinal) {
+                                        Prefs.rememberSecondarySubtitle(index: streamIndex, for: item.SeriesId ?? item.Id)
+                                    }
                                 } label: {
                                     Label(trackLabel(track), systemImage: track.subtitleRole == .secondary ? "checkmark" : "")
                                 }
@@ -1446,7 +1488,7 @@ struct MPVPlayerScreen: View {
                         }
                     }
                     Section("在线字幕") {
-                        Button("搜索在线字幕（ASSRT）") { showOnlineSubs = true }
+                        Button("搜索在线字幕") { showOnlineSubs = true }
                     }
                 } label: { circleLabel("captions.bubble") }
             }
@@ -1459,7 +1501,11 @@ struct MPVPlayerScreen: View {
                 }
                 Section("倍速") {
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
-                        Button("\(rate, specifier: "%g")×") { player.setPlaybackRate(rate); currentRate = rate }
+                        Button("\(rate, specifier: "%g")×") {
+                            player.setPlaybackRate(rate)
+                            currentRate = rate
+                            Prefs.rememberRate(rate, for: item.SeriesId ?? item.Id)
+                        }
                     }
                 }
             } label: { circleLabel("ellipsis") }
@@ -1518,6 +1564,9 @@ struct MPVPlayerScreen: View {
     private func rememberSubtitlePick(streamIndex: Int?) {
         guard Prefs.rememberSubtitleChoice, let streamIndex else { return }
         Prefs.rememberSubtitle(index: streamIndex, for: item.SeriesId ?? item.Id)
+        // An embedded pick (or switching subtitles off) replaces any
+        // remembered online subtitle for this series.
+        RememberedExternalSubtitle.clear(for: item.SeriesId ?? item.Id)
     }
 
     private func trackLabel(_ track: MPVMediaTrack) -> String {

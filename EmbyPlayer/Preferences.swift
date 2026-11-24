@@ -106,6 +106,24 @@ enum Prefs {
         map[key] = index
         d.set(map, forKey: "prefs.rememberedSubtitle")
     }
+    /// Per-series playback rate, remembered from the rate menu.
+    static func rememberedRate(for key: String) -> Double? {
+        (d.dictionary(forKey: "prefs.rememberedRate") as? [String: Double])?[key]
+    }
+    static func rememberRate(_ rate: Double, for key: String) {
+        var map = (d.dictionary(forKey: "prefs.rememberedRate") as? [String: Double]) ?? [:]
+        map[key] = rate
+        d.set(map, forKey: "prefs.rememberedRate")
+    }
+    /// Per-series secondary subtitle (stream index, -1 = off).
+    static func rememberedSecondarySubtitleIndex(for key: String) -> Int? {
+        (d.dictionary(forKey: "prefs.rememberedSecondarySub") as? [String: Int])?[key]
+    }
+    static func rememberSecondarySubtitle(index: Int, for key: String) {
+        var map = (d.dictionary(forKey: "prefs.rememberedSecondarySub") as? [String: Int]) ?? [:]
+        map[key] = index
+        d.set(map, forKey: "prefs.rememberedSecondarySub")
+    }
     static var sleepTimerMinutes: Int { d.integer(forKey: "prefs.sleepTimerMinutes") }
     static var longPressBoost: Bool {
         d.object(forKey: "prefs.longPressBoost") == nil ? true : d.bool(forKey: "prefs.longPressBoost")
@@ -656,6 +674,7 @@ struct SubtitlePrefsView: View {
     @AppStorage("prefs.subMarginY") private var subMarginY = 20
     @AppStorage("prefs.secondarySubtitle") private var secondarySubtitle = "off"
     @State private var assrtToken = ""
+    @State private var osApiKey = ""
 
     var body: some View {
         ScrollView {
@@ -696,6 +715,25 @@ struct SubtitlePrefsView: View {
                     .frame(minHeight: 44)
                 }
                 Text("在线字幕来自 ASSRT（assrt.net）：播放时在字幕菜单选「搜索在线字幕」，按片名搜到后点一条即下载挂上（仅 mpv 播放器）。公共额度是开源播放器共用的 token，繁忙时会限流；想稳定可在 assrt.net 免费注册自己的 token 填在这里。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+                prefsCard {
+                    HStack {
+                        Text("OpenSubtitles Key").font(.system(size: 15))
+                        Spacer(minLength: 12)
+                        SecureField("需要自己申请", text: $osApiKey)
+                            .multilineTextAlignment(.trailing)
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                            .autocorrectionDisabled()
+                            .textInputAutocapitalization(.never)
+                            .frame(maxWidth: 190)
+                    }
+                    .padding(.horizontal, 16)
+                    .frame(minHeight: 44)
+                }
+                Text("第二个字幕源 OpenSubtitles（opensubtitles.com）：它没有公共额度，必须用自己的 API Key——在它网站免费注册、到 API 页面申请一个消费者 Key 填在这里，搜索框顶部可切换字幕源。免费账号每天有下载次数上限。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -751,9 +789,15 @@ struct SubtitlePrefsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("字幕设置")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { assrtToken = KeychainStore.get("assrtToken") ?? "" }
+        .onAppear {
+            assrtToken = KeychainStore.get("assrtToken") ?? ""
+            osApiKey = KeychainStore.get("osApiKey") ?? ""
+        }
         .onChange(of: assrtToken) { _, newValue in
             KeychainStore.set("assrtToken", newValue)
+        }
+        .onChange(of: osApiKey) { _, newValue in
+            KeychainStore.set("osApiKey", newValue)
         }
     }
 
