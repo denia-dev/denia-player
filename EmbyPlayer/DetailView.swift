@@ -28,6 +28,14 @@ struct DetailView: View {
     /// difference (see its comment).
     @State private var seriesBackdropTags: [String]? = nil
     @State private var ratingsStore = RatingsStore.shared
+    /// The artwork's dominant colour, deepened - the whole page is
+    /// rendered in it (his 2026-11-24 reference screenshot). Nil
+    /// until the artwork lands; the blurred ambient stands in.
+    @State private var tint: Color? = nil
+
+    /// What the hero melts into: the page tint once known, the
+    /// system background before that.
+    private var meltColor: Color { tint ?? Color(.systemBackground) }
 
     private var current: EmbyItem { detail ?? item }
     private var isSeries: Bool { current.type == "Series" }
@@ -80,6 +88,7 @@ struct DetailView: View {
             }
             .ignoresSafeArea()
         }
+        .environment(\.colorScheme, .dark)
         .zoomDestination(id: item.Id, ns: zoomNS)
         .toolbar(.hidden, for: .tabBar)
         .toolbarBackground(.hidden, for: .navigationBar)
@@ -111,6 +120,7 @@ struct DetailView: View {
             }
         }
         .task { await load() }
+        .task { await loadTint() }
         .onChange(of: selectedSeasonID) { _, seasonID in
             episodeRange = 0
             Task { if let seasonID { await loadEpisodes(seasonID) } }
@@ -123,37 +133,44 @@ struct DetailView: View {
         .sheet(isPresented: $showAllEpisodes) { allEpisodesSheet }
     }
 
-    /// The page background, SenPlayer's actual recipe (studied from
-    /// his Sen screenshots, 2026-11-24): ONE copy of the artwork,
-    /// baked into a heavy blur, filling the WHOLE screen edge to
-    /// edge, under a veil that deepens toward the bottom. The sharp
-    /// hero at the top mask-melts into this layer; below the hero
-    /// the page is just this smooth wash - no tiles, no second
-    /// scrolling layer, no seams. The tiled/mirrored stack this
-    /// replaces rendered at the padded content width inside the
-    /// scroll view, so its edges stood out as a hard vertical
-    /// "curtain" down the middle of the page against the full-bleed
-    /// fixed layer (his v1.06 screenshot).
+    /// The page background: the artwork's dominant colour as one
+    /// flat field (his 2026-11-24 reference: the whole page rendered
+    /// in the art's 主色调， white text over it, the sharp hero
+    /// melting into the colour). Until the tint is extracted - or
+    /// for items without artwork - a heavy-blur wash of the art
+    /// stands in, so the page is never a bare slab while loading.
     private var ambientBackground: some View {
         ZStack {
-            if let client = store.client() {
-                // Poster wash underneath (the only layer for items
-                // without artwork), artwork wash over it; both fill
-                // the same full-screen frame, so no boundary can
-                // ever show between them.
+            if let tint {
+                tint
+                LinearGradient(
+                    colors: [Color.white.opacity(0.05), Color.black.opacity(0.16)],
+                    startPoint: .top, endPoint: .bottom)
+            } else if let client = store.client() {
                 AmbientVariantImage(url: washURL(client: client), heavy: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                 AmbientVariantImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), heavy: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
+                LinearGradient(
+                    colors: [Color(.systemBackground).opacity(0.10),
+                             Color(.systemBackground).opacity(0.50)],
+                    startPoint: .top, endPoint: .bottom)
             }
-            LinearGradient(
-                colors: [Color(.systemBackground).opacity(0.10),
-                         Color(.systemBackground).opacity(0.50)],
-                startPoint: .top, endPoint: .bottom)
         }
+        .animation(.easeInOut(duration: 0.45), value: tint != nil)
         .ignoresSafeArea()
+    }
+
+    private func loadTint() async {
+        guard let client = store.client(),
+              let url = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080) else { return }
+        if let cached = ImageMemoryCache.shared.dominantTintCached(url) {
+            tint = cached
+            return
+        }
+        tint = await ImageMemoryCache.shared.dominantTint(for: url)
     }
 
     /// The wash's image URL with ItemImage's episode rule: an
@@ -316,9 +333,9 @@ struct DetailView: View {
                 LinearGradient(stops: [
                     .init(color: .black.opacity(0.25), location: 0),
                     .init(color: .clear, location: 0.3),
-                    .init(color: Color(.systemBackground).opacity(0.45), location: 0.58),
-                    .init(color: Color(.systemBackground).opacity(0.55), location: 0.85),
-                    .init(color: Color(.systemBackground).opacity(0.55), location: 1.0),
+                    .init(color: meltColor.opacity(0.45), location: 0.58),
+                    .init(color: meltColor.opacity(0.55), location: 0.85),
+                    .init(color: meltColor.opacity(0.55), location: 1.0),
                 ], startPoint: .top, endPoint: .bottom)
             }
             // Melt, don't cut: the background's alpha fades to zero over

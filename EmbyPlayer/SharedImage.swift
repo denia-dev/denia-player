@@ -163,6 +163,44 @@ final class ImageMemoryCache {
         variantCache.setObject(result, forKey: (url.absoluteString + (heavy ? "#heavy" : "#light")) as NSString)
         return result
     }
+
+    // MARK: dominant tint (detail page theme)
+
+    private let tintCache = NSCache<NSString, UIColor>()
+
+    func dominantTintCached(_ url: URL) -> Color? {
+        tintCache.object(forKey: url.absoluteString as NSString).map { Color(uiColor: $0) }
+    }
+
+    /// The artwork's average colour, deepened into a page tint: the
+    /// hue survives with a moderate saturation, brightness clamped
+    /// into a dark immersive band - the reference design from his
+    /// 2026-11-24 screenshot (white text over the art's own
+    /// dominant tone, the whole page rendered in that colour).
+    func dominantTint(for url: URL) async -> Color? {
+        if let cached = dominantTintCached(url) { return cached }
+        guard let image = await image(for: url), let cg = image.cgImage else { return nil }
+        let ci = CIImage(cgImage: cg)
+        guard let filter = CIFilter(name: "CIAreaAverage",
+                                    parameters: [kCIInputImageKey: ci,
+                                                 kCIInputExtentKey: CIVector(cgRect: ci.extent)]),
+              let output = filter.outputImage else { return nil }
+        var pixel = [UInt8](repeating: 0, count: 4)
+        Self.ciContext.render(output, toBitmap: &pixel, rowBytes: 4,
+                              bounds: CGRect(x: 0, y: 0, width: 1, height: 1),
+                              format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        let average = UIColor(red: CGFloat(pixel[0]) / 255,
+                              green: CGFloat(pixel[1]) / 255,
+                              blue: CGFloat(pixel[2]) / 255, alpha: 1)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        average.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        let tint = UIColor(hue: h,
+                           saturation: min(max(s, 0.16), 0.52),
+                           brightness: min(max(b, 0.30), 0.42),
+                           alpha: 1)
+        tintCache.setObject(tint, forKey: url.absoluteString as NSString)
+        return Color(uiColor: tint)
+    }
 }
 
 /// AsyncImage replacement backed by ImageMemoryCache. Renders empty
