@@ -65,7 +65,6 @@ struct DetailView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 40)
             }
-            .background { scrollingAmbient }
             .containerRelativeFrame(.horizontal)
         }
         .ignoresSafeArea(edges: .top)
@@ -124,100 +123,37 @@ struct DetailView: View {
         .sheet(isPresented: $showAllEpisodes) { allEpisodesSheet }
     }
 
-    /// The backdrop, washed out, behind the whole page (SenPlayer's
-    /// ambient tint) instead of a hard white background. It must stay
-    /// VISIBLE as soft color patches down the whole page - SenPlayer's
-    /// background is the art itself, full-bleed. Builds 53-55 veiled it
-    /// at 0.88 over a radius-50 blur: 12% of an averaged-out image is a
-    /// flat slab, which is exactly what he kept rejecting ("背景充满"
-    /// means the art fills the page, not that a seam is blended).
+    /// The page background, SenPlayer's actual recipe (studied from
+    /// his Sen screenshots, 2026-11-24): ONE copy of the artwork,
+    /// baked into a heavy blur, filling the WHOLE screen edge to
+    /// edge, under a veil that deepens toward the bottom. The sharp
+    /// hero at the top mask-melts into this layer; below the hero
+    /// the page is just this smooth wash - no tiles, no second
+    /// scrolling layer, no seams. The tiled/mirrored stack this
+    /// replaces rendered at the padded content width inside the
+    /// scroll view, so its edges stood out as a hard vertical
+    /// "curtain" down the middle of the page against the full-bleed
+    /// fixed layer (his v1.06 screenshot).
     private var ambientBackground: some View {
-        frostedAmbient
-            .scaleEffect(1.2)
-            .ignoresSafeArea()
-    }
-
-    /// The ambient artwork with SenPlayer-style PROGRESSIVE defocus:
-    /// near the top the picture stays almost legible (blur 10), melting
-    /// into a heavy blur (36) further down, under a veil that deepens
-    /// toward the bottom. Builds 85-86 ran one uniform blur 40 plus a
-    /// flat 0.35 veil across the whole layer - enough processing to
-    /// homogenise ANY framing (fill-crop in 85, tiled in 86) into the
-    /// same pastel mush, which is why 86 looked unchanged to him while
-    /// Sen's background shapes stay readable. No scaleEffect here: the
-    /// scrolling layer must keep the tiles' framing aligned with the
-    /// hero's art for the melt; only the fixed background scales up.
-    private var frostedAmbient: some View {
         ZStack {
-            ambientBackdrop(heavy: true)
-            ambientBackdrop(heavy: false)
-                .mask(
-                    LinearGradient(
-                        gradient: Gradient(stops: [
-                            .init(color: .white, location: 0),
-                            .init(color: .white, location: 0.35),
-                            .init(color: .clear, location: 0.7),
-                            .init(color: .clear, location: 1)
-                        ]),
-                        startPoint: .top, endPoint: .bottom)
-                )
+            if let client = store.client() {
+                // Poster wash underneath (the only layer for items
+                // without artwork), artwork wash over it; both fill
+                // the same full-screen frame, so no boundary can
+                // ever show between them.
+                AmbientVariantImage(url: washURL(client: client), heavy: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                AmbientVariantImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), heavy: true)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+            }
             LinearGradient(
                 colors: [Color(.systemBackground).opacity(0.10),
                          Color(.systemBackground).opacity(0.50)],
                 startPoint: .top, endPoint: .bottom)
         }
-    }
-
-    /// Full-bleed artwork for the ambient layers ONLY. The hero renders
-    /// the same art sharp and fit-width (build 84), but the ambient must
-    /// FILL its whole frame - when it reused the hero's fit-width view,
-    /// the blurred wash stopped where the sharp art ended and everything
-    /// below read as one flat white sheet with a hard line at the art's
-    /// lower edge (his build-84 report). Build 85 filled the frame with
-    /// a center-crop zoom of the art instead: blur yes, but all color
-    /// and no picture - his verdict was the IMAGE ITSELF has to be
-    /// pulled down the page like SenPlayer's. So the ambient now tiles
-    /// the artwork at its natural full-width aspect down the whole
-    /// layer, each tile mirrored against the previous one (the
-    /// reflection trick): every seam is pixel-continuous, shapes stay
-    /// in their horizontal lanes, and under the callers' blur + veil
-    /// the stack reads as one long defocused artwork behind the page.
-    /// The defocus is BAKED into cached bitmaps (heavy/light
-    /// variants in ImageMemoryCache) instead of two live .blur()
-    /// passes over this stack: the live version recomposited four
-    /// huge filtered surfaces on every frame of the push/zoom
-    /// transition and every scroll tick, which read as stiffness
-    /// when entering the page (and let the page behind bleed
-    /// through while the filters warmed up).
-    @ViewBuilder
-    private func ambientBackdrop(heavy: Bool) -> some View {
-        if let client = store.client() {
-            ZStack(alignment: .top) {
-                // Fallback wash (poster for items without artwork),
-                // frozen on the entry item like the hero placeholder.
-                AmbientVariantImage(url: washURL(client: client), heavy: heavy)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                VStack(spacing: 0) {
-                    ForEach(0..<10, id: \.self) { tile in
-                        // Same URL as the hero's artwork (1080): one
-                        // shared fetch/decode feeds the hero and every
-                        // tile via ImageMemoryCache. Requested from the
-                        // first frame (artworkItemID needs no fetch);
-                        // when there is no artwork the tiles stay
-                        // empty and the wash underneath shows through.
-                        AmbientVariantImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), heavy: heavy)
-                            .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                            .scaleEffect(y: tile % 2 == 1 ? -1 : 1)
-                            .clipped()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .clipped()
-            }
-        } else {
-            EmptyView()
-        }
+        .ignoresSafeArea()
     }
 
     /// The wash's image URL with ItemImage's episode rule: an
@@ -227,20 +163,6 @@ struct DetailView: View {
         let sourceID = (kind == "Primary" && item.type == "Episode" && item.ImageTags?["Primary"] == nil)
             ? (item.SeriesId ?? item.Id) : item.Id
         return client.imageURL(itemID: sourceID, kind: kind)
-    }
-
-    /// The ambient as a layer behind the SCROLL CONTENT itself. The
-    /// hero's masked melt fades into THIS layer, and this layer then
-    /// continues uninterrupted below the hero - one layer, no boundary
-    /// anywhere. Builds 53-57 faded the hero into the fixed viewport
-    /// background instead: a differently-framed copy of the same art,
-    /// whose local tone at the hero's lower edge never matched the
-    /// fade's end state, leaving the short step he flagged under the
-    /// play capsule. The fixed ambient stays on the ScrollView for
-    /// rubber-band regions only.
-    private var scrollingAmbient: some View {
-        frostedAmbient
-            .clipped()
     }
 
     /// Fixed SenPlayer-style top chrome: a glass back circle on the left,
