@@ -339,7 +339,7 @@ struct HomeView: View {
         do {
             libraries = try await client.libraries()
             resume = try await client.resumeItems()
-            latest = (try? await client.latestItems()) ?? []
+            latest = await client.latestItems()
         } catch {
             errorText = error.localizedDescription
         }

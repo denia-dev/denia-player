@@ -302,14 +302,35 @@ struct EmbyClient {
         return response.Items
     }
 
-    func latestItems() async throws -> [EmbyItem] {
+    /// Recently added movies/series for the home hero and the
+    /// 最新添加 rail. The dedicated /Items/Latest endpoint answers an
+    /// empty list (or errors) on some servers even for large
+    /// libraries - which silently collapsed the home hero to the
+    /// resume items - so fall back to the plain items query sorted
+    /// by creation date, the same set through a door that works
+    /// everywhere else in the app.
+    func latestItems() async -> [EmbyItem] {
         let query = [
             URLQueryItem(name: "Limit", value: "12"),
             URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
             URLQueryItem(name: "Fields", value: "Overview"),
             URLQueryItem(name: "EnableUserData", value: "true"),
         ]
-        return try await send(makeRequest(path: "/Users/\(server.userID)/Items/Latest", query: query))
+        if let items: [EmbyItem] = try? await send(makeRequest(path: "/Users/\(server.userID)/Items/Latest", query: query)),
+           !items.isEmpty {
+            return items
+        }
+        let fallbackQuery = [
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
+            URLQueryItem(name: "SortBy", value: "DateCreated"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "Limit", value: "12"),
+            URLQueryItem(name: "Fields", value: "Overview"),
+            URLQueryItem(name: "EnableUserData", value: "true"),
+        ]
+        let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: fallbackQuery))
+        return response?.Items ?? []
     }
 
     func favoriteItems() async throws -> [EmbyItem] {
