@@ -354,10 +354,17 @@ struct MPVPlayerScreen: View {
         // bitmap subtitles into them and PiP shows no subtitles at
         // all. Software decoding hands the renderer ordinary frames
         // it CAN draw subtitles into - in PiP and full screen alike.
+        // Dolby Vision sources are the exception: the native output
+        // REJECTS software-decoded DV frames outright ("software
+        // Dolby Vision needs libplacebo reshaping"), so DV titles
+        // keep hardware decoding here; if a title's metadata hides
+        // its DV-ness, the runtime fallback in the screen catches
+        // the engine's error and rebuilds with hardware decoding.
+        let videoStream = launch.source?.MediaStreams?.first { $0.type == "Video" }
         _player = State(initialValue: MPVPlayerScreen.makePlayer(
             videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
                 ? .sampleBuffer : .metal,
-            forceSoftware: continuingVLCSession))
+            forceSoftware: continuingVLCSession && !(videoStream?.isDolbyVision ?? false)))
     }
 
     static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput, forceSoftware: Bool = false) -> MPVPlayer {
@@ -460,6 +467,11 @@ struct MPVPlayerScreen: View {
     @State private var showChapters = false
     @State private var endWatchTask: Task<Void, Never>?
     @State private var sleepTask: Task<Void, Never>?
+    /// Set when the forced-software player had to be rebuilt with
+    /// hardware decoding (Dolby Vision the metadata didn't declare).
+    @State private var softwareFallbackUsed = false
+    /// Start position for a rebuilt player (hardware fallback).
+    @State private var resumeOverride: Double?
 
     var body: some View {
         ZStack {
@@ -617,6 +629,16 @@ struct MPVPlayerScreen: View {
         .onChange(of: player.pictureInPicture.isActive) { wasActive, active in
             if wasActive && !active && playbackScenePhase == .background && !Prefs.backgroundAudio { player.pause() }
         }
+        .onChange(of: player.lastError) { _, error in
+            // Software-decoded Dolby Vision is rejected by the native
+            // output even when the server metadata didn't declare DV:
+            // rebuild this handoff session with hardware decoding so
+            // the title plays (PiP without subtitles) instead of
+            // sitting on the engine's error text.
+            guard let error, continuingVLCSession, !softwareFallbackUsed,
+                  case .nativeVideoOutputUnavailable = error else { return }
+            Task { @MainActor in await fallbackToHardware() }
+        }
         .overlay(alignment: .top) { osdBar }
         .task { await osdTicker() }
         .task { await ensurePlayerRatings() }
@@ -666,9 +688,31 @@ struct MPVPlayerScreen: View {
 
     // MARK: - playback session
 
+    /// Effective start position: the handoff/entry position, or the
+    /// spot reached before a hardware-fallback rebuild.
+    private var startAt: Double { resumeOverride ?? startSeconds }
+
+    /// The forced-software player refused this title (undeclared
+    /// Dolby Vision): rebuild with hardware decoding and restart at
+    /// the same position. Plays exactly like the pre-software build.
+    private func fallbackToHardware() async {
+        softwareFallbackUsed = true
+        let position = player.position.secondsValue
+        if position > 1 { resumeOverride = position }
+        endWatchTask?.cancel()
+        player.stop()
+        player = MPVPlayerScreen.makePlayer(
+            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
+                ? .sampleBuffer : .metal,
+            forceSoftware: false)
+        playerGeneration += 1
+        preparedGeneration = -1
+        await startPlayback()
+    }
+
     private func startPlayback() async {
         if let localFileURL {
-            player.load(localFileURL, startTime: startSeconds > 0 ? .seconds(startSeconds) : nil)
+            player.load(localFileURL, startTime: startAt > 0 ? .seconds(startAt) : nil)
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
             let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
@@ -688,7 +732,7 @@ struct MPVPlayerScreen: View {
         session = (source.Id, launch.sessionID)
         currentStreamURL = launch.url
         currentSource = source
-        player.load(launch.url, startTime: startSeconds > 0 ? .seconds(startSeconds) : nil)
+        player.load(launch.url, startTime: startAt > 0 ? .seconds(startAt) : nil)
         player.requestVideoFeatures([.nativeSubtitles])
         player.setSubtitlesVisible(true)
         let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
@@ -698,7 +742,7 @@ struct MPVPlayerScreen: View {
         Task { await prepareAudio() }
         Task { await applySecondarySubtitle() }
         if !continuingVLCSession {
-            await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: launch.sessionID, positionSeconds: startSeconds)
+            await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: launch.sessionID, positionSeconds: startAt)
         }
         scheduleHide()
         startSleepTimer()

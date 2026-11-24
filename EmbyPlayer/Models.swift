@@ -139,6 +139,7 @@ struct EmbyMediaStream: Decodable {
         case Codec, Language, DisplayTitle, IsDefault, IsExternal, IsTextSubtitleStream, DeliveryUrl
         case Width, Height, BitRate, Channels, SampleRate
         case AverageFrameRate, RealFrameRate
+        case VideoRange, VideoRangeType
     }
     let Width: Int?
     let Height: Int?
@@ -154,6 +155,14 @@ struct EmbyMediaStream: Decodable {
     let IsExternal: Bool?
     let IsTextSubtitleStream: Bool?
     let DeliveryUrl: String?
+    let VideoRange: String?
+    let VideoRangeType: String?
+
+    /// Dolby Vision source (any profile / base-layer combination).
+    var isDolbyVision: Bool {
+        (VideoRange ?? "").uppercased().contains("DOVI")
+            || (VideoRangeType ?? "").uppercased().hasPrefix("DOVI")
+    }
 }
 
 struct EmbyPlaybackInfo: Decodable {

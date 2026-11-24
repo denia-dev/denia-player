@@ -620,7 +620,7 @@ struct VLCPlayerView: View {
                 switchToMPV(position.isFinite && position >= 0 ? position : startSeconds)
             }
         } message: {
-            Text("将从当前位置重新打开影片，改用软解码播放，画中画里 PGS 字幕会正常显示（软解更耗电、发热）。小窗按钮出现后再点它。退出并重开此片即可恢复 VLC。")
+            Text("将从当前位置重新打开影片。非 DV 片改用软解码，画中画里 PGS 字幕会正常显示（软解更耗电、发热）；DV 片画中画仍无字幕。小窗按钮出现后再点它。退出并重开此片即可恢复 VLC。")
         }
         .onDisappear {
             hideTask?.cancel()
