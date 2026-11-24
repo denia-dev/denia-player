@@ -1,5 +1,6 @@
 import SwiftUI
 import UIKit
+import CoreImage
 
 /// One decoded copy of each remote image, shared by every view that
 /// asks for it. SwiftUI's AsyncImage fetches and decodes PER INSTANCE:
@@ -46,6 +47,78 @@ final class ImageMemoryCache {
         }
         return image
     }
+
+    // MARK: - hero blank detection
+
+    /// Hero artwork: nil when the download fails OR the returned
+    /// image is a blank placeholder, so the caller can drop the item
+    /// from the carousel instead of showing an empty slab.
+    func heroImage(for url: URL) async -> UIImage? {
+        guard let image = await image(for: url) else { return nil }
+        return Self.isVisuallyBlank(image) ? nil : image
+    }
+
+    /// True when the image is (near-)uniform in colour, sampled on a
+    /// 16x16 downscale. Some servers answer a backdrop request with a
+    /// blank image instead of a 404.
+    static func isVisuallyBlank(_ image: UIImage) -> Bool {
+        let side = 16
+        var pixels = [UInt8](repeating: 0, count: side * side * 4)
+        guard let cg = image.cgImage,
+              let context = CGContext(data: &pixels, width: side, height: side,
+                                      bitsPerComponent: 8, bytesPerRow: side * 4,
+                                      space: CGColorSpaceCreateDeviceRGB(),
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)
+        else { return false }
+        context.draw(cg, in: CGRect(x: 0, y: 0, width: side, height: side))
+        var minR = 255, maxR = 0, minG = 255, maxG = 0, minB = 255, maxB = 0
+        for i in stride(from: 0, to: pixels.count, by: 4) {
+            let r = Int(pixels[i]), g = Int(pixels[i + 1]), b = Int(pixels[i + 2])
+            minR = min(minR, r); maxR = max(maxR, r)
+            minG = min(minG, g); maxG = max(maxG, g)
+            minB = min(minB, b); maxB = max(maxB, b)
+        }
+        return maxR - minR < 6 && maxG - minG < 6 && maxB - minB < 6
+    }
+
+    // MARK: - baked ambient blur
+
+    private let ambientCache = NSCache<NSURL, UIImage>()
+    private static let ciContext = CIContext(options: [.useSoftwareRenderer: false])
+
+    func ambientCached(_ url: URL) -> UIImage? {
+        ambientCache.object(forKey: url as NSURL)
+    }
+
+    /// A small pre-blurred copy for ambient background washes. Two
+    /// full-screen live .blur() layers crossfading on every carousel
+    /// step were the home page's main smoothness cost; a 96px baked
+    /// blur scaled back up reads as the same wash and composites for
+    /// almost nothing.
+    func ambient(for url: URL) async -> UIImage? {
+        if let hit = ambientCached(url) { return hit }
+        guard let image = await image(for: url) else { return nil }
+        let targetWidth: CGFloat = 96
+        let scale = targetWidth / max(image.size.width, 1)
+        let targetSize = CGSize(width: targetWidth, height: max(1, image.size.height * scale))
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        let small = UIGraphicsImageRenderer(size: targetSize, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: targetSize))
+        }
+        var result = small
+        if let cg = small.cgImage {
+            let ci = CIImage(cgImage: cg)
+            if let filter = CIFilter(name: "CIGaussianBlur",
+                                     parameters: [kCIInputImageKey: ci, kCIInputRadiusKey: 6]),
+               let output = filter.outputImage,
+               let blurred = Self.ciContext.createCGImage(output, from: ci.extent) {
+                result = UIImage(cgImage: blurred)
+            }
+        }
+        ambientCache.setObject(result, forKey: url as NSURL)
+        return result
+    }
 }
 
 /// AsyncImage replacement backed by ImageMemoryCache. Renders empty
@@ -79,6 +152,34 @@ struct SharedImage: View {
         .task(id: url) {
             if uiImage == nil, let url {
                 uiImage = await ImageMemoryCache.shared.image(for: url)
+            }
+        }
+    }
+}
+
+/// Fill view for ambient backgrounds, backed by the cache's small
+/// pre-blurred copies (see ImageMemoryCache.ambient).
+struct AmbientImageView: View {
+    let url: URL?
+
+    @State private var uiImage: UIImage?
+
+    init(url: URL?) {
+        self.url = url
+        _uiImage = State(initialValue: url.flatMap { ImageMemoryCache.shared.ambientCached($0) })
+    }
+
+    var body: some View {
+        ZStack {
+            if let uiImage {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+            }
+        }
+        .task(id: url) {
+            if uiImage == nil, let url {
+                uiImage = await ImageMemoryCache.shared.ambient(for: url)
             }
         }
     }

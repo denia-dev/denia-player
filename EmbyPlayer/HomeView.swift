@@ -1,10 +1,16 @@
 import SwiftUI
 
-/// Image URL helper bound to the active client.
+/// Image view bound to the active client, backed by the shared
+/// decoded-image cache: one download and decode per URL across the
+/// whole app, instant paint on revisit (AsyncImage re-fetched and
+/// re-decoded per instance, which taxed every rail and grid).
 struct ItemImage: View {
     let item: EmbyItem
     let client: EmbyClient
     var kind: String = "Primary"
+
+    @State private var uiImage: UIImage?
+    @State private var failed = false
 
     /// Shown when the server has no usable image: a titled tile instead of
     /// an invisible hole in the grid.
@@ -25,14 +31,33 @@ struct ItemImage: View {
         }
     }
 
-    var body: some View {
+    private var url: URL {
         let sourceID = (kind == "Primary" && item.type == "Episode" && item.ImageTags?["Primary"] == nil)
             ? (item.SeriesId ?? item.Id) : item.Id
-        return AsyncImage(url: client.imageURL(itemID: sourceID, kind: kind)) { phase in
-            switch phase {
-            case .success(let image): image.resizable().scaledToFill()
-            case .failure: imagePlaceholder
-            default: Rectangle().fill(.quaternary)
+        return client.imageURL(itemID: sourceID, kind: kind)
+    }
+
+    var body: some View {
+        ZStack {
+            if let uiImage {
+                Image(uiImage: uiImage).resizable().scaledToFill()
+            } else if failed {
+                imagePlaceholder
+            } else {
+                Rectangle().fill(.quaternary)
+            }
+        }
+        .task(id: url) {
+            if let hit = ImageMemoryCache.shared.cached(url) {
+                uiImage = hit
+                return
+            }
+            guard uiImage == nil else { return }
+            failed = false
+            if let loaded = await ImageMemoryCache.shared.image(for: url) {
+                uiImage = loaded
+            } else {
+                failed = true
             }
         }
     }
@@ -41,6 +66,42 @@ struct ItemImage: View {
 /// Backdrop when the item has one, poster otherwise (wide cards).
 func wideImageKind(_ item: EmbyItem) -> String {
     (item.BackdropImageTags?.isEmpty == false) ? "Backdrop" : "Primary"
+}
+
+/// Hero artwork with blank rejection: when the image download fails
+/// or the returned image is a blank placeholder, the item reports
+/// itself through onBlank and the carousel drops it. One retry first,
+/// so a network hiccup does not cost a good hero its slot.
+private struct HeroArtwork: View {
+    let item: EmbyItem
+    let client: EmbyClient
+    let onBlank: (String) -> Void
+
+    @State private var uiImage: UIImage?
+
+    var body: some View {
+        ZStack {
+            if let uiImage {
+                Image(uiImage: uiImage).resizable().scaledToFill()
+            } else {
+                Rectangle().fill(.quaternary)
+            }
+        }
+        .task(id: item.Id) {
+            let url = client.imageURL(itemID: item.Id, kind: wideImageKind(item))
+            if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
+                uiImage = loaded
+                return
+            }
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
+                uiImage = loaded
+            } else if !Task.isCancelled {
+                onBlank(item.Id)
+            }
+        }
+    }
 }
 
 struct HomeView: View {
@@ -56,12 +117,24 @@ struct HomeView: View {
     @State private var heroMeta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?)] = [:]
     @State private var showServers = false
     @State private var errorText: String?
+    /// Hero items dropped at runtime because their artwork came back
+    /// missing or blank (session-scoped; a relaunch retries them).
+    @State private var heroExcluded: Set<String> = []
 
-    private var heroItems: [EmbyItem] { latest.isEmpty ? resume : latest }
+    /// Carousel candidates: the latest list (resume as fallback),
+    /// minus anything with no artwork at all and anything whose art
+    /// already proved blank in this session.
+    private var heroItems: [EmbyItem] {
+        let source = latest.isEmpty ? resume : latest
+        return source.filter {
+            !heroExcluded.contains($0.Id)
+                && ($0.BackdropImageTags?.isEmpty == false || $0.ImageTags?["Primary"] != nil)
+        }
+    }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 26) {
+            LazyVStack(alignment: .leading, spacing: 26) {
                 hero
                 if let errorText {
                     Text(errorText).foregroundStyle(.red).font(.footnote).padding(.horizontal)
@@ -146,17 +219,16 @@ struct HomeView: View {
     private func ambientLayer(scale: CGFloat) -> some View {
         ZStack {
             if let item = currentHeroItem, let client = store.client() {
-                ItemImage(item: item, client: client, kind: wideImageKind(item))
+                AmbientImageView(url: client.imageURL(itemID: item.Id, kind: wideImageKind(item)))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
-                    .blur(radius: 26)
                     .scaleEffect(scale)
                     .id(item.Id)
                     .transition(.opacity)
             }
             Color(.systemBackground).opacity(0.55)
         }
-        .animation(.easeInOut(duration: 0.45), value: heroIndex)
+        .animation(.easeInOut(duration: 0.45), value: currentHeroItem?.Id)
     }
 
     private var homeAmbientScrolling: some View {
@@ -172,16 +244,29 @@ struct HomeView: View {
     private var hero: some View {
         ZStack(alignment: .bottom) {
             if let client = store.client(), !heroItems.isEmpty {
-                TabView(selection: $heroIndex) {
-                    ForEach(Array(heroItems.enumerated()), id: \.element.Id) { index, item in
-                        NavigationLink(value: Route.detail(item)) {
-                            heroCell(item, client: client)
+                // Paging ScrollView instead of a page-style TabView:
+                // the TabView's settle animation held hit-testing on
+                // the incoming page (taps landed dead for a beat after
+                // every swipe/auto-advance), while the scroll view
+                // takes touches the moment the finger lands.
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 0) {
+                        ForEach(Array(heroItems.enumerated()), id: \.element.Id) { index, item in
+                            NavigationLink(value: Route.detail(item)) {
+                                heroCell(item, client: client)
+                            }
+                            .buttonStyle(.plain)
+                            .containerRelativeFrame(.horizontal)
+                            .id(index)
                         }
-                        .buttonStyle(.plain)
-                        .tag(index)
                     }
+                    .scrollTargetLayout()
                 }
-                .tabViewStyle(.page(indexDisplayMode: .never))
+                .scrollTargetBehavior(.paging)
+                .scrollPosition(id: Binding<Int?>(
+                    get: { heroIndex },
+                    set: { if let newValue = $0 { heroIndex = newValue } }
+                ))
                 .frame(height: 540)
 
                 HStack(spacing: 6) {
@@ -233,14 +318,10 @@ struct HomeView: View {
     }
 
     private func heroCell(_ item: EmbyItem, client: EmbyClient) -> some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
                 if item.ImageTags?["Logo"] != nil {
-                    AsyncImage(url: client.imageURL(itemID: item.Id, kind: "Logo")) { phase in
-                        if case .success(let image) = phase {
-                            image.resizable().scaledToFit()
-                        }
-                    }
-                    .frame(maxWidth: 280, maxHeight: 84)
+                    SharedImage(url: client.imageURL(itemID: item.Id, kind: "Logo"), fill: false)
+                        .frame(maxWidth: 280, maxHeight: 84)
                 } else {
                     Text(item.Name)
                         .font(.system(size: 27, weight: .bold))
@@ -265,10 +346,12 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .background {
             ZStack {
-                ItemImage(item: item, client: client, kind: wideImageKind(item))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                    .zoomSource(id: item.Id, ns: zoomNS)
+                HeroArtwork(item: item, client: client) { id in
+                    heroExcluded.insert(id)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .clipped()
+                .zoomSource(id: item.Id, ns: zoomNS)
                 LinearGradient(stops: [
                     .init(color: .clear, location: 0),
                     .init(color: .clear, location: 0.35),
@@ -318,33 +401,50 @@ struct HomeView: View {
         let meta = heroMeta[item.Id]
         let community = item.CommunityRating ?? meta?.community ?? nil
         let critic = item.CriticRating ?? meta?.critic ?? nil
-        if community != nil || critic != nil {
-            HStack(spacing: 20) {
+        let ticks = item.RunTimeTicks ?? meta?.runTimeTicks ?? nil
+        if community != nil || critic != nil || (item.type == "Movie" && ticks != nil) {
+            HStack(spacing: 18) {
                 if let community {
                     HStack(spacing: 6) {
-                        ratingBadge("TMDB", background: Color(red: 0.05, green: 0.65, blue: 0.85))
+                        ratingBadge("TMDB", fill: AnyShapeStyle(LinearGradient(
+                            colors: [Color(red: 0.01, green: 0.71, blue: 0.89),
+                                     Color(red: 0.56, green: 0.81, blue: 0.63)],
+                            startPoint: .leading, endPoint: .trailing)))
                         Text(String(format: "%.1f", community))
-                            .font(.subheadline.weight(.bold))
+                            .font(.system(size: 15, weight: .bold))
                     }
                 }
                 if let critic {
                     HStack(spacing: 6) {
-                        ratingBadge("RT", background: Color(red: 0.85, green: 0.2, blue: 0.15))
+                        ratingBadge("RT", fill: AnyShapeStyle(Color(red: 0.85, green: 0.2, blue: 0.15)))
                         Text("\(Int(critic.rounded()))%")
-                            .font(.subheadline.weight(.bold))
+                            .font(.system(size: 15, weight: .bold))
                     }
                 }
+                if item.type == "Movie", let ticks, ticks > 0 {
+                    Text(runtimeText(seconds: Double(ticks) / 10_000_000))
+                        .font(.subheadline.weight(.medium))
+                        .foregroundStyle(.secondary)
+                }
             }
+            .padding(.top, 2)
         }
     }
 
-    private func ratingBadge(_ label: String, background: Color) -> some View {
+    private func ratingBadge(_ label: String, fill: AnyShapeStyle) -> some View {
         Text(label)
             .font(.system(size: 9, weight: .black))
             .foregroundStyle(.white)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2.5)
-            .background(background, in: RoundedRectangle(cornerRadius: 4))
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(fill, in: Capsule())
+    }
+
+    private func runtimeText(seconds: Double) -> String {
+        let totalMinutes = Int(seconds) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        return hours > 0 ? "\(hours)小时\(minutes)分" : "\(minutes)分钟"
     }
 
     private func sectionHeader(_ title: String, count: Int?, action: (() -> Void)? = nil) -> some View {
@@ -378,7 +478,7 @@ struct HomeView: View {
             latest = await client.latestItems()
             // Start (and refresh) on a random hero so the home page
             // does not open on the same title every time.
-            if latest.count > 1 { heroIndex = Int.random(in: 0..<latest.count) }
+            if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
             await loadHeroMeta(client: client)
         } catch {
             errorText = error.localizedDescription
