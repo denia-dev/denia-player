@@ -392,7 +392,7 @@ struct EmbyClient {
                 URLQueryItem(name: "SortBy", value: sortBy),
                 URLQueryItem(name: "SortOrder", value: "Descending"),
                 URLQueryItem(name: "Limit", value: String(limit)),
-                URLQueryItem(name: "Fields", value: "Overview,Genres"),
+                URLQueryItem(name: "Fields", value: "Overview,Genres,ProviderIds"),
                 URLQueryItem(name: "EnableUserData", value: "true"),
             ]
             let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))

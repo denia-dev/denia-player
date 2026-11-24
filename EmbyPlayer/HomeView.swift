@@ -138,7 +138,33 @@ struct HomeView: View {
         return source.filter {
             !heroExcluded.contains($0.Id)
                 && ($0.BackdropImageTags?.isEmpty == false || $0.ImageTags?["Primary"] != nil)
+                && heroRatingsVerdict($0)
         }
+    }
+
+    /// His 2026-11-24 rule: 没有三个评分的都不要出现在轮播 - a hero
+    /// needs at least three rating sources. The count is conclusive
+    /// once the MDBList lookup has completed (or the item has no
+    /// provider IDs to look up at all, leaving only the server's
+    /// two); while a lookup is still in flight the item stays
+    /// provisionally and drops out the moment its count lands < 3.
+    private func heroRatingsVerdict(_ item: EmbyItem) -> Bool {
+        let external = ratingsStore.byItemID[item.Id]
+        let meta = heroMeta[item.Id]
+        let hasIDs = item.ProviderIds?["Imdb"] != nil || item.ProviderIds?["Tmdb"] != nil
+            || meta?.imdbID != nil || meta?.tmdbID != nil
+        if external == nil, hasIDs, !ratingsStore.checked.contains(item.Id) {
+            return true
+        }
+        var count = 0
+        if item.CommunityRating != nil || meta?.community != nil || external?.tmdb != nil { count += 1 }
+        if external?.imdb != nil { count += 1 }
+        if item.CriticRating != nil || meta?.critic != nil || external?.rtCritics != nil { count += 1 }
+        if external?.rtAudience != nil { count += 1 }
+        if external?.letterboxd != nil { count += 1 }
+        if external?.metacritic != nil { count += 1 }
+        if external?.trakt != nil { count += 1 }
+        return count >= 3
     }
 
     var body: some View {

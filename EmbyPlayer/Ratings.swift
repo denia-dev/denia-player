@@ -112,6 +112,9 @@ final class RatingsStore {
     static let shared = RatingsStore()
 
     private(set) var byItemID: [String: ExternalRatings] = [:]
+    /// Items whose lookup has COMPLETED (with or without results),
+    /// so callers can tell "no data" apart from "not asked yet".
+    private(set) var checked: Set<String> = []
     private var fetchedAt: [String: Date] = [:]
     private var inFlight: Set<String> = []
 
@@ -140,9 +143,10 @@ final class RatingsStore {
         inFlight.insert(itemID)
         Task {
             defer { inFlight.remove(itemID) }
-            guard let key = await MDBListClient.apiKey(),
-                  let ratings = await MDBListClient.ratings(imdbID: imdbID, tmdbID: tmdbID, type: type, apiKey: key)
-            else { return }
+            guard let key = await MDBListClient.apiKey() else { return }
+            let ratings = await MDBListClient.ratings(imdbID: imdbID, tmdbID: tmdbID, type: type, apiKey: key)
+            checked.insert(itemID)
+            guard let ratings else { return }
             byItemID[itemID] = ratings
             fetchedAt[itemID] = Date()
             persist()
