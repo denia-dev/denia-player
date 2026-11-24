@@ -132,6 +132,7 @@ final class ShellState {
 enum Route: Hashable {
     case detail(EmbyItem)
     case library(EmbyItem)
+    case person(id: String, name: String)
     case interfacePrefs
     case osdPrefs
     case buttonPrefs
@@ -180,6 +181,8 @@ extension View {
                 DetailView(item: item, onBack: onPop)
             case .library(let item):
                 LibraryView(library: item)
+            case .person(let id, let name):
+                PersonItemsView(personID: id, name: name)
             case .interfacePrefs:
                 InterfacePrefsView()
             case .osdPrefs:

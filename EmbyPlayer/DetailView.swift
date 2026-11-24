@@ -16,6 +16,7 @@ struct DetailView: View {
     @State private var seasons: [EmbyItem] = []
     @State private var selectedSeasonID: String?
     @State private var episodes: [EmbyItem] = []
+    @State private var similar: [EmbyItem] = []
     @State private var episodeRange = 0
     @State private var playRequest: PlayRequest?
     @State private var errorText: String?
@@ -54,6 +55,7 @@ struct DetailView: View {
                     if seriesID != nil { seriesSection }
                     castSection
                     mediaInfoSection
+                    similarSection
                 }
                 .padding(.horizontal)
                 .padding(.bottom, 40)
@@ -390,6 +392,7 @@ struct DetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(alignment: .top, spacing: 14) {
                         ForEach(people.prefix(15)) { person in
+                            NavigationLink(value: Route.person(id: person.Id, name: person.Name)) {
                             VStack(alignment: .leading, spacing: 4) {
                                 AsyncImage(url: client.imageURL(itemID: person.Id, kind: "Primary", maxHeight: 220)) { phase in
                                     if case .success(let image) = phase {
@@ -407,6 +410,29 @@ struct DetailView: View {
                                 }
                             }
                             .frame(width: 92)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - similar
+
+    @ViewBuilder
+    private var similarSection: some View {
+        if !similar.isEmpty, let client = store.client() {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("相似推荐").font(.title3.bold())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(similar) { other in
+                            NavigationLink(value: Route.detail(other)) {
+                                PosterCell(item: other, client: client, width: 104)
+                            }
+                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -692,6 +718,9 @@ struct DetailView: View {
     private func load() async {
         guard let client = store.client() else { return }
         detail = try? await client.item(id: item.Id)
+        if item.type == "Movie" || item.type == "Series" {
+            similar = (try? await client.similarItems(itemID: item.Id)) ?? []
+        }
         if let seriesID {
             seasons = (try? await client.seasons(seriesID: seriesID)) ?? []
             let preferred = seasons.first(where: { $0.Id == current.SeasonId }) ?? seasons.first

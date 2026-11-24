@@ -266,6 +266,34 @@ struct EmbyClient {
         return response.Items
     }
 
+    /// Items Emby rates as similar to the given one (same endpoint
+    /// SenPlayer's detail page uses for its recommendation row).
+    func similarItems(itemID: String) async throws -> [EmbyItem] {
+        let query = [
+            URLQueryItem(name: "UserId", value: server.userID),
+            URLQueryItem(name: "Limit", value: "12"),
+            URLQueryItem(name: "Fields", value: "Overview,Genres"),
+        ]
+        let response: EmbyItemsResponse = try await send(makeRequest(path: "/Items/\(itemID)/Similar", query: query))
+        return response.Items
+    }
+
+    /// Everything in the library featuring one person, newest first -
+    /// backs the cast tap-through page.
+    func itemsByPerson(personID: String) async throws -> [EmbyItem] {
+        let query = [
+            URLQueryItem(name: "PersonIds", value: personID),
+            URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "SortBy", value: "PremiereDate"),
+            URLQueryItem(name: "SortOrder", value: "Descending"),
+            URLQueryItem(name: "Limit", value: "60"),
+            URLQueryItem(name: "Fields", value: "Overview"),
+        ]
+        let response: EmbyItemsResponse = try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+        return response.Items
+    }
+
     func latestItems() async throws -> [EmbyItem] {
         let query = [
             URLQueryItem(name: "Limit", value: "12"),
