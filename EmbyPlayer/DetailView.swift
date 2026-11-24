@@ -180,14 +180,14 @@ struct DetailView: View {
             if let art = artworkSource {
                 VStack(spacing: 0) {
                     ForEach(0..<10, id: \.self) { tile in
-                        AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 720)) { phase in
-                            if case .success(let image) = phase {
-                                image.resizable().scaledToFill()
-                            }
-                        }
-                        .aspectRatio(16.0 / 9.0, contentMode: .fit)
-                        .scaleEffect(y: tile % 2 == 1 ? -1 : 1)
-                        .clipped()
+                        // Same URL as the hero's artwork (1080): one
+                        // shared fetch/decode feeds the hero and every
+                        // tile via ImageMemoryCache, instead of twenty
+                        // AsyncImages each downloading their own copy.
+                        SharedImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080))
+                            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                            .scaleEffect(y: tile % 2 == 1 ? -1 : 1)
+                            .clipped()
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -278,16 +278,17 @@ struct DetailView: View {
     }
 
     /// What the hero shows until the artwork lands: the item's own wide
-    /// image - for an episode its Primary still, the very thumbnail the
-    /// list cell just displayed, so it sits in the image cache and
-    /// paints instantly. Without this underlay the hero starts
-    /// transparent and the PREVIOUS page's backdrop shows through
-    /// during the push transition, flashing a foreign show's image
-    /// before the real one swaps in (his build-88 screen recording).
+    /// image, requested with the SAME kind the list cells use
+    /// (wideImageKind), so the URL matches the tapped cell's exactly
+    /// and the image is already cached - it paints instantly. Build 89
+    /// forced "Primary" for episodes while the cells load "Backdrop":
+    /// a different URL, a cold fetch, and the transparent window (with
+    /// the previous page showing through) stayed. Without any underlay
+    /// the hero starts transparent and the PREVIOUS page's backdrop
+    /// flashes through during the push (his build-88 screen recording).
     @ViewBuilder
     private func heroPlaceholder(client: EmbyClient) -> some View {
-        ItemImage(item: current, client: client,
-                  kind: current.type == "Episode" ? "Primary" : wideImageKind(current))
+        ItemImage(item: current, client: client, kind: wideImageKind(current))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipped()
     }
@@ -307,13 +308,9 @@ struct DetailView: View {
             if let art = artworkSource {
                 ZStack {
                     heroPlaceholder(client: client)
-                    AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080)) { phase in
-                        if case .success(let image) = phase {
-                            image.resizable().scaledToFill()
-                        }
-                    }
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
+                    SharedImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080), fadeIn: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
                 }
             } else {
                 ItemImage(item: current, client: client, kind: wideImageKind(current))
