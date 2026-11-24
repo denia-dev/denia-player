@@ -335,7 +335,32 @@ struct MPVPlayerScreen: View {
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
 
-    static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput) -> MPVPlayer {
+    init(item: EmbyItem, startSeconds: Double, onPlayNext: ((EmbyItem) -> Void)? = nil,
+         localFileURL: URL? = nil, localHasPGS: Bool = false,
+         localAudioLabels: [String] = [], localSubtitleLabels: [String] = [],
+         launch: MPVLaunch, continuingVLCSession: Bool = false) {
+        self.item = item
+        self.startSeconds = startSeconds
+        self.onPlayNext = onPlayNext
+        self.localFileURL = localFileURL
+        self.localHasPGS = localHasPGS
+        self.localAudioLabels = localAudioLabels
+        self.localSubtitleLabels = localSubtitleLabels
+        self.launch = launch
+        self.continuingVLCSession = continuingVLCSession
+        // A VLC handoff session exists for one reason: PiP on a PGS
+        // title. Native Dolby Vision sample buffers preserve their
+        // RPU frames untouched, so the renderer cannot composite
+        // bitmap subtitles into them and PiP shows no subtitles at
+        // all. Software decoding hands the renderer ordinary frames
+        // it CAN draw subtitles into - in PiP and full screen alike.
+        _player = State(initialValue: MPVPlayerScreen.makePlayer(
+            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
+                ? .sampleBuffer : .metal,
+            forceSoftware: continuingVLCSession))
+    }
+
+    static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput, forceSoftware: Bool = false) -> MPVPlayer {
         // Subtitle styling from the subtitle settings (build 92).
         let subColorValue: String = {
             switch Prefs.subColorName {
@@ -393,7 +418,7 @@ struct MPVPlayerScreen: View {
             additionalOptions: options,
             automaticallyPlays: true,
             dolbyVisionPolicy: Prefs.dvP7Convert ? .profile7Compatibility : .strict,
-            hardwareDecoding: Prefs.decodeMode == "software" ? .disabled : (Prefs.decodeMode == "auto" ? .automatic : .videoToolbox),
+            hardwareDecoding: forceSoftware ? .disabled : (Prefs.decodeMode == "software" ? .disabled : (Prefs.decodeMode == "auto" ? .automatic : .videoToolbox)),
             initialBufferDuration: .seconds(3),
             networkCacheDuration: .seconds(Prefs.cacheSeconds),
             rebufferDuration: .seconds(5),
