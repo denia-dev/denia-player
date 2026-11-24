@@ -388,6 +388,18 @@ struct EmbyClient {
         return components?.url
     }
 
+    /// One entry of an item's backdrop set （艺术图）, by index. An item
+    /// can carry several backdrops; the plain imageURL(kind: "Backdrop")
+    /// only ever reaches index 0.
+    func backdropURL(itemID: String, index: Int, maxHeight: Int = 720) -> URL? {
+        var components = URLComponents(string: server.baseURL + "/Items/\(itemID)/Images/Backdrop/\(index)")
+        components?.queryItems = [
+            URLQueryItem(name: "maxHeight", value: String(maxHeight)),
+            URLQueryItem(name: "api_key", value: server.accessToken),
+        ]
+        return components?.url
+    }
+
     // MARK: - playback (direct play only)
 
     /// Device profile that declares everything the phone can decode locally,

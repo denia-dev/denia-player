@@ -24,6 +24,7 @@ struct DetailView: View {
     @State private var playedOverride: Bool?
     @State private var overviewExpanded = false
     @State private var showAllEpisodes = false
+    @State private var seriesBackdropTags: [String] = []
 
     private var current: EmbyItem { detail ?? item }
     private var isSeries: Bool { current.type == "Series" }
@@ -55,6 +56,7 @@ struct DetailView: View {
                     if seriesID != nil { seriesSection }
                     castSection
                     mediaInfoSection
+                    artworkSection
                     similarSection
                 }
                 .padding(.horizontal)
@@ -187,14 +189,29 @@ struct DetailView: View {
         }
     }
 
-    /// Hero art: an episode without its own backdrop borrows the
-    /// series backdrop instead of falling back to a video still.
+    /// The item's artwork （艺术图 = its backdrop set), resolved once for
+    /// both the hero and the artwork section: the item's own backdrops
+    /// first; an episode without any borrows its series' set (fetched in
+    /// load()). Nil when the server has no artwork for it at all.
+    private var artworkSource: (id: String, tags: [String])? {
+        if let tags = current.BackdropImageTags, !tags.isEmpty {
+            return (current.Id, tags)
+        }
+        if current.type == "Episode", let seriesID = current.SeriesId, !seriesBackdropTags.isEmpty {
+            return (seriesID, seriesBackdropTags)
+        }
+        return nil
+    }
+
+    /// Hero art is rendered from the artwork set (its first backdrop) -
+    /// SenPlayer does the same. The ambient layers reuse heroBackdrop,
+    /// so the whole page's tint follows the artwork too. Only when no
+    /// artwork exists anywhere does the hero fall back to the poster.
     @ViewBuilder
     private var heroBackdrop: some View {
         if let client = store.client() {
-            if current.type == "Episode", let seriesID = current.SeriesId,
-               current.BackdropImageTags?.isEmpty != false {
-                AsyncImage(url: client.imageURL(itemID: seriesID, kind: "Backdrop")) { phase in
+            if let art = artworkSource {
+                AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080)) { phase in
                     if case .success(let image) = phase {
                         image.resizable().scaledToFill()
                     }
@@ -720,9 +737,43 @@ struct DetailView: View {
         Task { await store.client()?.setPlayed(itemID: current.Id, next) }
     }
 
+    /// The item's full backdrop set （艺术图）, as a horizontal strip -
+    /// SenPlayer shows the same section. Renders from artworkSource, so
+    /// episodes display their series' artwork when they have none.
+    @ViewBuilder
+    private var artworkSection: some View {
+        if let art = artworkSource, art.tags.count > 0, let client = store.client() {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("艺术图").font(.title3.bold())
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(Array(art.tags.enumerated()), id: \.offset) { index, _ in
+                            AsyncImage(url: client.backdropURL(itemID: art.id, index: index)) { phase in
+                                if case .success(let image) = phase {
+                                    image.resizable().scaledToFill()
+                                } else {
+                                    Rectangle().fill(.quaternary)
+                                }
+                            }
+                            .frame(width: 252, height: 142)
+                            .clipShape(RoundedRectangle(cornerRadius: 16))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private func load() async {
         guard let client = store.client() else { return }
         detail = try? await client.item(id: item.Id)
+        // An episode's own detail carries no backdrop tags even when its
+        // series has artwork: fetch the series item so artworkSource can
+        // offer the series set to both the hero and the artwork section.
+        if current.type == "Episode", let seriesID = current.SeriesId,
+           current.BackdropImageTags?.isEmpty != false {
+            seriesBackdropTags = (try? await client.item(id: seriesID))?.BackdropImageTags ?? []
+        }
         if item.type == "Movie" || item.type == "Series" {
             similar = (try? await client.similarItems(itemID: item.Id)) ?? []
         }
