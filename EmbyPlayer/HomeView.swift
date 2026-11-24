@@ -244,9 +244,7 @@ struct HomeView: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                 }
-                Text(heroMetaText(item))
-                    .font(.subheadline.weight(.medium))
-                    .foregroundStyle(.secondary)
+                heroMetaLine(item)
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)
@@ -254,24 +252,6 @@ struct HomeView: View {
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                if item.CommunityRating != nil || item.CriticRating != nil {
-                    HStack(spacing: 16) {
-                        Spacer()
-                        if let rating = item.CommunityRating {
-                            HStack(spacing: 5) {
-                                Image(systemName: "star.fill").foregroundStyle(.orange).font(.footnote)
-                                Text(String(format: "%.1f", rating)).font(.subheadline.weight(.semibold))
-                            }
-                        }
-                        if let critic = item.CriticRating {
-                            HStack(spacing: 5) {
-                                Image(systemName: "popcorn").foregroundStyle(.red).font(.footnote)
-                                Text("\(Int(critic.rounded()))%").font(.subheadline.weight(.semibold))
-                            }
-                        }
-                        Spacer()
-                    }
                 }
             }
         .padding(.horizontal, 28)
@@ -304,11 +284,43 @@ struct HomeView: View {
         .clipped()
     }
 
-    private func heroMetaText(_ item: EmbyItem) -> String {
-        var parts: [String] = []
-        if let year = item.ProductionYear { parts.append(String(year)) }
-        parts.append(item.Genres?.first ?? (item.type == "Series" ? "剧集" : "电影"))
-        return parts.joined(separator: " · ")
+    /// One info line under the hero title: ratings first (star +
+    /// popcorn), then year, type/genres and runtime for movies.
+    private func heroMetaLine(_ item: EmbyItem) -> some View {
+        HStack(spacing: 7) {
+            if let rating = item.CommunityRating {
+                HStack(spacing: 3) {
+                    Image(systemName: "star.fill").foregroundStyle(.orange)
+                    Text(String(format: "%.1f", rating)).fontWeight(.semibold).foregroundStyle(.primary)
+                }
+            }
+            if let critic = item.CriticRating {
+                HStack(spacing: 3) {
+                    Image(systemName: "popcorn").foregroundStyle(.red)
+                    Text("\(Int(critic.rounded()))%").fontWeight(.semibold).foregroundStyle(.primary)
+                }
+            }
+            if let year = item.ProductionYear {
+                Text(String(year))
+            }
+            Text(item.type == "Series" ? "剧集" : "电影")
+            if let genres = item.Genres, !genres.isEmpty {
+                Text(genres.prefix(2).joined(separator: " / "))
+            }
+            if item.type == "Movie", item.durationSeconds > 0 {
+                Text(runtimeText(seconds: item.durationSeconds))
+            }
+        }
+        .font(.subheadline.weight(.medium))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+    }
+
+    private func runtimeText(seconds: Double) -> String {
+        let totalMinutes = Int(seconds) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        return hours > 0 ? "\(hours)小时\(minutes)分" : "\(minutes)分钟"
     }
 
     private func sectionHeader(_ title: String, count: Int?, action: (() -> Void)? = nil) -> some View {
@@ -327,7 +339,7 @@ struct HomeView: View {
 
     private func heroAutoAdvance() async {
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(6))
+            try? await Task.sleep(for: .seconds(5))
             guard !heroItems.isEmpty else { continue }
             withAnimation { heroIndex = (heroIndex + 1) % heroItems.count }
         }
@@ -340,6 +352,9 @@ struct HomeView: View {
             libraries = try await client.libraries()
             resume = try await client.resumeItems()
             latest = await client.latestItems()
+            // Start (and refresh) on a random hero so the home page
+            // does not open on the same title every time.
+            if latest.count > 1 { heroIndex = Int.random(in: 0..<latest.count) }
         } catch {
             errorText = error.localizedDescription
         }

@@ -313,7 +313,7 @@ struct EmbyClient {
         let query = [
             URLQueryItem(name: "Limit", value: "12"),
             URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
-            URLQueryItem(name: "Fields", value: "Overview"),
+            URLQueryItem(name: "Fields", value: "Overview,Genres"),
             URLQueryItem(name: "EnableUserData", value: "true"),
         ]
         if let items: [EmbyItem] = try? await send(makeRequest(path: "/Users/\(server.userID)/Items/Latest", query: query)),
@@ -326,7 +326,7 @@ struct EmbyClient {
             URLQueryItem(name: "SortBy", value: "DateCreated"),
             URLQueryItem(name: "SortOrder", value: "Descending"),
             URLQueryItem(name: "Limit", value: "12"),
-            URLQueryItem(name: "Fields", value: "Overview"),
+            URLQueryItem(name: "Fields", value: "Overview,Genres"),
             URLQueryItem(name: "EnableUserData", value: "true"),
         ]
         let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: fallbackQuery))
