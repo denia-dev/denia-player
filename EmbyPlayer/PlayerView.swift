@@ -372,6 +372,14 @@ struct MPVPlayerScreen: View {
             "sub-border-style": subBorderValue,
             "sub-margin-y": "\(Prefs.subMarginY)",
         ]
+        // ASS subtitles carry their own colors and borders, and mpv's
+        // default override mode keeps them - which would make the
+        // color/border settings silently do nothing on exactly the
+        // anime content he watches most. When he picks a non-default
+        // color or border, force the override so the setting is real.
+        if Prefs.subColorName != "white" || Prefs.subBorderStyle != "outline" {
+            options["sub-ass-override"] = "force"
+        }
         // MPVUI ships no fonts and iOS exposes no system font dir to libass,
         // so bundle a CJK font or every Chinese subtitle renders as tofu.
         let fontURL = Bundle.main.url(forResource: "NotoSansCJKsc-Regular", withExtension: "otf")
