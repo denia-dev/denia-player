@@ -244,7 +244,6 @@ struct HomeView: View {
                         .multilineTextAlignment(.center)
                         .lineLimit(2)
                 }
-                heroMetaLine(item)
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)
@@ -253,6 +252,9 @@ struct HomeView: View {
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                // Ratings/year/genres sit last in the cell, directly
+                // above the page dots.
+                heroMetaLine(item)
             }
         .padding(.horizontal, 28)
         .padding(.bottom, 30)
