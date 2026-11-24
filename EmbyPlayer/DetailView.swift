@@ -24,7 +24,9 @@ struct DetailView: View {
     @State private var playedOverride: Bool?
     @State private var overviewExpanded = false
     @State private var showAllEpisodes = false
-    @State private var seriesBackdropTags: [String] = []
+    /// Nil until load()'s series fetch lands - artworkSource reads the
+    /// difference (see its comment).
+    @State private var seriesBackdropTags: [String]? = nil
 
     private var current: EmbyItem { detail ?? item }
     private var isSeries: Bool { current.type == "Series" }
@@ -260,13 +262,34 @@ struct DetailView: View {
     /// often just a video still on goemby - is only the fallback. Movies
     /// and series use their own set. Nil when no artwork exists at all.
     private var artworkSource: (id: String, tags: [String])? {
-        if current.type == "Episode", let seriesID = current.SeriesId, !seriesBackdropTags.isEmpty {
-            return (seriesID, seriesBackdropTags)
+        if current.type == "Episode", let seriesID = current.SeriesId {
+            // Until the series fetch lands, report NO artwork: the hero
+            // then stays on its placeholder (this episode's own still)
+            // instead of flashing the episode's own backdrop set for a
+            // beat and swapping images when the series set arrives -
+            // one of the two swaps in his build-88 screen recording.
+            guard let seriesTags = seriesBackdropTags else { return nil }
+            if !seriesTags.isEmpty { return (seriesID, seriesTags) }
         }
         if let tags = current.BackdropImageTags, !tags.isEmpty {
             return (current.Id, tags)
         }
         return nil
+    }
+
+    /// What the hero shows until the artwork lands: the item's own wide
+    /// image - for an episode its Primary still, the very thumbnail the
+    /// list cell just displayed, so it sits in the image cache and
+    /// paints instantly. Without this underlay the hero starts
+    /// transparent and the PREVIOUS page's backdrop shows through
+    /// during the push transition, flashing a foreign show's image
+    /// before the real one swaps in (his build-88 screen recording).
+    @ViewBuilder
+    private func heroPlaceholder(client: EmbyClient) -> some View {
+        ItemImage(item: current, client: client,
+                  kind: current.type == "Episode" ? "Primary" : wideImageKind(current))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .clipped()
     }
 
     /// Hero art is rendered from the artwork set (its first backdrop),
@@ -282,13 +305,16 @@ struct DetailView: View {
     private var heroBackdrop: some View {
         if let client = store.client() {
             if let art = artworkSource {
-                AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080)) { phase in
-                    if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
+                ZStack {
+                    heroPlaceholder(client: client)
+                    AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080)) { phase in
+                        if case .success(let image) = phase {
+                            image.resizable().scaledToFill()
+                        }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .clipped()
             } else {
                 ItemImage(item: current, client: client, kind: wideImageKind(current))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
