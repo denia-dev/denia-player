@@ -165,11 +165,22 @@ struct HomeView: View {
         if heroCandidates.isEmpty {
             heroCandidates = await client.topRatedCandidates(limit: 100)
         }
-        let eligible = heroCandidates.filter {
-            $0.BackdropImageTags?.isEmpty == false
-                && ($0.CommunityRating ?? 0) >= 7.0
-                && isAnime($0)
-        }.shuffled()
+        // NOTE: no CommunityRating filter here - goemby's list
+        // responses omit CommunityRating entirely (the reason
+        // loadHeroMeta hydrates it per item). v1.15/v1.16 filtered
+        // on it and zeroed the whole carousel. The pool is already
+        // sorted by CommunityRating server-side, so sort order IS
+        // the high-score guarantee; the ★ shown comes from the
+        // hydrated meta.
+        var eligible = heroCandidates.filter {
+            $0.BackdropImageTags?.isEmpty == false && isAnime($0)
+        }
+        if eligible.isEmpty {
+            // Genre data missing server-side: fall back to the
+            // plain top-rated pool rather than an empty hero.
+            eligible = heroCandidates.filter { $0.BackdropImageTags?.isEmpty == false }
+        }
+        eligible.shuffle()
         var ready: [EmbyItem] = []
         var cursor = 0
         while ready.count < 8, cursor < eligible.count {
