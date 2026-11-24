@@ -392,25 +392,25 @@ struct EmbyClient {
                 URLQueryItem(name: "SortBy", value: sortBy),
                 URLQueryItem(name: "SortOrder", value: "Descending"),
                 URLQueryItem(name: "Limit", value: String(limit)),
-                URLQueryItem(name: "Fields", value: "Overview,Genres,ProviderIds,Tags,ProductionLocations,OriginalTitle"),
+                URLQueryItem(name: "Fields", value: "Overview,Genres,ProviderIds,Tags"),
                 URLQueryItem(name: "EnableUserData", value: "true"),
             ]
             let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
             return response?.Items ?? []
         }
-        async let newest = slice(sortBy: "DateCreated", limit: 36)
-        async let topRated = slice(sortBy: "CommunityRating", limit: 36)
-        async let random = slice(sortBy: "Random", limit: 36)
+        async let newest = slice(sortBy: "DateCreated", limit: 60)
+        async let topRated = slice(sortBy: "CommunityRating", limit: 60)
+        async let random = slice(sortBy: "Random", limit: 60)
         let slices = await [newest, topRated, random]
         var merged: [EmbyItem] = []
         var seen = Set<String>()
-        for index in 0..<36 {
+        for index in 0..<60 {
             for sliceItems in slices where index < sliceItems.count {
                 let item = sliceItems[index]
                 if seen.insert(item.Id).inserted { merged.append(item) }
             }
         }
-        return Array(merged.prefix(40))
+        return Array(merged.prefix(60))
     }
 
     func favoriteItems() async throws -> [EmbyItem] {

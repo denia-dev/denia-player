@@ -89,7 +89,7 @@ private struct HeroArtwork: View {
             }
         }
         .task(id: item.Id) {
-            guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080) else {
+            guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720) else {
                 onBlank(item.Id)
                 return
             }
@@ -135,12 +135,14 @@ struct HomeView: View {
     /// resume, as fallbacks), minus anything with no artwork at all
     /// and anything whose art already proved blank in this session.
     private var heroItems: [EmbyItem] {
-        let source = heroPool
-        return source.filter {
+        // No ratings-count gate here: the >=3-sources rule from the old
+        // mixed carousel starved the anime carousel down to 2 survivors
+        // (most anime never reach 3 countable sources), so admission is
+        // anime + backdrop only; ratings still display as before.
+        Array(heroPool.filter {
             !heroExcluded.contains($0.Id)
                 && hasHighQualityAnimeBackdrop($0)
-                && heroRatingsVerdict($0)
-        }
+        }.prefix(12))
     }
 
     /// Anime only, matched on genre/tag text. An earlier cut also demanded
@@ -166,31 +168,6 @@ struct HomeView: View {
     private var currentHeroTint: Color? {
         guard let item = currentHeroItem else { return nil }
         return heroTints[item.Id]
-    }
-
-    /// His 2026-11-24 rule: 没有三个评分的都不要出现在轮播 - a hero
-    /// needs at least three rating sources. The count is conclusive
-    /// once the MDBList lookup has completed (or the item has no
-    /// provider IDs to look up at all, leaving only the server's
-    /// two); while a lookup is still in flight the item stays
-    /// provisionally and drops out the moment its count lands < 3.
-    private func heroRatingsVerdict(_ item: EmbyItem) -> Bool {
-        let external = ratingsStore.byItemID[item.Id]
-        let meta = heroMeta[item.Id]
-        let hasIDs = item.ProviderIds?["Imdb"] != nil || item.ProviderIds?["Tmdb"] != nil
-            || meta?.imdbID != nil || meta?.tmdbID != nil
-        if external == nil, hasIDs, !ratingsStore.checked.contains(item.Id) {
-            return true
-        }
-        var count = 0
-        if item.CommunityRating != nil || meta?.community != nil || external?.tmdb != nil { count += 1 }
-        if external?.imdb != nil { count += 1 }
-        if item.CriticRating != nil || meta?.critic != nil || external?.rtCritics != nil { count += 1 }
-        if external?.rtAudience != nil { count += 1 }
-        if external?.letterboxd != nil { count += 1 }
-        if external?.metacritic != nil { count += 1 }
-        if external?.trakt != nil { count += 1 }
-        return count >= 3
     }
 
     var body: some View {
@@ -266,7 +243,7 @@ struct HomeView: View {
                 } else {
                     Color(.systemBackground)
                 }
-                AmbientImageView(url: client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080))
+                AmbientImageView(url: client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                     .scaleEffect(scale)
@@ -499,7 +476,7 @@ struct HomeView: View {
 
     private func loadCurrentHeroTint() async {
         guard let item = currentHeroItem, let client = store.client(),
-              let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1080) else { return }
+              let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720) else { return }
         if let cached = ImageMemoryCache.shared.dominantTintCached(url) {
             heroTints[item.Id] = cached
             return
@@ -513,9 +490,12 @@ struct HomeView: View {
         guard let client = store.client() else { return }
         errorText = nil
         do {
-            resume = try await client.resumeItems()
-            latest = await client.latestItems()
-            heroPool = await client.heroPool()
+            async let resumeFetch = client.resumeItems()
+            async let latestFetch = client.latestItems()
+            async let poolFetch = client.heroPool()
+            resume = try await resumeFetch
+            latest = await latestFetch
+            heroPool = await poolFetch
             // Start (and refresh) on a random hero so the home page
             // does not open on the same title every time.
             if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
