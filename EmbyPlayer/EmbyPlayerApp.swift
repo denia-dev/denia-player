@@ -149,6 +149,7 @@ enum Route: Hashable {
     case cachePrefs
     case listPrefs
     case downloadPrefs
+    case aiTranslatePrefs
 }
 
 /// The five tab stacks' navigation paths, held in a reference-type
@@ -214,6 +215,8 @@ extension View {
                 ListPrefsView()
             case .downloadPrefs:
                 DownloadsPrefsView()
+            case .aiTranslatePrefs:
+                AITranslatePrefsView()
             }
         }
     }

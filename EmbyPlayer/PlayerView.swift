@@ -421,6 +421,9 @@ struct MPVPlayerScreen: View {
     @State private var previousEpisode: EmbyItem?
     @State private var segments: [MediaSegment] = []
     @State private var autoSkippedStarts: Set<Double> = []
+    @State private var translating = false
+    @State private var translateProgressText = ""
+    @State private var translateError: String?
     @State private var activeSegment: MediaSegment?
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
@@ -538,6 +541,14 @@ struct MPVPlayerScreen: View {
             }
         }
         .statusBarHidden(true)
+        .alert("AI 翻译", isPresented: Binding(
+            get: { translateError != nil },
+            set: { if !$0 { translateError = nil } }
+        )) {
+            Button("好", role: .cancel) { translateError = nil }
+        } message: {
+            Text(translateError ?? "")
+        }
         .sheet(isPresented: $showDiagnostics) {
             NavigationStack {
                 ScrollView {
@@ -729,6 +740,58 @@ struct MPVPlayerScreen: View {
             player.selectSubtitle(best.id, for: .secondary)
             player.setSubtitlesVisible(true)
             return
+        }
+    }
+
+    private var aiCachedForSelection: Bool {
+        guard let selected = player.subtitleTracks.first(where: { $0.isSelected }),
+              let ordinal = player.subtitleTracks.firstIndex(where: { $0.id == selected.id }),
+              let streamIndex = subtitleStreamIndex(ordinal: ordinal) else { return false }
+        return SubtitleTranslator.shared.cachedFile(itemID: item.Id, streamIndex: streamIndex) != nil
+    }
+
+    /// AI translation of the currently selected subtitle track: fetch
+    /// its text from the server, translate via the configured API and
+    /// load the result back as the primary (replace) or secondary
+    /// (dual-subtitle) track.
+    private func startAITranslation(mode: MPVSubtitleRole, force: Bool) {
+        guard let source = currentSource, let client = store.client() else {
+            translateError = "本地文件暂不支持 AI 翻译"
+            return
+        }
+        guard let selected = player.subtitleTracks.first(where: { $0.isSelected }),
+              let ordinal = player.subtitleTracks.firstIndex(where: { $0.id == selected.id }),
+              let streamIndex = subtitleStreamIndex(ordinal: ordinal) else {
+            translateError = "先选一条字幕，再用 AI 翻译"
+            return
+        }
+        let codec = (source.MediaStreams?.first { $0.Index == streamIndex }?.Codec ?? "").lowercased()
+        if codec.contains("pgs") || codec == "sup" || codec.contains("hdmv") {
+            translateError = "这条是图片字幕（PGS），没有文本、翻译不了"
+            return
+        }
+        guard let subtitleURL = client.subtitleStreamURL(itemID: item.Id, source: source, streamIndex: streamIndex) else { return }
+        translating = true
+        translateProgressText = "正在取字幕…"
+        let generation = playerGeneration
+        Task {
+            do {
+                let file = try await SubtitleTranslator.shared.translate(
+                    itemID: item.Id, streamIndex: streamIndex, subtitleURL: subtitleURL, force: force
+                ) { done, total in
+                    Task { @MainActor in
+                        if total > 0 { translateProgressText = "翻译中 \(done)/\(total) 批" }
+                    }
+                }
+                guard generation == playerGeneration else { translating = false; return }
+                player.loadExternalSubtitle(file, selecting: mode)
+                player.setSubtitlesVisible(true)
+            } catch {
+                if generation == playerGeneration {
+                    translateError = (error as? LocalizedError)?.errorDescription ?? "翻译失败：\(error.localizedDescription)"
+                }
+            }
+            translating = false
         }
     }
 
@@ -1357,6 +1420,17 @@ struct MPVPlayerScreen: View {
                                 } label: {
                                     Label(trackLabel(track), systemImage: track.subtitleRole == .secondary ? "checkmark" : "")
                                 }
+                            }
+                        }
+                    }
+                    Section("AI 翻译") {
+                        if translating {
+                            Text(translateProgressText)
+                        } else {
+                            Button("译文替换当前字幕") { startAITranslation(mode: .primary, force: false) }
+                            Button("双字幕显示译文") { startAITranslation(mode: .secondary, force: false) }
+                            if aiCachedForSelection {
+                                Button("重新翻译（不用缓存）") { startAITranslation(mode: .secondary, force: true) }
                             }
                         }
                     }

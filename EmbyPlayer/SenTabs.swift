@@ -487,6 +487,12 @@ struct SettingsView: View {
                                           value: nil, chevron: true)
                     }
                     .buttonStyle(.plain)
+                    Divider().padding(.leading, 58)
+                    NavigationLink(value: Route.aiTranslatePrefs) {
+                        SettingRowContent(icon: "globe", color: .teal, title: "AI 字幕翻译",
+                                          value: nil, chevron: true)
+                    }
+                    .buttonStyle(.plain)
                 }
 
                 settingsGroup("数据") {

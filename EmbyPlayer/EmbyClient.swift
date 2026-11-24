@@ -488,6 +488,15 @@ struct EmbyClient {
         }
     }
 
+    /// Any subtitle track delivered as SRT text (the server converts
+    /// embedded text tracks and sidecar files alike); AI translation
+    /// fetches its source text from here.
+    func subtitleStreamURL(itemID: String, source: EmbyMediaSource, streamIndex: Int) -> URL? {
+        var components = URLComponents(string: server.baseURL + "/Videos/\(itemID)/\(source.Id)/Subtitles/\(streamIndex)/Stream.srt")
+        components?.queryItems = [URLQueryItem(name: "api_key", value: server.accessToken)]
+        return components?.url
+    }
+
     // MARK: - session reporting
 
     private func report(path: String, itemID: String, sourceID: String, sessionID: String?, positionSeconds: Double, isPaused: Bool? = nil) async {

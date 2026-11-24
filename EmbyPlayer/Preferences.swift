@@ -140,6 +140,21 @@ enum Prefs {
     static var autoSkipSegments: Bool { d.bool(forKey: "prefs.autoSkipSegments") }
     static var audioDelay: Double { d.double(forKey: "prefs.audioDelay") }
 
+    // AI subtitle translation (OpenAI-compatible chat completions API;
+    // the key itself lives in the Keychain, not UserDefaults)
+    static var aiEndpoint: String { d.string(forKey: "prefs.aiEndpoint") ?? "https://api.deepseek.com" }
+    static var aiModel: String { d.string(forKey: "prefs.aiModel") ?? "deepseek-chat" }
+    static var aiTargetLang: String { d.string(forKey: "prefs.aiTargetLang") ?? "zh-Hans" }
+    static var aiTargetName: String {
+        switch aiTargetLang {
+        case "zh-Hant": return "Traditional Chinese"
+        case "en": return "English"
+        case "ja": return "Japanese"
+        case "ko": return "Korean"
+        default: return "Simplified Chinese"
+        }
+    }
+
     // Subtitle styling (build 92, SenPlayer parity; mpv text subtitles)
     /// "white" | "yellow" | "cyan" | "green"
     static var subColorName: String { d.string(forKey: "prefs.subColor") ?? "white" }
@@ -969,5 +984,78 @@ struct ListPrefsView: View {
         .background(Color(.systemGroupedBackground))
         .navigationTitle("列表配置")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - AI 字幕翻译设置
+
+struct AITranslatePrefsView: View {
+    @AppStorage("prefs.aiEndpoint") private var endpoint = "https://api.deepseek.com"
+    @AppStorage("prefs.aiModel") private var model = "deepseek-chat"
+    @AppStorage("prefs.aiTargetLang") private var targetLang = "zh-Hans"
+    @State private var apiKey = ""
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                prefsCard {
+                    fieldRow("接口地址") {
+                        TextField("https://api.deepseek.com", text: $endpoint)
+                    }
+                    prefsDivider
+                    fieldRow("API Key") {
+                        SecureField("粘贴你的 key", text: $apiKey)
+                    }
+                    prefsDivider
+                    fieldRow("模型") {
+                        TextField("deepseek-chat", text: $model)
+                    }
+                    prefsDivider
+                    prefsMenuRow("翻译成", value: targetLabel) {
+                        Button("简体中文") { targetLang = "zh-Hans" }
+                        Button("繁体中文") { targetLang = "zh-Hant" }
+                        Button("英文") { targetLang = "en" }
+                        Button("日语") { targetLang = "ja" }
+                        Button("韩语") { targetLang = "ko" }
+                    }
+                }
+                Text("接口按 OpenAI 兼容格式调用（DeepSeek、OpenAI、硅基流动等都能用），地址填到域名即可，不用带 /chat/completions。费用由接口方按量收取，DeepSeek 翻一集动画大约几分钱。API Key 只存本机钥匙串。用法：播放时打开字幕菜单 →「AI 翻译」。仅文字字幕可译，PGS 图片字幕不行；仅 mpv 播放器可用。译好的字幕会缓存在本机，同一集再看不重复收费。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+            }
+            .padding()
+        }
+        .background(Color(.systemGroupedBackground))
+        .navigationTitle("AI 字幕翻译")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { apiKey = KeychainStore.get("aiTranslateKey") ?? "" }
+        .onChange(of: apiKey) { _, newValue in KeychainStore.set("aiTranslateKey", newValue) }
+    }
+
+    private func fieldRow<Field: View>(_ title: String, @ViewBuilder field: () -> Field) -> some View {
+        HStack {
+            Text(title).font(.system(size: 15))
+            Spacer(minLength: 12)
+            field()
+                .multilineTextAlignment(.trailing)
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+                .frame(maxWidth: 230)
+        }
+        .padding(.horizontal, 16)
+        .frame(minHeight: 44)
+    }
+
+    private var targetLabel: String {
+        switch targetLang {
+        case "zh-Hant": return "繁体中文"
+        case "en": return "英文"
+        case "ja": return "日语"
+        case "ko": return "韩语"
+        default: return "简体中文"
+        }
     }
 }
