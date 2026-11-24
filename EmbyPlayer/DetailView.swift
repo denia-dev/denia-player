@@ -270,25 +270,24 @@ struct DetailView: View {
     }
 
     /// Hero art is rendered from the artwork set (its first backdrop),
-    /// shown at its natural aspect across the full width, anchored to
-    /// the top - SenPlayer shows the whole composition, while a
-    /// scaledToFill into the tall hero frame zoom-crops a 16:9 image to
-    /// its center strip (the giant-faces look he flagged on build 83).
-    /// Below the art the hero's gradient/ambient takes over, which is
-    /// where Sen's logo and meta sit too. The ambient layers reuse
-    /// heroBackdrop blurred, where fit-vs-fill is invisible. Only when
-    /// no artwork exists anywhere does the hero fall back to the
-    /// fill-cropped poster/still.
+    /// ENLARGED to fill the tall hero frame (scaledToFill, center
+    /// crop) - SenPlayer's presentation, which he asked for explicitly
+    /// on build 87's screenshot. Build 84's fit-width rendering was the
+    /// overcorrection: his build-83 complaint was never the zoom itself
+    /// but the SOURCE (an episode still instead of the series artwork);
+    /// with the source fixed, the small banner-like hero read as wrong
+    /// next to Sen's big filled one. The hero's gradient + mask melt
+    /// fades the enlarged art into the ambient below.
     @ViewBuilder
     private var heroBackdrop: some View {
         if let client = store.client() {
             if let art = artworkSource {
                 AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080)) { phase in
                     if case .success(let image) = phase {
-                        image.resizable().scaledToFit()
+                        image.resizable().scaledToFill()
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
             } else {
                 ItemImage(item: current, client: client, kind: wideImageKind(current))
