@@ -291,32 +291,46 @@ struct MainView: View {
 
     var body: some View {
         TabView(selection: $tab) {
+            // Tab bar visibility is a pure function of stack depth,
+            // declared once here at each root. The previous setup let
+            // every pushed page declare .hidden for itself; with the
+            // zoom transition and the player's full-screen cover in
+            // the cycle, those declarations could desync on pop and
+            // the bar never came back (his 2026-11-25 report: repeat
+            // enter/exit a movie, bar gone until relaunch). Derived
+            // from the path, a dropped transition update self-heals
+            // on the next render because the path itself is the truth.
             NavigationStack(path: nav.binding(\.path0)) {
                 HomeView().routeDestinations { nav.popCounted(\.path0) }
+                    .toolbar(nav.path0.isEmpty ? .visible : .hidden, for: .tabBar)
             }
             .tabItem { Label("首页", systemImage: "play.rectangle") }
             .tag(0)
 
             NavigationStack(path: nav.binding(\.path1)) {
                 LibrariesTabView().routeDestinations { nav.popCounted(\.path1) }
+                    .toolbar(nav.path1.isEmpty ? .visible : .hidden, for: .tabBar)
             }
             .tabItem { Label("资源库", systemImage: "externaldrive") }
             .tag(1)
 
             NavigationStack(path: nav.binding(\.path2)) {
                 RecordsView().routeDestinations { nav.popCounted(\.path2) }
+                    .toolbar(nav.path2.isEmpty ? .visible : .hidden, for: .tabBar)
             }
             .tabItem { Label("记录", systemImage: "person.text.rectangle") }
             .tag(2)
 
             NavigationStack(path: nav.binding(\.path3)) {
                 SettingsView().routeDestinations { nav.popCounted(\.path3) }
+                    .toolbar(nav.path3.isEmpty ? .visible : .hidden, for: .tabBar)
             }
             .tabItem { Label("设置", systemImage: "gearshape") }
             .tag(3)
 
             NavigationStack(path: nav.binding(\.path4)) {
                 SearchTabView().routeDestinations { nav.popCounted(\.path4) }
+                    .toolbar(nav.path4.isEmpty ? .visible : .hidden, for: .tabBar)
             }
             .tabItem { Label("搜索", systemImage: "magnifyingglass") }
             .tag(4)

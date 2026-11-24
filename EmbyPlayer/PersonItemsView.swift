@@ -55,7 +55,6 @@ struct PersonItemsView: View {
             }
             .padding()
         }
-        .toolbar(.hidden, for: .tabBar)
         .task {
             guard let client = store.client() else { loaded = true; return }
             items = (try? await client.itemsByPerson(personID: personID)) ?? []

@@ -1,4 +1,5 @@
 import SwiftUI
+import Vision
 
 /// Image view bound to the active client, backed by the shared
 /// decoded-image cache: one download and decode per URL across the
@@ -69,6 +70,35 @@ func wideImageKind(_ item: EmbyItem) -> String {
     (item.BackdropImageTags?.isEmpty == false) ? "Backdrop" : "Primary"
 }
 
+/// Fill-crops an image around a focal point instead of always the
+/// centre. The hero frame is tall (roughly 0.74 aspect) while
+/// backdrops are 16:9, so a centre crop shows only the middle ~42%
+/// of the width - any subject composed left or right of centre is
+/// cut out of the carousel entirely (his 2026-11-25 report). The
+/// focal point shifts the crop window so the subject stays in frame;
+/// the window is clamped so no empty edge can ever show.
+private struct FocalFillImage: View {
+    let image: UIImage
+    let focal: CGPoint
+
+    var body: some View {
+        GeometryReader { geo in
+            let iw = max(image.size.width, 1)
+            let ih = max(image.size.height, 1)
+            let scale = max(geo.size.width / iw, geo.size.height / ih)
+            let dw = iw * scale
+            let dh = ih * scale
+            let ox = min(0, max(geo.size.width - dw, geo.size.width / 2 - focal.x * dw))
+            let oy = min(0, max(geo.size.height - dh, geo.size.height / 2 - focal.y * dh))
+            Image(uiImage: image)
+                .resizable()
+                .frame(width: dw, height: dh)
+                .position(x: ox + dw / 2, y: oy + dh / 2)
+        }
+        .clipped()
+    }
+}
+
 /// Hero artwork with blank rejection: when the image download fails
 /// or the returned image is a blank placeholder, the item reports
 /// itself through onBlank and the carousel drops it. One retry first,
@@ -79,11 +109,14 @@ private struct HeroArtwork: View {
     let onBlank: (String) -> Void
 
     @State private var uiImage: UIImage?
+    @State private var focal = CGPoint(x: 0.5, y: 0.5)
+
+    private static var focalCache: [String: CGPoint] = [:]
 
     var body: some View {
         ZStack {
             if let uiImage {
-                Image(uiImage: uiImage).resizable().scaledToFill()
+                FocalFillImage(image: uiImage, focal: focal)
             } else {
                 Rectangle().fill(.quaternary)
             }
@@ -95,16 +128,48 @@ private struct HeroArtwork: View {
             }
             if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
                 uiImage = loaded
+                await resolveFocal(for: loaded)
                 return
             }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
             if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
                 uiImage = loaded
+                await resolveFocal(for: loaded)
             } else if !Task.isCancelled {
                 onBlank(item.Id)
             }
         }
+    }
+
+    /// The backdrop's subject position, faces first, then attention
+    /// saliency, centre as the fallback. Computed once per item off
+    /// the main thread and cached for the session.
+    private func resolveFocal(for image: UIImage) async {
+        if let cached = Self.focalCache[item.Id] {
+            focal = cached
+            return
+        }
+        guard let cg = image.cgImage else { return }
+        let point = await Task.detached(priority: .utility) { () -> CGPoint in
+            let handler = VNImageRequestHandler(cgImage: cg, options: [:])
+            let faceRequest = VNDetectFaceRectanglesRequest()
+            let saliencyRequest = VNGenerateAttentionBasedSaliencyImageRequest()
+            try? handler.perform([faceRequest, saliencyRequest])
+            if let faces = faceRequest.results, !faces.isEmpty {
+                let union = faces.reduce(into: CGRect.null) { $0 = $0.union($1.boundingBox) }
+                return CGPoint(x: union.midX, y: 1 - union.midY)
+            }
+            if let observation = saliencyRequest.results?.first,
+               let salient = observation.salientObjects?.max(by: {
+                   $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height
+               }) {
+                return CGPoint(x: salient.boundingBox.midX, y: 1 - salient.boundingBox.midY)
+            }
+            return CGPoint(x: 0.5, y: 0.5)
+        }.value
+        Self.focalCache[item.Id] = point
+        focal = point
     }
 }
 
@@ -435,26 +500,11 @@ struct HomeView: View {
         let meta = heroMeta[item.Id]
         let community = item.CommunityRating ?? meta?.community ?? nil
         let critic = item.CriticRating ?? meta?.critic ?? nil
-        let ticks = item.RunTimeTicks ?? meta?.runTimeTicks ?? nil
         let external = ratingsStore.byItemID[item.Id]
-        if external != nil || community != nil || critic != nil || (item.type == "Movie" && ticks != nil) {
-            HStack(spacing: 18) {
-                RatingsStrip(external: external, fallbackCommunity: community, fallbackCritic: critic, large: true)
-                if item.type == "Movie", let ticks, ticks > 0 {
-                    Text(runtimeText(seconds: Double(ticks) / 10_000_000))
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .padding(.top, 2)
+        if external != nil || community != nil || critic != nil {
+            RatingsStrip(external: external, fallbackCommunity: community, fallbackCritic: critic, large: true)
+                .padding(.top, 2)
         }
-    }
-
-    private func runtimeText(seconds: Double) -> String {
-        let totalMinutes = Int(seconds) / 60
-        let hours = totalMinutes / 60
-        let minutes = totalMinutes % 60
-        return hours > 0 ? "\(hours)小时\(minutes)分" : "\(minutes)分钟"
     }
 
     private func sectionHeader(_ title: String, count: Int?, action: (() -> Void)? = nil) -> some View {

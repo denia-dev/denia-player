@@ -54,7 +54,6 @@ struct LibraryView: View {
             await runSearch(searchText)
         }
         .task(id: library.Id + "|" + library.Name) { await load() }
-        .toolbar(.hidden, for: .tabBar)
     }
 
     private var displayed: [EmbyItem] { searchText.isEmpty ? items : searchResults }

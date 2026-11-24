@@ -90,7 +90,6 @@ struct DetailView: View {
         }
         .environment(\.colorScheme, .dark)
         .zoomDestination(id: item.Id, ns: zoomNS)
-        .toolbar(.hidden, for: .tabBar)
         .toolbarBackground(.hidden, for: .navigationBar)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
