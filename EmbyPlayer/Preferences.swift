@@ -753,7 +753,7 @@ struct SubtitlePrefsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { assrtToken = KeychainStore.get("assrtToken") ?? "" }
         .onChange(of: assrtToken) { _, newValue in
-            KeychainStore.set(newValue, for: "assrtToken")
+            KeychainStore.set("assrtToken", newValue)
         }
     }
 
