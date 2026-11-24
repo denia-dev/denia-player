@@ -141,25 +141,30 @@ struct DetailView: View {
     /// stands in, so the page is never a bare slab while loading.
     private var ambientBackground: some View {
         ZStack {
-            if let tint {
-                tint
-                LinearGradient(
-                    colors: [Color.white.opacity(0.05), Color.black.opacity(0.16)],
-                    startPoint: .top, endPoint: .bottom)
-            } else if let client = store.client() {
-                AmbientVariantImage(url: washURL(client: client), heavy: true)
+            if let client = store.client() {
+                // Keep the same series/item backdrop present under the entire
+                // scroll view, not only while dominant-colour extraction is
+                // pending. A heavily softened, low-contrast copy gives the
+                // hero a matching image-derived colour field to melt into.
+                AmbientVariantImage(
+                    url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080),
+                    heavy: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
-                AmbientVariantImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), heavy: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
+                    .opacity(tint == nil ? 0.72 : 0.22)
+                if let tint {
+                    tint.opacity(0.78)
+                } else {
+                    Color(.systemBackground).opacity(0.12)
+                }
                 LinearGradient(
-                    colors: [Color(.systemBackground).opacity(0.10),
-                             Color(.systemBackground).opacity(0.50)],
+                    colors: [Color.white.opacity(0.06), Color.black.opacity(0.20)],
                     startPoint: .top, endPoint: .bottom)
+            } else {
+                Color(.systemBackground)
             }
         }
-        .animation(.easeInOut(duration: 0.45), value: tint != nil)
+        .animation(.easeInOut(duration: 0.55), value: tint != nil)
         .ignoresSafeArea()
     }
 
