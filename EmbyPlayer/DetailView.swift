@@ -190,33 +190,41 @@ struct DetailView: View {
     }
 
     /// The item's artwork （艺术图 = its backdrop set), resolved once for
-    /// both the hero and the artwork section: the item's own backdrops
-    /// first; an episode without any borrows its series' set (fetched in
-    /// load()). Nil when the server has no artwork for it at all.
+    /// both the hero and the artwork section. On an EPISODE page SenPlayer
+    /// brands the page with the SERIES artwork, so the series set wins
+    /// whenever it exists (fetched in load()); the episode's own set -
+    /// often just a video still on goemby - is only the fallback. Movies
+    /// and series use their own set. Nil when no artwork exists at all.
     private var artworkSource: (id: String, tags: [String])? {
-        if let tags = current.BackdropImageTags, !tags.isEmpty {
-            return (current.Id, tags)
-        }
         if current.type == "Episode", let seriesID = current.SeriesId, !seriesBackdropTags.isEmpty {
             return (seriesID, seriesBackdropTags)
+        }
+        if let tags = current.BackdropImageTags, !tags.isEmpty {
+            return (current.Id, tags)
         }
         return nil
     }
 
-    /// Hero art is rendered from the artwork set (its first backdrop) -
-    /// SenPlayer does the same. The ambient layers reuse heroBackdrop,
-    /// so the whole page's tint follows the artwork too. Only when no
-    /// artwork exists anywhere does the hero fall back to the poster.
+    /// Hero art is rendered from the artwork set (its first backdrop),
+    /// shown at its natural aspect across the full width, anchored to
+    /// the top - SenPlayer shows the whole composition, while a
+    /// scaledToFill into the tall hero frame zoom-crops a 16:9 image to
+    /// its center strip (the giant-faces look he flagged on build 83).
+    /// Below the art the hero's gradient/ambient takes over, which is
+    /// where Sen's logo and meta sit too. The ambient layers reuse
+    /// heroBackdrop blurred, where fit-vs-fill is invisible. Only when
+    /// no artwork exists anywhere does the hero fall back to the
+    /// fill-cropped poster/still.
     @ViewBuilder
     private var heroBackdrop: some View {
         if let client = store.client() {
             if let art = artworkSource {
                 AsyncImage(url: client.backdropURL(itemID: art.id, index: 0, maxHeight: 1080)) { phase in
                     if case .success(let image) = phase {
-                        image.resizable().scaledToFill()
+                        image.resizable().scaledToFit()
                     }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                 .clipped()
             } else {
                 ItemImage(item: current, client: client, kind: wideImageKind(current))
@@ -767,11 +775,10 @@ struct DetailView: View {
     private func load() async {
         guard let client = store.client() else { return }
         detail = try? await client.item(id: item.Id)
-        // An episode's own detail carries no backdrop tags even when its
-        // series has artwork: fetch the series item so artworkSource can
-        // offer the series set to both the hero and the artwork section.
-        if current.type == "Episode", let seriesID = current.SeriesId,
-           current.BackdropImageTags?.isEmpty != false {
+        // Episode pages brand with the SERIES artwork (SenPlayer's
+        // choice), so fetch the series item's backdrop set for every
+        // episode, whether or not the episode carries its own tags.
+        if current.type == "Episode", let seriesID = current.SeriesId {
             seriesBackdropTags = (try? await client.item(id: seriesID))?.BackdropImageTags ?? []
         }
         if item.type == "Movie" || item.type == "Series" {
