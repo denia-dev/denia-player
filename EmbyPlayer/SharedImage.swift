@@ -1,6 +1,7 @@
 import SwiftUI
 import UIKit
 import CoreImage
+import CryptoKit
 
 /// One decoded copy of each remote image, shared by every view that
 /// asks for it. SwiftUI's AsyncImage fetches and decodes PER INSTANCE:
@@ -32,8 +33,22 @@ final class ImageMemoryCache {
             return await existing.value
         }
         let task = Task<UIImage?, Never> {
+            // Disk layer: the memory cache alone made every return
+            // from the background re-download and re-decode every
+            // poster (NSCache evicts under background memory
+            // pressure). Image bytes persist in Caches keyed by URL,
+            // so a foreground return - and even a relaunch - paints
+            // from disk instead of the network.
+            if let file = Self.diskFile(for: url),
+               let data = try? Data(contentsOf: file),
+               let image = UIImage(data: data) {
+                return image
+            }
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let image = UIImage(data: data) else { return nil }
+            if data.count <= 8 * 1024 * 1024, let file = Self.diskFile(for: url) {
+                try? data.write(to: file, options: .atomic)
+            }
             return image
         }
         inFlight[key] = task
@@ -46,6 +61,22 @@ final class ImageMemoryCache {
             cache.setObject(image, forKey: key)
         }
         return image
+    }
+
+    // MARK: - disk cache
+
+    private static var diskCacheDir: URL? {
+        guard let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+        else { return nil }
+        let dir = caches.appendingPathComponent("ImageDiskCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func diskFile(for url: URL) -> URL? {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        let name = digest.map { String(format: "%02x", $0) }.joined()
+        return diskCacheDir?.appendingPathComponent(name)
     }
 
     // MARK: - hero blank detection

@@ -129,6 +129,11 @@ struct HomeView: View {
     /// The mixed rotation pool (newest + top-rated + random from
     /// EmbyClient.heroPool). Empty until its fetch lands.
     @State private var heroPool: [EmbyItem] = []
+    /// Freshness stamp for load(): SwiftUI cancels and restarts the
+    /// view's .task across backgrounding, so without this the whole
+    /// home page refetched on every return from the background.
+    @State private var loadedServerID: String?
+    @State private var loadedAt: Date?
     @State private var heroTints: [String: Color] = [:]
 
     /// Carousel candidates: the mixed pool first (latest list, then
@@ -488,6 +493,14 @@ struct HomeView: View {
 
     private func load() async {
         guard let client = store.client() else { return }
+        // Same freshness pattern as the library catalog: same server,
+        // loaded less than 10 minutes ago, data already on screen -
+        // keep it instead of refetching everything (this is what made
+        // returning from the background feel like a cold start).
+        if loadedServerID == store.activeServer?.id, let loadedAt,
+           Date().timeIntervalSince(loadedAt) < 600, !heroPool.isEmpty {
+            return
+        }
         errorText = nil
         do {
             async let resumeFetch = client.resumeItems()
@@ -500,6 +513,8 @@ struct HomeView: View {
             // does not open on the same title every time.
             if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
             await loadHeroMeta(client: client)
+            loadedServerID = store.activeServer?.id
+            loadedAt = Date()
         } catch {
             errorText = error.localizedDescription
         }
