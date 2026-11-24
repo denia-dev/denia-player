@@ -224,7 +224,15 @@ struct EmbyClient {
     }
 
     func item(id: String) async throws -> EmbyItem {
-        try await send(makeRequest(path: "/Users/\(server.userID)/Items/\(id)"))
+        // People/Chapters/MediaSources are NOT in Emby's default field
+        // set: without naming them here the detail response carries no
+        // cast at all and the detail page's cast section never renders
+        // (found on-device 2026-11-24 - the section existed since the
+        // Sen rebuild but its data was never requested).
+        let query = [
+            URLQueryItem(name: "Fields", value: "Overview,Genres,People,Chapters,MediaSources"),
+        ]
+        return try await send(makeRequest(path: "/Users/\(server.userID)/Items/\(id)", query: query))
     }
 
     func seasons(seriesID: String) async throws -> [EmbyItem] {
