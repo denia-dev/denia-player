@@ -203,8 +203,8 @@ struct HomeView: View {
             // leaving the home page without a carousel.
             let extra = picks.filter { item in
                 artOK.contains(item.Id)
-                    && !ready.contains(where: { $0.Id == item.Id })
-                    && ($0.CommunityRating ?? 0) >= 7.5
+                    && !ready.contains(where: { other in other.Id == item.Id })
+                    && (item.CommunityRating ?? 0) >= 7.5
                     && ratingsStore.checked.contains(item.Id)
             }
             ready += extra
