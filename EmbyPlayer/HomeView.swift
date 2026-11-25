@@ -112,7 +112,8 @@ func wideImageKind(_ item: EmbyItem) -> String {
 /// the dissolve reached too far down into the picture (tops
 /// of heads washed out); he asked for the blur range moved
 /// up a little - v1.45 shrinks the dissolve from the top 14%
-/// to the top 8%. Still too much for him: v1.46 goes to 4%.
+/// to the top 8%. Still too much for him: v1.46 goes to 4%,
+/// v1.47 to 2%.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -143,7 +144,7 @@ private struct HeroArtwork: View {
                     .mask {
                         LinearGradient(stops: [
                             .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.04),
+                            .init(color: .black, location: 0.02),
                             .init(color: .black, location: 0.81),
                             .init(color: .clear, location: 1.0),
                         ], startPoint: .top, endPoint: .bottom)
@@ -155,12 +156,12 @@ private struct HeroArtwork: View {
                     // lands just above the logo/title.
                     .padding(.top, 56)
                 // The line, blurred (v1.43, range tightened in
-                // v1.45 and again in v1.46): a registered copy of
-                // the same band, blurred, living only in the top
-                // 4% - full strength just below the edge, gone by
-                // 4% down. Together with the sharp band's fade-in
-                // over the same stretch, the top edge dissolves
-                // instead of ending in a line.
+                // v1.45, v1.46 and again in v1.47): a registered
+                // copy of the same band, blurred, living only in
+                // the top 2% - full strength just below the edge,
+                // gone by 2% down. Together with the sharp band's
+                // fade-in over the same stretch, the top edge
+                // dissolves instead of ending in a line.
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -169,9 +170,9 @@ private struct HeroArtwork: View {
                     .mask {
                         LinearGradient(stops: [
                             .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.015),
-                            .init(color: .black, location: 0.025),
-                            .init(color: .clear, location: 0.04),
+                            .init(color: .black, location: 0.008),
+                            .init(color: .black, location: 0.012),
+                            .init(color: .clear, location: 0.02),
                         ], startPoint: .top, endPoint: .bottom)
                     }
                     .padding(.top, 56)
