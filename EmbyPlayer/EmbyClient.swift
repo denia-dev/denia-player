@@ -384,9 +384,18 @@ struct EmbyClient {
     /// random - the random slice makes every launch a different
     /// batch. Round-robin interleaved and deduped, best-effort:
     /// any slice may come back empty without sinking the others.
+    ///
+    /// v1.47: the carousel only admits animation (heroItems
+    /// filter), but the old pool sampled the WHOLE library, so on
+    /// a mostly live-action server only ~4 animation titles ever
+    /// survived the filter and the carousel sat stuck at 4 (his
+    /// report). Three genre-targeted slices (Anime / Animation /
+    /// 动画, newest + top-rated + random) now lead the merge so
+    /// the filter has real candidates; the general slices stay
+    /// as fallback.
     func heroPool() async -> [EmbyItem] {
-        func slice(sortBy: String, limit: Int) async -> [EmbyItem] {
-            let query = [
+        func slice(sortBy: String, limit: Int, genres: String? = nil) async -> [EmbyItem] {
+            var query = [
                 URLQueryItem(name: "Recursive", value: "true"),
                 URLQueryItem(name: "IncludeItemTypes", value: "Movie,Series"),
                 URLQueryItem(name: "SortBy", value: sortBy),
@@ -395,13 +404,19 @@ struct EmbyClient {
                 URLQueryItem(name: "Fields", value: "Overview,Genres,ProviderIds,Tags"),
                 URLQueryItem(name: "EnableUserData", value: "true"),
             ]
+            if let genres {
+                query.append(URLQueryItem(name: "Genres", value: genres))
+            }
             let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
             return response?.Items ?? []
         }
+        async let animeNewest = slice(sortBy: "DateCreated", limit: 40, genres: "Anime,Animation,动画")
+        async let animeTopRated = slice(sortBy: "CommunityRating", limit: 40, genres: "Anime,Animation,动画")
+        async let animeRandom = slice(sortBy: "Random", limit: 40, genres: "Anime,Animation,动画")
         async let newest = slice(sortBy: "DateCreated", limit: 60)
         async let topRated = slice(sortBy: "CommunityRating", limit: 60)
         async let random = slice(sortBy: "Random", limit: 60)
-        let slices = await [newest, topRated, random]
+        let slices = await [animeNewest, animeTopRated, animeRandom, newest, topRated, random]
         var merged: [EmbyItem] = []
         var seen = Set<String>()
         for index in 0..<60 {
@@ -410,7 +425,7 @@ struct EmbyClient {
                 if seen.insert(item.Id).inserted { merged.append(item) }
             }
         }
-        return Array(merged.prefix(60))
+        return Array(merged.prefix(120))
     }
 
     func favoriteItems() async throws -> [EmbyItem] {
