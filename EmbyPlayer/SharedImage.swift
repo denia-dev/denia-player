@@ -74,7 +74,20 @@ final class ImageMemoryCache {
     }
 
     private static func diskFile(for url: URL) -> URL? {
-        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        // Key on the URL with the api_key stripped: the access token
+        // rotates whenever the app re-authenticates, and keying the
+        // disk cache on it turned every rotation into a full miss -
+        // the whole library, heroes included, re-downloaded from the
+        // network (his "每次进去都卡加载"). The item path and the size
+        // parameters identify the image; the token does not.
+        var key = url.absoluteString
+        if var components = URLComponents(url: url, resolvingAgainstBaseURL: false),
+           let queryItems = components.queryItems,
+           queryItems.contains(where: { $0.name == "api_key" }) {
+            components.queryItems = queryItems.filter { $0.name != "api_key" }
+            key = components.url?.absoluteString ?? key
+        }
+        let digest = SHA256.hash(data: Data(key.utf8))
         let name = digest.map { String(format: "%02x", $0) }.joined()
         return diskCacheDir?.appendingPathComponent(name)
     }

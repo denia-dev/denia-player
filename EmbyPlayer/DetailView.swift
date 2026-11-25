@@ -155,7 +155,7 @@ struct DetailView: View {
                 // pending. A heavily softened, low-contrast copy gives the
                 // hero a matching image-derived colour field to melt into.
                 AmbientVariantImage(
-                    url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080),
+                    url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 720),
                     heavy: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
@@ -177,8 +177,13 @@ struct DetailView: View {
     }
 
     private func loadTint() async {
+        // The 720 URL on purpose: it is the carousel's URL, so for an
+        // item tapped from home the image - and usually the tint
+        // itself - is already cached and the page colours itself in
+        // the first frame. The tint is an average colour; it gains
+        // nothing from the 1080 download the old code waited on.
         guard let client = store.client(),
-              let url = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080) else { return }
+              let url = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 720) else { return }
         if let cached = ImageMemoryCache.shared.dominantTintCached(url) {
             tint = cached
             return
@@ -309,9 +314,19 @@ struct DetailView: View {
         if let client = store.client() {
             ZStack {
                 heroPlaceholder(client: client)
+                // The carousel's 720 copy first: same URL the home
+                // hero already fetched, so it is in the memory/disk
+                // cache and paints in the first frame - the page no
+                // longer waits on a fresh full-size download before
+                // its header exists (his ask: 详情先出来，不用等头图）.
                 // Ungated on purpose: when the item has no backdrop
                 // this request 404s, SharedImage stays empty, and the
                 // placeholder below simply remains the hero.
+                SharedImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 720))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
+                // The full-size copy then upgrades the sharpness
+                // whenever it lands, fading over the 720 copy.
                 SharedImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), fadeIn: true)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
