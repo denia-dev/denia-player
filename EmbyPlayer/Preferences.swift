@@ -243,7 +243,7 @@ private func prefsLinkRow(_ title: String, route: Route) -> some View {
         HStack {
             Text(title)
             Spacer()
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.tertiary)
+            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 20)
         .frame(height: 54)
@@ -266,12 +266,15 @@ private func prefsMenuRow<Content: View>(_ title: String, value: String, @ViewBu
             Text(title).foregroundStyle(.primary)
             Spacer()
             Text(value).foregroundStyle(.secondary)
-            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.tertiary)
+            Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
         }
         .padding(.horizontal, 20)
         .frame(height: 54)
         .contentShape(Rectangle())
     }
+    // 全局 tint 是蓝色，Menu 标签会被它染成蓝色、值更是淡蓝（太浅）；
+    // 这里把菜单行钉回主色，标题黑、值深灰。
+    .tint(.primary)
 }
 
 // MARK: - 界面偏好
@@ -706,7 +709,7 @@ struct SubtitlePrefsView: View {
                         SecureField("留空用公共额度", text: $assrtToken)
                             .multilineTextAlignment(.trailing)
                             .font(.system(size: 15))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
                             .frame(maxWidth: 190)
@@ -725,7 +728,7 @@ struct SubtitlePrefsView: View {
                         SecureField("需要自己申请", text: $osApiKey)
                             .multilineTextAlignment(.trailing)
                             .font(.system(size: 15))
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.primary)
                             .autocorrectionDisabled()
                             .textInputAutocapitalization(.never)
                             .frame(maxWidth: 190)
@@ -1138,7 +1141,7 @@ struct AITranslatePrefsView: View {
             field()
                 .multilineTextAlignment(.trailing)
                 .font(.system(size: 15))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(.primary)
                 .autocorrectionDisabled()
                 .textInputAutocapitalization(.never)
                 .frame(maxWidth: 230)

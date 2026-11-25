@@ -723,7 +723,7 @@ struct SettingRowContent: View {
                 Text(value).foregroundStyle(.secondary).lineLimit(1)
             }
             if chevron {
-                Image(systemName: "chevron.right").font(.footnote.bold()).foregroundStyle(.tertiary)
+                Image(systemName: "chevron.right").font(.footnote.bold()).foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 16)
