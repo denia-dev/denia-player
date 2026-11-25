@@ -88,28 +88,21 @@ func wideImageKind(_ item: EmbyItem) -> String {
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
+    /// The backdrop's dominant colour (CIAreaAverage, computed by
+    /// the cell's owner). Everything outside the sharp band renders
+    /// as this flat tone - NOT as a scaled/blurred copy of the image
+    /// (his correction, v1.39: a blurred fill still reads as the
+    /// picture enlarged, which is what the fit-to-width band exists
+    /// to avoid).
+    let tint: Color?
     let onBlank: (String) -> Void
 
     @State private var uiImage: UIImage?
 
     var body: some View {
         ZStack(alignment: .top) {
+            Rectangle().fill(tint ?? Color(.systemBackground))
             if let uiImage {
-                // Full-frame blurred copy of the same backdrop
-                // (his call, v1.38): the sharp band sits low, just
-                // above the title, and the area above it must still
-                // be rendered from the artwork - not the flat
-                // system background, which showed as a white strip
-                // in light mode. Overscaled so the blur's soft
-                // edges stay out of frame.
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .scaleEffect(1.2)
-                    .blur(radius: 36)
-                    .brightness(-0.06)
-                    .clipped()
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -420,7 +413,7 @@ struct HomeView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .background {
             ZStack {
-                HeroArtwork(item: item, client: client) { id in
+                HeroArtwork(item: item, client: client, tint: heroTints[item.Id]) { id in
                     heroExcluded.insert(id)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
