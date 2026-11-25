@@ -98,7 +98,17 @@ func wideImageKind(_ item: EmbyItem) -> String {
 /// sharp band fades in over that stretch while a registered
 /// blurred copy (radius 12) fades out over the same stretch,
 /// so the edge itself is blurred away and the rest of the
-/// artwork is untouched.
+/// artwork is untouched. v1.43 still showed the line, and
+/// reading the code again found why every top fade since
+/// v1.39 had been a no-op: the mask sat AFTER .padding(.top,
+/// 56), so the gradient's locations were fractions of the
+/// padded height (277) and the whole top fade landed inside
+/// the padding - the image always started at full alpha. (The
+/// bottom melt worked only because its stops happened to fall
+/// inside the image.) v1.44 moves the mask before the padding
+/// so the stops are fractions of the band itself, and shifts
+/// the bottom stop 0.85 -> 0.81 to keep the bottom melt the
+/// same length it was.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -121,20 +131,25 @@ private struct HeroArtwork: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity)
+                    // The mask MUST come before the padding: after
+                    // .padding(.top, 56) the gradient's locations
+                    // are fractions of the padded height, and the
+                    // top fade landed entirely inside the padding
+                    // (the bug that kept the line alive to v1.44).
+                    .mask {
+                        LinearGradient(stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.14),
+                            .init(color: .black, location: 0.81),
+                            .init(color: .clear, location: 1.0),
+                        ], startPoint: .top, endPoint: .bottom)
+                    }
                     // Dropped 56pt from the top (his call, v1.37):
                     // top-pinned, the band ended high above the
                     // bottom-anchored title block with a washed-out
                     // gap between them; now its faded bottom edge
                     // lands just above the logo/title.
                     .padding(.top, 56)
-                    .mask {
-                        LinearGradient(stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.14),
-                            .init(color: .black, location: 0.85),
-                            .init(color: .clear, location: 1.0),
-                        ], startPoint: .top, endPoint: .bottom)
-                    }
                 // The line, blurred (v1.43): a registered copy of
                 // the same band, blurred, living only in the top
                 // 14% - full strength just below the edge, gone
@@ -145,7 +160,6 @@ private struct HeroArtwork: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity)
-                    .padding(.top, 56)
                     .blur(radius: 12)
                     .mask {
                         LinearGradient(stops: [
@@ -155,6 +169,7 @@ private struct HeroArtwork: View {
                             .init(color: .clear, location: 0.14),
                         ], startPoint: .top, endPoint: .bottom)
                     }
+                    .padding(.top, 56)
             }
         }
         .task(id: item.Id) {
