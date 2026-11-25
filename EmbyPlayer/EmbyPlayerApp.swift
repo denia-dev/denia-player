@@ -336,6 +336,7 @@ struct MainView: View {
             .tag(4)
         }
         .tint(.blue)
+        .environment(nav)
         .task {
             // Warm the libraries catalog in the background so the
             // 资源库 tab opens already populated instead of loading

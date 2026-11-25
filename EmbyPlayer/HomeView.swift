@@ -1,5 +1,4 @@
 import SwiftUI
-import Vision
 
 /// Image view bound to the active client, backed by the shared
 /// decoded-image cache: one download and decode per URL across the
@@ -70,53 +69,51 @@ func wideImageKind(_ item: EmbyItem) -> String {
     (item.BackdropImageTags?.isEmpty == false) ? "Backdrop" : "Primary"
 }
 
-/// Fill-crops an image around a focal point instead of always the
-/// centre. The hero frame is tall (roughly 0.74 aspect) while
-/// backdrops are 16:9, so a centre crop shows only the middle ~42%
-/// of the width - any subject composed left or right of centre is
-/// cut out of the carousel entirely (his 2026-11-25 report). The
-/// focal point shifts the crop window so the subject stays in frame;
-/// the window is clamped so no empty edge can ever show.
-private struct FocalFillImage: View {
-    let image: UIImage
-    let focal: CGPoint
-
-    var body: some View {
-        GeometryReader { geo in
-            let iw = max(image.size.width, 1)
-            let ih = max(image.size.height, 1)
-            let scale = max(geo.size.width / iw, geo.size.height / ih)
-            let dw = iw * scale
-            let dh = ih * scale
-            let ox = min(0, max(geo.size.width - dw, geo.size.width / 2 - focal.x * dw))
-            let oy = min(0, max(geo.size.height - dh, geo.size.height / 2 - focal.y * dh))
-            Image(uiImage: image)
-                .resizable()
-                .frame(width: dw, height: dh)
-                .position(x: ox + dw / 2, y: oy + dh / 2)
-        }
-        .clipped()
-    }
-}
-
-/// Hero artwork with blank rejection: when the image download fails
-/// or the returned image is a blank placeholder, the item reports
-/// itself through onBlank and the carousel drops it. One retry first,
-/// so a network hiccup does not cost a good hero its slot.
+/// Hero artwork: the full backdrop fit to width over a blurred copy
+/// of itself. The hero frame is tall (roughly 0.74 aspect) while
+/// backdrops are 16:9, so any fill-crop shows only ~42% of the width
+/// and the subject lands wherever the crop window happens to sit -
+/// the v1.29 Vision focal point (faces, then attention saliency)
+/// kept picking ribbons, skies and torsos on anime backdrops, and
+/// the carousel still showed framings with no subject at all (his
+/// 2026-11-25 screenshots: a hand, half a face at the edge, a ribbon
+/// close-up). Fitting the whole backdrop to width is deterministic:
+/// the complete composition, subject included, is always in frame.
+/// The blurred fill keeps the full-bleed look behind it and melts
+/// into the page tint through the cell's existing gradient.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
     let onBlank: (String) -> Void
 
     @State private var uiImage: UIImage?
-    @State private var focal = CGPoint(x: 0.5, y: 0.5)
-
-    private static var focalCache: [String: CGPoint] = [:]
 
     var body: some View {
         ZStack {
             if let uiImage {
-                FocalFillImage(image: uiImage, focal: focal)
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .scaleEffect(1.15)
+                    .blur(radius: 28)
+                    .overlay(Color.black.opacity(0.10))
+                    .clipped()
+                GeometryReader { geo in
+                    let iw = max(uiImage.size.width, 1)
+                    let ih = max(uiImage.size.height, 1)
+                    let bandHeight = geo.size.width * ih / iw
+                    Image(uiImage: uiImage)
+                        .resizable()
+                        .frame(width: geo.size.width, height: bandHeight)
+                        .mask {
+                            LinearGradient(stops: [
+                                .init(color: .black, location: 0),
+                                .init(color: .black, location: 0.82),
+                                .init(color: .clear, location: 1.0),
+                            ], startPoint: .top, endPoint: .bottom)
+                        }
+                }
             } else {
                 Rectangle().fill(.quaternary)
             }
@@ -128,59 +125,33 @@ private struct HeroArtwork: View {
             }
             if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
                 uiImage = loaded
-                await resolveFocal(for: loaded)
                 return
             }
             try? await Task.sleep(for: .seconds(1.5))
             guard !Task.isCancelled else { return }
             if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
                 uiImage = loaded
-                await resolveFocal(for: loaded)
             } else if !Task.isCancelled {
                 onBlank(item.Id)
             }
         }
-    }
-
-    /// The backdrop's subject position, faces first, then attention
-    /// saliency, centre as the fallback. Computed once per item off
-    /// the main thread and cached for the session.
-    private func resolveFocal(for image: UIImage) async {
-        if let cached = Self.focalCache[item.Id] {
-            focal = cached
-            return
-        }
-        guard let cg = image.cgImage else { return }
-        let point = await Task.detached(priority: .utility) { () -> CGPoint in
-            let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-            let faceRequest = VNDetectFaceRectanglesRequest()
-            let saliencyRequest = VNGenerateAttentionBasedSaliencyImageRequest()
-            try? handler.perform([faceRequest, saliencyRequest])
-            if let faces = faceRequest.results, !faces.isEmpty {
-                let union = faces.reduce(into: CGRect.null) { $0 = $0.union($1.boundingBox) }
-                return CGPoint(x: union.midX, y: 1 - union.midY)
-            }
-            if let observation = saliencyRequest.results?.first,
-               let salient = observation.salientObjects?.max(by: {
-                   $0.boundingBox.width * $0.boundingBox.height < $1.boundingBox.width * $1.boundingBox.height
-               }) {
-                return CGPoint(x: salient.boundingBox.midX, y: 1 - salient.boundingBox.midY)
-            }
-            return CGPoint(x: 0.5, y: 0.5)
-        }.value
-        Self.focalCache[item.Id] = point
-        focal = point
     }
 }
 
 struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(ShellState.self) private var shell
+    @Environment(NavStore.self) private var nav
     @Environment(\.zoomNS) private var zoomNS
 
     @State private var resume: [EmbyItem] = []
     @State private var latest: [EmbyItem] = []
     @State private var heroIndex = 0
+    /// Last time the user touched the hero carousel (drag or tap).
+    /// Auto-advance stays quiet for a while after any interaction:
+    /// a tap landing while the paging scroll is animating to the
+    /// next page is the known "sometimes the tap does nothing" case.
+    @State private var lastHeroInteraction = Date.distantPast
     /// Year/ratings/runtime hydrated per hero item from the
     /// single-item endpoint (list responses omit them on goemby).
     @State private var heroMeta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?, imdbID: String?, tmdbID: String?)] = [:]
@@ -351,12 +322,22 @@ struct HomeView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 0) {
                         ForEach(Array(heroItems.enumerated()), id: \.element.Id) { index, item in
-                            NavigationLink(value: Route.detail(item)) {
-                                heroCell(item, client: client)
-                            }
-                            .buttonStyle(.plain)
-                            .containerRelativeFrame(.horizontal)
-                            .id(index)
+                            // Tap via a simultaneous gesture + programmatic
+                            // push instead of a NavigationLink: a link's
+                            // button drops taps that land while the paging
+                            // scroll is still moving (auto-advance or a
+                            // settling swipe), which read as "sometimes
+                            // the tap does nothing, sometimes it works".
+                            // The simultaneous tap rides with the cell and
+                            // fires either way; real drags still scroll.
+                            heroCell(item, client: client)
+                                .containerRelativeFrame(.horizontal)
+                                .id(index)
+                                .contentShape(Rectangle())
+                                .simultaneousGesture(TapGesture().onEnded {
+                                    lastHeroInteraction = .now
+                                    nav.path0.append(Route.detail(item))
+                                })
                         }
                     }
                     .scrollTargetLayout()
@@ -366,6 +347,11 @@ struct HomeView: View {
                     get: { heroIndex },
                     set: { if let newValue = $0 { heroIndex = newValue } }
                 ))
+                .onScrollPhaseChange { _, phase in
+                    if phase == .tracking || phase == .interacting || phase == .decelerating {
+                        lastHeroInteraction = .now
+                    }
+                }
                 .frame(height: 540)
 
                 HStack(spacing: 6) {
@@ -525,6 +511,10 @@ struct HomeView: View {
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(7))
             guard !heroItems.isEmpty else { continue }
+            // Stay quiet while the user is (or just was) interacting:
+            // advancing under the user's finger both startles and eats
+            // the tap they were aiming at the current page.
+            guard Date().timeIntervalSince(lastHeroInteraction) > 6 else { continue }
             withAnimation { heroIndex = (heroIndex + 1) % heroItems.count }
         }
     }
