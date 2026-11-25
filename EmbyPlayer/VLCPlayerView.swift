@@ -458,6 +458,8 @@ struct VLCPlayerView: View {
     @State private var seasonEpisodes: [EmbyItem] = []
     @State private var showEpisodePicker = false
     @State private var sleepTask: Task<Void, Never>?
+    @State private var nextCountdown: Int?
+    @State private var countdownTask: Task<Void, Never>?
 
     private enum DragMode { case scrub, brightness, volume }
 
@@ -553,6 +555,22 @@ struct VLCPlayerView: View {
                 .zIndex(20)
             }
 
+            if let nextCountdown, let nextEpisode {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        NextEpisodeCountdownCard(episode: nextEpisode, secondsLeft: nextCountdown,
+                                                 onPlayNow: { playNextNow() },
+                                                 onCancel: { cancelNextCountdown() })
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 96)
+                .zIndex(30)
+                .transition(.opacity)
+            }
+
             if controller.hasError {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
@@ -584,7 +602,7 @@ struct VLCPlayerView: View {
         }
         .sheet(isPresented: $showDiag) { diagSheet }
         .onChange(of: controller.hasEnded) { _, ended in
-            if ended, Prefs.autoPlayNext, let nextEpisode { onPlayNext?(nextEpisode) }
+            if ended { startNextCountdown() }
         }
         .onChange(of: controller.position) { _, position in
             updateActiveSegment(position: position)
@@ -625,6 +643,7 @@ struct VLCPlayerView: View {
         .onDisappear {
             hideTask?.cancel()
             sleepTask?.cancel()
+            countdownTask?.cancel()
             let position = controller.directPosition()
             if handingOff {
                 // MPV takes over this same URL and Emby play session.
@@ -1129,6 +1148,40 @@ struct VLCPlayerView: View {
                 previousEpisode = sorted[index - 1]
             }
         }
+    }
+
+    /// Autoplay-next countdown (v1.5): same contract as the mpv
+    /// screen - 10 s card with play-now / cancel instead of the old
+    /// instant hard cut. Leaving the ended state (replay, seek back)
+    /// cancels the countdown.
+    private func startNextCountdown() {
+        guard Prefs.autoPlayNext, let next = nextEpisode, onPlayNext != nil,
+              countdownTask == nil else { return }
+        nextCountdown = 10
+        countdownTask = Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                if controller.player.state != .ended { cancelNextCountdown(); return }
+                nextCountdown = (nextCountdown ?? 1) - 1
+            }
+            let play = onPlayNext
+            cancelNextCountdown()
+            play?(next)
+        }
+    }
+
+    private func cancelNextCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        if nextCountdown != nil { nextCountdown = nil }
+    }
+
+    private func playNextNow() {
+        guard let next = nextEpisode else { return }
+        let play = onPlayNext
+        cancelNextCountdown()
+        play?(next)
     }
 
     private func startSleepTimer() {

@@ -359,6 +359,75 @@ private struct PiPSubtitleCaption: View {
     }
 }
 
+/// Label for the next episode on the countdown card: "第 3 集 · 标题".
+func episodeCountdownLabel(_ episode: EmbyItem) -> String {
+    if let n = episode.IndexNumber {
+        return episode.Name.isEmpty || episode.Name == "第\(n)集"
+            ? "第 \(n) 集" : "第 \(n) 集 · \(episode.Name)"
+    }
+    return episode.Name
+}
+
+/// Countdown card shown when an episode ends and autoplay-next is on
+/// (v1.5): 10 seconds to play now or cancel before the next episode
+/// starts, instead of the old instant hard cut. Shared by both player
+/// screens; the ring drains with the seconds.
+struct NextEpisodeCountdownCard: View {
+    let episode: EmbyItem
+    let secondsLeft: Int
+    let onPlayNow: () -> Void
+    let onCancel: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("下一集")
+                .font(.caption.bold())
+                .foregroundStyle(.white.opacity(0.7))
+            Text(episodeCountdownLabel(episode))
+                .font(.subheadline.bold())
+                .foregroundStyle(.white)
+                .lineLimit(2)
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle()
+                        .stroke(.white.opacity(0.25), lineWidth: 3)
+                    Circle()
+                        .trim(from: 0, to: Double(max(secondsLeft, 0)) / 10)
+                        .stroke(.white, style: StrokeStyle(lineWidth: 3, lineCap: .round))
+                        .rotationEffect(.degrees(-90))
+                    Text("\(secondsLeft)")
+                        .font(.footnote.bold())
+                        .foregroundStyle(.white)
+                }
+                .frame(width: 40, height: 40)
+                .animation(.linear(duration: 0.9), value: secondsLeft)
+
+                Button { onPlayNow() } label: {
+                    Text("立即播放")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.black)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .background(.white, in: Capsule())
+                }
+                .buttonStyle(.plain)
+
+                Button { onCancel() } label: {
+                    Text("取消")
+                        .font(.subheadline)
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 14).padding(.vertical, 8)
+                        .glassEffect(.regular.interactive(), in: Capsule())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(14)
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
+        .frame(maxWidth: 330, alignment: .leading)
+    }
+}
+
 /// The mpv player screen. Layout rule (from the post-mortem): the
 /// rendering view is created once and never moves; gestures live on their
 /// own transparent layer; chrome is a sibling overlay animated by opacity
@@ -528,6 +597,8 @@ struct MPVPlayerScreen: View {
     @State private var showChapters = false
     @State private var endWatchTask: Task<Void, Never>?
     @State private var sleepTask: Task<Void, Never>?
+    @State private var nextCountdown: Int?
+    @State private var countdownTask: Task<Void, Never>?
     /// Set when the forced-software player had to be rebuilt with
     /// hardware decoding (Dolby Vision the metadata didn't declare).
     @State private var softwareFallbackUsed = false
@@ -638,6 +709,22 @@ struct MPVPlayerScreen: View {
                 .zIndex(20)
             }
 
+            if let nextCountdown, let nextEpisode {
+                VStack {
+                    Spacer()
+                    HStack {
+                        Spacer()
+                        NextEpisodeCountdownCard(episode: nextEpisode, secondsLeft: nextCountdown,
+                                                 onPlayNow: { playNextNow() },
+                                                 onCancel: { cancelNextCountdown() })
+                    }
+                }
+                .padding(.trailing, 16)
+                .padding(.bottom, 96)
+                .zIndex(30)
+                .transition(.opacity)
+            }
+
             if let loadError {
                 VStack(spacing: 10) {
                     Image(systemName: "exclamationmark.triangle").font(.largeTitle)
@@ -740,6 +827,7 @@ struct MPVPlayerScreen: View {
             hideTask?.cancel()
             sleepTask?.cancel()
             endWatchTask?.cancel()
+            countdownTask?.cancel()
             if let session {
                 let client = store.client()
                 let position = player.position.secondsValue
@@ -1312,10 +1400,45 @@ struct MPVPlayerScreen: View {
             try? await Task.sleep(for: .seconds(1))
             updateActiveSegment(position: player.position.secondsValue)
             if player.state == .ended {
-                if Prefs.autoPlayNext, let nextEpisode { onPlayNext?(nextEpisode) }
+                if Prefs.autoPlayNext, let nextEpisode, onPlayNext != nil {
+                    startNextCountdown(nextEpisode)
+                }
                 return
             }
         }
+    }
+
+    /// Autoplay-next countdown (v1.5): the old behaviour hard-cut to
+    /// the next episode the instant this one ended. Now the card gets
+    /// 10 s - play now, cancel, or let it run out. Leaving the ended
+    /// state (replay, seek back) cancels the countdown.
+    private func startNextCountdown(_ next: EmbyItem) {
+        guard countdownTask == nil else { return }
+        nextCountdown = 10
+        countdownTask = Task { @MainActor in
+            for _ in 0..<10 {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                if player.state != .ended { cancelNextCountdown(); return }
+                nextCountdown = (nextCountdown ?? 1) - 1
+            }
+            let play = onPlayNext
+            cancelNextCountdown()
+            play?(next)
+        }
+    }
+
+    private func cancelNextCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        if nextCountdown != nil { nextCountdown = nil }
+    }
+
+    private func playNextNow() {
+        guard let next = nextEpisode else { return }
+        let play = onPlayNext
+        cancelNextCountdown()
+        play?(next)
     }
 
     private func fetchSegments() {
