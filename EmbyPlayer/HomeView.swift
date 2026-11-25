@@ -94,8 +94,22 @@ private struct HeroArtwork: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            Rectangle().fill(Color(.systemBackground))
             if let uiImage {
+                // Full-frame blurred copy of the same backdrop
+                // (his call, v1.38): the sharp band sits low, just
+                // above the title, and the area above it must still
+                // be rendered from the artwork - not the flat
+                // system background, which showed as a white strip
+                // in light mode. Overscaled so the blur's soft
+                // edges stay out of frame.
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .scaleEffect(1.2)
+                    .blur(radius: 36)
+                    .brightness(-0.06)
+                    .clipped()
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
