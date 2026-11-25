@@ -100,6 +100,12 @@ private struct HeroArtwork: View {
                     .resizable()
                     .scaledToFit()
                     .frame(maxWidth: .infinity)
+                    // Dropped 56pt from the top (his call, v1.37):
+                    // top-pinned, the band ended high above the
+                    // bottom-anchored title block with a washed-out
+                    // gap between them; now its faded bottom edge
+                    // lands just above the logo/title.
+                    .padding(.top, 56)
                     .mask {
                         LinearGradient(stops: [
                             .init(color: .black, location: 0),
