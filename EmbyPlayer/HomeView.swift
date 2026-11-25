@@ -90,14 +90,15 @@ func wideImageKind(_ item: EmbyItem) -> String {
 /// subject included - stays fully sharp. v1.40 blurred the top
 /// half OF the band and fogged the subject; v1.38 filled the
 /// whole frame with a scaled copy and read as the picture
-/// enlarged. Both rejected. v1.41's flat smear strip floated
-/// the wrong rows above the band and the line stayed. v1.42
-/// takes the geometry from his reference screenshot (Sen):
-/// a vertically mirrored copy of the artwork's top rows sits
-/// above the band, registered so its bottom row IS the band's
-/// top row, heavily blurred and fading upward into the tint -
-/// the artwork melts into colour with no line anywhere, and
-/// the band itself stays fully sharp.
+/// enlarged. Both rejected, and the v1.41/v1.42 strips above
+/// the band never touched the line either. What he actually
+/// asked for all along, in his words: blur THIS line - the
+/// band's own top edge. v1.43 does exactly that and nothing
+/// else: a crossfade dissolve over the band's top 14% - the
+/// sharp band fades in over that stretch while a registered
+/// blurred copy (radius 12) fades out over the same stretch,
+/// so the edge itself is blurred away and the rest of the
+/// artwork is untouched.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -116,32 +117,6 @@ private struct HeroArtwork: View {
         ZStack(alignment: .top) {
             Rectangle().fill(tint ?? Color(.systemBackground))
             if let uiImage {
-                // Upward melt (v1.42, geometry from his Sen
-                // reference): the artwork's top rows, mirrored
-                // vertically so the strip's bottom row is exactly
-                // the band's top row (registered - the colours
-                // continue across the seam), heavily blurred and
-                // fading upward into the flat tint. The strip is
-                // 120 tall, offset so its bottom lands on the
-                // band's top edge (y=56); only the part above the
-                // band is visible, the sharp band covers the rest.
-                // Nothing inside the band is ever blurred.
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .scaleEffect(x: 1, y: -1, anchor: .center)
-                    .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120, alignment: .bottom)
-                    .clipped()
-                    .blur(radius: 26)
-                    .mask {
-                        LinearGradient(stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .clear, location: 0.35),
-                            .init(color: .black, location: 1.0),
-                        ], startPoint: .top, endPoint: .bottom)
-                    }
-                    .offset(y: -64)
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -155,9 +130,29 @@ private struct HeroArtwork: View {
                     .mask {
                         LinearGradient(stops: [
                             .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.05),
+                            .init(color: .black, location: 0.14),
                             .init(color: .black, location: 0.85),
                             .init(color: .clear, location: 1.0),
+                        ], startPoint: .top, endPoint: .bottom)
+                    }
+                // The line, blurred (v1.43): a registered copy of
+                // the same band, blurred, living only in the top
+                // 14% - full strength just below the edge, gone
+                // by 14% down. Together with the sharp band's
+                // fade-in over the same stretch, the top edge
+                // dissolves instead of ending in a line.
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 56)
+                    .blur(radius: 12)
+                    .mask {
+                        LinearGradient(stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.05),
+                            .init(color: .black, location: 0.08),
+                            .init(color: .clear, location: 0.14),
                         ], startPoint: .top, endPoint: .bottom)
                     }
             }
