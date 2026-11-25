@@ -80,11 +80,15 @@ func wideImageKind(_ item: EmbyItem) -> String {
 /// composition, subject included, is always in frame, and the area
 /// below the band is the flat page tint the title block sits on.
 /// Deliberately built from plain frames only - no GeometryReader,
-/// no blur layer, no zoom source: the v1.33 build (verified to
-/// contain the fit-width code, version 1.33 (134) on device) still
-/// rendered pixel-identical to the old crop on his phone, so this
-/// version removes every layout mechanism that could be involved
-/// and changes the hero height as an unmistakable marker.
+/// no zoom source: the v1.33 build (verified to contain the
+/// fit-width code, version 1.33 (134) on device) still rendered
+/// pixel-identical to the old crop on his phone, so v1.34 removed
+/// every layout mechanism that could be involved. The one blur in
+/// here is the v1.40 top-melt overlay, added at his explicit
+/// request: same image, same scale, only its top half visible,
+/// so the band dissolves into the tint instead of ending on a
+/// hard line. (NOT the v1.38 scaled-to-fill backdrop - that one
+/// read as the picture enlarged and he rejected it.)
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -113,11 +117,33 @@ private struct HeroArtwork: View {
                     // gap between them; now its faded bottom edge
                     // lands just above the logo/title.
                     .padding(.top, 56)
+                    // v1.40: the top edge also fades now (was a hard
+                    // cut against the flat tint - the "分离线" he
+                    // called out). The top ~22% dissolves upward.
                     .mask {
                         LinearGradient(stops: [
-                            .init(color: .black, location: 0),
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.22),
                             .init(color: .black, location: 0.85),
                             .init(color: .clear, location: 1.0),
+                        ], startPoint: .top, endPoint: .bottom)
+                    }
+                // Blurred top of the SAME artwork at the SAME scale:
+                // only its top half shows, dissolving upward into
+                // the tint and downward into the sharp band, so the
+                // artwork melts into its own colour. No enlargement.
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 56)
+                    .blur(radius: 18)
+                    .mask {
+                        LinearGradient(stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.12),
+                            .init(color: .black, location: 0.30),
+                            .init(color: .clear, location: 0.55),
                         ], startPoint: .top, endPoint: .bottom)
                     }
             }
@@ -503,13 +529,16 @@ struct HomeView: View {
 
     private func loadCurrentHeroTint() async {
         guard let item = currentHeroItem, let client = store.client(),
-              let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720) else { return }
-        if let cached = ImageMemoryCache.shared.dominantTintCached(url) {
-            heroTints[item.Id] = cached
-            return
-        }
-        guard let tint = await ImageMemoryCache.shared.dominantTint(for: url), !Task.isCancelled,
-              currentHeroItem?.Id == item.Id else { return }
+              // v1.40: the tint needs only the artwork's average
+              // colour, so fetch a 48px-tall strip instead of the
+              // full 720px backdrop - the old wait (his "卡一下才
+              // 渲染完成") was the big image downloading first.
+              // The result is also persisted per item (see
+              // dominantTint(for:itemID:)), so repeat entries
+              // paint from disk on the first frame.
+              let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 48) else { return }
+        guard let tint = await ImageMemoryCache.shared.dominantTint(for: url, itemID: item.Id),
+              !Task.isCancelled, currentHeroItem?.Id == item.Id else { return }
         heroTints[item.Id] = tint
     }
 
@@ -531,6 +560,14 @@ struct HomeView: View {
             resume = try await resumeFetch
             latest = await latestFetch
             heroPool = await poolFetch
+            // Prefill every hero tint we have persisted, so the
+            // page opens already coloured instead of flashing
+            // the flat background first (v1.40).
+            for heroItem in heroItems {
+                if let tint = ImageMemoryCache.shared.dominantTintPersisted(itemID: heroItem.Id) {
+                    heroTints[heroItem.Id] = tint
+                }
+            }
             // Start (and refresh) on a random hero so the home page
             // does not open on the same title every time.
             if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }

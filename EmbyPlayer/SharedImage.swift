@@ -244,6 +244,47 @@ final class ImageMemoryCache {
         tintCache.object(forKey: url.absoluteString as NSString).map { Color(uiColor: $0) }
     }
 
+    // MARK: persisted tints (v1.40)
+    //
+    // The hero tint used to be recomputed from the full 720px
+    // backdrop on every cold start, so the page opened on the
+    // flat background and the colour popped in a beat later
+    // (his "卡一下才渲染完成"). Tints now persist per item in
+    // UserDefaults, so a repeat entry paints coloured on the
+    // first frame; the first-ever computation uses a 48px strip.
+
+    private static let tintDefaultsKey = "heroTintHexes"
+
+    func dominantTintPersisted(itemID: String) -> Color? {
+        guard let hex = (UserDefaults.standard.dictionary(forKey: Self.tintDefaultsKey) as? [String: String])?[itemID],
+              let color = Self.color(fromHex: hex) else { return nil }
+        return color
+    }
+
+    func dominantTint(for url: URL, itemID: String) async -> Color? {
+        if let persisted = dominantTintPersisted(itemID: itemID) { return persisted }
+        guard let tint = await dominantTint(for: url) else { return nil }
+        var dict = (UserDefaults.standard.dictionary(forKey: Self.tintDefaultsKey) as? [String: String]) ?? [:]
+        dict[itemID] = Self.hexString(of: UIColor(tint))
+        UserDefaults.standard.set(dict, forKey: Self.tintDefaultsKey)
+        return tint
+    }
+
+    private static func hexString(of color: UIColor) -> String {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        color.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return String(format: "#%02X%02X%02X", Int(r * 255), Int(g * 255), Int(b * 255))
+    }
+
+    private static func color(fromHex hex: String) -> Color? {
+        var h = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if h.hasPrefix("#") { h.removeFirst() }
+        guard h.count == 6, let v = UInt32(h, radix: 16) else { return nil }
+        return Color(red: Double((v >> 16) & 0xFF) / 255,
+                     green: Double((v >> 8) & 0xFF) / 255,
+                     blue: Double(v & 0xFF) / 255)
+    }
+
     /// The artwork's average colour, deepened into a page tint: the
     /// hue survives with a moderate saturation, brightness clamped
     /// into a dark immersive band - the reference design from his
