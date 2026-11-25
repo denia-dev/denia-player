@@ -83,12 +83,14 @@ func wideImageKind(_ item: EmbyItem) -> String {
 /// no zoom source: the v1.33 build (verified to contain the
 /// fit-width code, version 1.33 (134) on device) still rendered
 /// pixel-identical to the old crop on his phone, so v1.34 removed
-/// every layout mechanism that could be involved. The one blur in
-/// here is the v1.40 top-melt overlay, added at his explicit
-/// request: same image, same scale, only its top half visible,
-/// so the band dissolves into the tint instead of ending on a
-/// hard line. (NOT the v1.38 scaled-to-fill backdrop - that one
-/// read as the picture enlarged and he rejected it.)
+/// every layout mechanism that could be involved. The blur in
+/// here lives strictly ABOVE the band (v1.41, his exact
+/// geometry): the artwork's top rows smear upward into the flat
+/// tint so there is no separation line, while the band itself -
+/// subject included - stays fully sharp. v1.40 blurred the top
+/// half OF the band and fogged the subject; v1.38 filled the
+/// whole frame with a scaled copy and read as the picture
+/// enlarged. Both rejected; the smear strip is the settled form.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -107,6 +109,28 @@ private struct HeroArtwork: View {
         ZStack(alignment: .top) {
             Rectangle().fill(tint ?? Color(.systemBackground))
             if let uiImage {
+                // Upward smear (v1.41): a top-aligned, heavily
+                // blurred strip of the artwork's own top rows,
+                // running from the cell top to just past the
+                // band's top edge (the sharp band below covers
+                // its lower part). It fades from clear at the top
+                // to full strength exactly where it meets the
+                // band, so the artwork's colours blur upward
+                // into the flat tint - no separation line, and
+                // nothing inside the band is ever blurred.
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, height: 130, alignment: .top)
+                    .clipped()
+                    .blur(radius: 28)
+                    .mask {
+                        LinearGradient(stops: [
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.43),
+                            .init(color: .black, location: 1.0),
+                        ], startPoint: .top, endPoint: .bottom)
+                    }
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -117,33 +141,11 @@ private struct HeroArtwork: View {
                     // gap between them; now its faded bottom edge
                     // lands just above the logo/title.
                     .padding(.top, 56)
-                    // v1.40: the top edge also fades now (was a hard
-                    // cut against the flat tint - the "分离线" he
-                    // called out). The top ~22% dissolves upward.
                     .mask {
                         LinearGradient(stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.22),
+                            .init(color: .black, location: 0),
                             .init(color: .black, location: 0.85),
                             .init(color: .clear, location: 1.0),
-                        ], startPoint: .top, endPoint: .bottom)
-                    }
-                // Blurred top of the SAME artwork at the SAME scale:
-                // only its top half shows, dissolving upward into
-                // the tint and downward into the sharp band, so the
-                // artwork melts into its own colour. No enlargement.
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 56)
-                    .blur(radius: 18)
-                    .mask {
-                        LinearGradient(stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.12),
-                            .init(color: .black, location: 0.30),
-                            .init(color: .clear, location: 0.55),
                         ], startPoint: .top, endPoint: .bottom)
                     }
             }
