@@ -121,7 +121,7 @@ private struct HeroArtwork: View {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFill()
-                    .frame(maxWidth: .infinity, height: 130, alignment: .top)
+                    .frame(maxWidth: .infinity, minHeight: 130, maxHeight: 130, alignment: .top)
                     .clipped()
                     .blur(radius: 28)
                     .mask {
