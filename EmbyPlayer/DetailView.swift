@@ -22,7 +22,6 @@ struct DetailView: View {
     @State private var errorText: String?
     @State private var favOverride: Bool?
     @State private var playedOverride: Bool?
-    @State private var overviewExpanded = false
     @State private var showAllEpisodes = false
     /// Nil until load()'s series fetch lands - artworkSource reads the
     /// difference (see its comment).
@@ -69,8 +68,6 @@ struct DetailView: View {
                         Text(overview)
                             .font(.subheadline)
                             .foregroundStyle(.secondary)
-                            .lineLimit(overviewExpanded ? nil : 3)
-                            .onTapGesture { overviewExpanded.toggle() }
                     }
                     ratingsRow
                     if seriesID != nil { seriesSection }
@@ -831,7 +828,7 @@ struct DetailView: View {
                                         .font(.subheadline.weight(episode.Id == current.Id ? .bold : .medium))
                                         .lineLimit(1)
                                     if let overview = episode.Overview {
-                                        Text(overview).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                                        Text(overview).font(.caption).foregroundStyle(.secondary)
                                     }
                                     if episode.durationSeconds > 0, episode.resumeSeconds > 0 {
                                         ProgressView(value: min(episode.resumeSeconds / episode.durationSeconds, 1))
