@@ -155,7 +155,6 @@ struct HomeView: View {
     /// single-item endpoint (list responses omit them on goemby).
     @State private var heroMeta: [String: (year: Int?, community: Double?, critic: Double?, runTimeTicks: Int64?, imdbID: String?, tmdbID: String?)] = [:]
     @State private var ratingsStore = RatingsStore.shared
-    @State private var showServers = false
     @State private var errorText: String?
     /// Hero items dropped at runtime because their artwork came back
     /// missing or blank (session-scoped; a relaunch retries them).
@@ -257,7 +256,6 @@ struct HomeView: View {
         .task { await load() }
         .task(id: currentHeroItem?.Id) { await loadCurrentHeroTint() }
         .task { await heroAutoAdvance() }
-        .sheet(isPresented: $showServers) { ServersView() }
     }
 
     // MARK: - ambient background
@@ -366,37 +364,10 @@ struct HomeView: View {
                 Rectangle().fill(.quaternary).frame(height: 300)
             }
 
-            VStack {
-                HStack {
-                    Button { showServers = true } label: {
-                        HStack(spacing: 8) {
-                            RoundedRectangle(cornerRadius: 7)
-                                .fill(Color.green)
-                                .frame(width: 30, height: 30)
-                                .overlay(Image(systemName: "play.fill").font(.system(size: 13)).foregroundStyle(.white))
-                            Text(store.activeServer?.name ?? "")
-                                .font(.subheadline.bold())
-                                .foregroundStyle(.primary)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 7)
-                        .glassEffect(.regular.interactive(), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    Spacer()
-                    Button { shell.recordsRequest = 2 } label: {
-                        Image(systemName: "heart.fill")
-                            .font(.system(size: 17))
-                            .foregroundStyle(.red)
-                            .frame(width: 42, height: 42)
-                            .glassEffect(.regular.interactive(), in: Circle())
-                    }
-                    .buttonStyle(.plain)
-                }
-                Spacer()
-            }
-            .padding(.horizontal)
-            .padding(.top, 58)
+            // No floating controls over the hero (his call, v1.36):
+            // the server chip and the heart shortcut are gone; server
+            // switching lives in the settings server card, favorites
+            // in the records tab.
         }
         .frame(height: 500)
     }
