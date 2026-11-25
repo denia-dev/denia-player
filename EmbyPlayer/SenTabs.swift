@@ -513,47 +513,9 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 22) {
                 Text("设置").font(.system(size: 32, weight: .bold))
 
-                Button { showServers = true } label: {
-                    HStack(spacing: 12) {
-                        RoundedRectangle(cornerRadius: 10)
-                            .fill(Color.green)
-                            .frame(width: 42, height: 42)
-                            .overlay(Image(systemName: "play.fill").foregroundStyle(.white))
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(store.activeServer?.name ?? "未登录").font(.headline)
-                            Text(lineLabel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                        }
-                        Spacer()
-                        Image(systemName: "chevron.right").foregroundStyle(.tertiary)
-                    }
-                    .padding(16)
-                    .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
-                }
-                .buttonStyle(.plain)
+                serverCard
 
                 settingsGroup("通用") {
-                    SettingRow(icon: "server.rack", color: .blue, title: "服务器管理") {
-                        showServers = true
-                    }
-                    Divider().padding(.leading, 58)
-                    Menu {
-                        if let server = store.activeServer {
-                            ForEach(server.baseURLs.indices, id: \.self) { index in
-                                Button {
-                                    var config = server
-                                    config.activeLine = index
-                                    store.update(config)
-                                } label: {
-                                    Label(URL(string: server.baseURLs[index])?.host ?? server.baseURLs[index],
-                                          systemImage: server.activeLine == index ? "checkmark" : "")
-                                }
-                            }
-                        }
-                    } label: {
-                        SettingRowContent(icon: "arrow.triangle.2.circlepath", color: .green, title: "切换线路",
-                                          value: lineLabel, chevron: true)
-                    }
-                    Divider().padding(.leading, 58)
                     SettingRow(icon: "trash", color: .orange, title: "清除图片缓存", value: cacheNote) {
                         URLCache.shared.removeAllCachedResponses()
                         cacheNote = "已清除"
@@ -665,6 +627,72 @@ struct SettingsView: View {
         return "线路 \(server.activeLine + 1) · \(host)"
     }
 
+    private static let brandPink = Color(red: 1.0, green: 0.18, blue: 0.53)
+    private static let brandBlue = Color(red: 0.0, green: 0.57, blue: 1.0)
+
+    /// 当前服务器卡片：点卡片进服务器管理，多线路直接在卡片里点选切换
+    /// （原「服务器管理」「切换线路」两行已并入此卡片）。
+    private var serverCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Button { showServers = true } label: {
+                HStack(spacing: 12) {
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(LinearGradient(colors: [Self.brandPink, Self.brandBlue],
+                                             startPoint: .topLeading, endPoint: .bottomTrailing))
+                        .frame(width: 46, height: 46)
+                        .overlay(Image(systemName: "play.fill").foregroundStyle(.white))
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(store.activeServer?.name ?? "未登录").font(.headline)
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(store.activeServer?.isLoggedIn == true ? Color.green : Color.orange)
+                                .frame(width: 6, height: 6)
+                            Text(lineLabel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                    Text("管理").font(.subheadline).foregroundStyle(.secondary)
+                    Image(systemName: "chevron.right").font(.caption.bold()).foregroundStyle(.tertiary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if let server = store.activeServer, server.baseURLs.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(server.baseURLs.indices, id: \.self) { index in
+                            Button {
+                                var config = server
+                                config.activeLine = index
+                                store.update(config)
+                            } label: {
+                                Text("线路 \(index + 1)")
+                                    .font(.caption.weight(.semibold))
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 6)
+                                    .foregroundStyle(server.activeLine == index ? .white : .primary)
+                                    .background(server.activeLine == index ? Self.brandPink : Color(.tertiarySystemGroupedBackground),
+                                                in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background {
+            ZStack {
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(Color(.secondarySystemGroupedBackground))
+                RoundedRectangle(cornerRadius: 24)
+                    .fill(LinearGradient(colors: [Self.brandPink.opacity(0.12), Self.brandBlue.opacity(0.09)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+            }
+        }
+    }
+
     private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.subheadline).foregroundStyle(.secondary).padding(.leading, 6)
@@ -683,10 +711,12 @@ struct SettingRowContent: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            RoundedRectangle(cornerRadius: 8)
-                .fill(color)
+            RoundedRectangle(cornerRadius: 9)
+                .fill(LinearGradient(colors: [color, color.opacity(0.68)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
                 .frame(width: 30, height: 30)
-                .overlay(Image(systemName: icon).font(.system(size: 14)).foregroundStyle(.white))
+                .overlay(Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white))
+                .shadow(color: color.opacity(0.28), radius: 3, x: 0, y: 1.5)
             Text(title).foregroundStyle(.primary)
             Spacer()
             if let value {
@@ -697,7 +727,7 @@ struct SettingRowContent: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 13)
+        .padding(.vertical, 14)
         .contentShape(Rectangle())
     }
 }

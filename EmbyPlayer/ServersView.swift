@@ -9,23 +9,62 @@ struct ServersView: View {
         NavigationStack {
             List {
                 ForEach(store.servers) { server in
-                    Button {
-                        store.setActive(id: server.id)
-                        dismiss()
-                    } label: {
-                        HStack {
+                    VStack(alignment: .leading, spacing: 9) {
+                        HStack(spacing: 12) {
+                            RoundedRectangle(cornerRadius: 9)
+                                .fill(LinearGradient(colors: [Color(red: 1.0, green: 0.18, blue: 0.53),
+                                                              Color(red: 0.0, green: 0.57, blue: 1.0)],
+                                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                                .frame(width: 34, height: 34)
+                                .overlay(Image(systemName: "server.rack")
+                                    .font(.system(size: 15, weight: .semibold)).foregroundStyle(.white))
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(server.name).font(.headline)
-                                Text(server.baseURL).font(.caption).foregroundStyle(.secondary)
+                                Text(URL(string: server.baseURL)?.host ?? server.baseURL)
+                                    .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                             }
                             Spacer()
-                            if server.id == store.activeServer?.id {
-                                Image(systemName: "checkmark.circle.fill").foregroundStyle(.blue)
-                            }
                             Text(server.isLoggedIn ? "已登录" : "未登录")
-                                .font(.caption2)
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
                                 .foregroundStyle(server.isLoggedIn ? .green : .orange)
+                                .background((server.isLoggedIn ? Color.green : Color.orange).opacity(0.14), in: Capsule())
+                            if server.id == store.activeServer?.id {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(Color(red: 1.0, green: 0.18, blue: 0.53))
+                            }
                         }
+                        if server.baseURLs.count > 1 {
+                            HStack(spacing: 8) {
+                                ForEach(server.baseURLs.indices, id: \.self) { index in
+                                    Button {
+                                        var config = server
+                                        config.activeLine = index
+                                        store.update(config)
+                                    } label: {
+                                        Text("线路 \(index + 1)")
+                                            .font(.caption.weight(.semibold))
+                                            .padding(.horizontal, 11)
+                                            .padding(.vertical, 5)
+                                            .foregroundStyle(server.activeLine == index ? .white : .primary)
+                                            .background(server.activeLine == index
+                                                        ? Color(red: 1.0, green: 0.18, blue: 0.53)
+                                                        : Color(.tertiarySystemGroupedBackground),
+                                                        in: Capsule())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                Spacer()
+                            }
+                            .padding(.leading, 46)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        store.setActive(id: server.id)
+                        dismiss()
                     }
                     .swipeActions {
                         Button(role: .destructive) { store.remove(id: server.id) } label: {
@@ -34,6 +73,7 @@ struct ServersView: View {
                     }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("服务器")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
