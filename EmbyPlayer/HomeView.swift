@@ -114,16 +114,24 @@ private struct HeroArtwork: View {
                 onBlank(item.Id)
                 return
             }
-            if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
-                uiImage = loaded
-                return
-            }
-            try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
-            if let loaded = await ImageMemoryCache.shared.heroImage(for: url) {
-                uiImage = loaded
-            } else if !Task.isCancelled {
-                onBlank(item.Id)
+            // Only a genuinely blank image drops the item. A failed
+            // download (slow server, cold cache) retries once and
+            // then simply leaves the placeholder: the item stays in
+            // the carousel and a later appearance can still load it.
+            for attempt in 0..<2 {
+                switch await ImageMemoryCache.shared.heroImageResult(for: url) {
+                case .loaded(let image):
+                    uiImage = image
+                    return
+                case .blank:
+                    onBlank(item.Id)
+                    return
+                case .failed:
+                    if attempt == 0 {
+                        try? await Task.sleep(for: .seconds(2))
+                        guard !Task.isCancelled else { return }
+                    }
+                }
             }
         }
     }
@@ -542,6 +550,18 @@ struct HomeView: View {
             // Start (and refresh) on a random hero so the home page
             // does not open on the same title every time.
             if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
+            // Warm every hero backdrop in the background, in order:
+            // paging sideways should meet decoded images, not a slow
+            // server (his "加载还慢了很多"). The shared cache dedupes
+            // these against the cells' own requests.
+            let warmItems = heroItems
+            Task.detached(priority: .utility) {
+                for heroItem in warmItems {
+                    if let url = client.backdropURL(itemID: heroItem.Id, index: 0, maxHeight: 720) {
+                        _ = await ImageMemoryCache.shared.image(for: url)
+                    }
+                }
+            }
             await loadHeroMeta(client: client)
             loadedServerID = store.activeServer?.id
             loadedAt = Date()

@@ -44,6 +44,15 @@ final class ImageMemoryCache {
                let image = UIImage(data: data) {
                 return image
             }
+            // Legacy-key fallback: files written before the disk key
+            // dropped the api_key are keyed on the raw URL. Reading
+            // them once migrates the warm cache instead of leaving
+            // every image to re-download after the key change.
+            if let file = Self.legacyDiskFile(for: url),
+               let data = try? Data(contentsOf: file),
+               let image = UIImage(data: data) {
+                return image
+            }
             guard let (data, _) = try? await URLSession.shared.data(from: url),
                   let image = UIImage(data: data) else { return nil }
             if data.count <= 8 * 1024 * 1024, let file = Self.diskFile(for: url) {
@@ -73,6 +82,15 @@ final class ImageMemoryCache {
         return dir
     }
 
+    /// The pre-v1.33 disk key: a hash of the raw URL, token included.
+    /// Read-only fallback so an existing warm cache survives the key
+    /// change (see image(for:)).
+    private static func legacyDiskFile(for url: URL) -> URL? {
+        let digest = SHA256.hash(data: Data(url.absoluteString.utf8))
+        let name = digest.map { String(format: "%02x", $0) }.joined()
+        return diskCacheDir?.appendingPathComponent(name)
+    }
+
     private static func diskFile(for url: URL) -> URL? {
         // Key on the URL with the api_key stripped: the access token
         // rotates whenever the app re-authenticates, and keying the
@@ -94,12 +112,22 @@ final class ImageMemoryCache {
 
     // MARK: - hero blank detection
 
-    /// Hero artwork: nil when the download fails OR the returned
-    /// image is a blank placeholder, so the caller can drop the item
-    /// from the carousel instead of showing an empty slab.
-    func heroImage(for url: URL) async -> UIImage? {
-        guard let image = await image(for: url) else { return nil }
-        return Self.isVisuallyBlank(image) ? nil : image
+    /// Why a hero image is unusable matters: a BLANK placeholder
+    /// means the server has no real artwork (drop the item from the
+    /// carousel), while a FAILED download is usually a slow server
+    /// having a moment (keep the item, retry later). The old API
+    /// merged both into nil, and on a cold cache the carousel ate
+    /// most of its items as "blank" (his v1.34 report: only two
+    /// heroes left).
+    enum HeroImageResult {
+        case loaded(UIImage)
+        case blank
+        case failed
+    }
+
+    func heroImageResult(for url: URL) async -> HeroImageResult {
+        guard let image = await image(for: url) else { return .failed }
+        return Self.isVisuallyBlank(image) ? .blank : .loaded(image)
     }
 
     /// True when the image is (near-)uniform in colour, sampled on a
