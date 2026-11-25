@@ -38,6 +38,9 @@ struct DetailView: View {
     /// note that entering pages feels less refined than SenPlayer).
     /// Never reset, so returning from the player does not replay it.
     @State private var entered = false
+    /// Gates the hero's full-size (1080) artwork request until the
+    /// push transition has settled - see heroBackdrop.
+    @State private var showFullArt = false
 
     /// What the hero melts into: the page tint once known, the
     /// system background before that.
@@ -129,6 +132,10 @@ struct DetailView: View {
         }
         .task { await load() }
         .task { await loadTint() }
+        .task {
+            try? await Task.sleep(for: .milliseconds(550))
+            showFullArt = true
+        }
         .onChange(of: selectedSeasonID) { _, seasonID in
             episodeRange = 0
             Task { if let seasonID { await loadEpisodes(seasonID) } }
@@ -185,9 +192,18 @@ struct DetailView: View {
         guard let client = store.client(),
               let url = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 720) else { return }
         if let cached = ImageMemoryCache.shared.dominantTintCached(url) {
-            tint = cached
+            // Already known: apply it with animations disabled. The
+            // ambient layer's 0.55s crossfade firing mid-push was
+            // part of the stiff, hitchy entry he reported - a cached
+            // tint is a first-frame fact, not a transition.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { tint = cached }
             return
         }
+        // Not cached: wait out the push transition before fetching,
+        // so the colour swap lands on a settled page.
+        try? await Task.sleep(for: .milliseconds(550))
         tint = await ImageMemoryCache.shared.dominantTint(for: url)
     }
 
@@ -312,6 +328,8 @@ struct DetailView: View {
     @ViewBuilder
     private var heroBackdrop: some View {
         if let client = store.client() {
+            let previewURL = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 720)
+            let fullURL = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080)
             ZStack {
                 heroPlaceholder(client: client)
                 // The carousel's 720 copy first: same URL the home
@@ -322,14 +340,20 @@ struct DetailView: View {
                 // Ungated on purpose: when the item has no backdrop
                 // this request 404s, SharedImage stays empty, and the
                 // placeholder below simply remains the hero.
-                SharedImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 720))
+                SharedImage(url: previewURL)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .clipped()
                 // The full-size copy then upgrades the sharpness
-                // whenever it lands, fading over the 720 copy.
-                SharedImage(url: client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080), fadeIn: true)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
+                // whenever it lands, fading over the 720 copy. It is
+                // only requested once the push transition has settled
+                // (or immediately when already cached): a large image
+                // decoding and fading in mid-morph was part of the
+                // stiff entry/return animation he reported.
+                if showFullArt || (fullURL != nil && ImageMemoryCache.shared.cached(fullURL!) != nil) {
+                    SharedImage(url: fullURL, fadeIn: true)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .clipped()
+                }
             }
             // The zoom morph targets the artwork itself, not the
             // whole page: the tapped poster grows into THIS frame

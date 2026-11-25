@@ -69,18 +69,22 @@ func wideImageKind(_ item: EmbyItem) -> String {
     (item.BackdropImageTags?.isEmpty == false) ? "Backdrop" : "Primary"
 }
 
-/// Hero artwork: the full backdrop fit to width over a blurred copy
-/// of itself. The hero frame is tall (roughly 0.74 aspect) while
-/// backdrops are 16:9, so any fill-crop shows only ~42% of the width
+/// Hero artwork: the full backdrop fit to width, pinned to the top
+/// of the hero over the page tint. Backdrops are 16:9 and the hero
+/// frame is tall, so every fill-crop shows only ~42% of the width
 /// and the subject lands wherever the crop window happens to sit -
-/// the v1.29 Vision focal point (faces, then attention saliency)
-/// kept picking ribbons, skies and torsos on anime backdrops, and
-/// the carousel still showed framings with no subject at all (his
-/// 2026-11-25 screenshots: a hand, half a face at the edge, a ribbon
-/// close-up). Fitting the whole backdrop to width is deterministic:
-/// the complete composition, subject included, is always in frame.
-/// The blurred fill keeps the full-bleed look behind it and melts
-/// into the page tint through the cell's existing gradient.
+/// centre crop and the v1.29 Vision focal point both produced
+/// framings with no subject at all (his 2026-11-25 screenshots: a
+/// hand, half a face at the edge, a ribbon close-up). Fitting the
+/// whole backdrop to width is deterministic: the complete
+/// composition, subject included, is always in frame, and the area
+/// below the band is the flat page tint the title block sits on.
+/// Deliberately built from plain frames only - no GeometryReader,
+/// no blur layer, no zoom source: the v1.33 build (verified to
+/// contain the fit-width code, version 1.33 (134) on device) still
+/// rendered pixel-identical to the old crop on his phone, so this
+/// version removes every layout mechanism that could be involved
+/// and changes the hero height as an unmistakable marker.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -89,33 +93,20 @@ private struct HeroArtwork: View {
     @State private var uiImage: UIImage?
 
     var body: some View {
-        ZStack {
+        ZStack(alignment: .top) {
+            Rectangle().fill(Color(.systemBackground))
             if let uiImage {
                 Image(uiImage: uiImage)
                     .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .scaleEffect(1.15)
-                    .blur(radius: 28)
-                    .overlay(Color.black.opacity(0.10))
-                    .clipped()
-                GeometryReader { geo in
-                    let iw = max(uiImage.size.width, 1)
-                    let ih = max(uiImage.size.height, 1)
-                    let bandHeight = geo.size.width * ih / iw
-                    Image(uiImage: uiImage)
-                        .resizable()
-                        .frame(width: geo.size.width, height: bandHeight)
-                        .mask {
-                            LinearGradient(stops: [
-                                .init(color: .black, location: 0),
-                                .init(color: .black, location: 0.82),
-                                .init(color: .clear, location: 1.0),
-                            ], startPoint: .top, endPoint: .bottom)
-                        }
-                }
-            } else {
-                Rectangle().fill(.quaternary)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .mask {
+                        LinearGradient(stops: [
+                            .init(color: .black, location: 0),
+                            .init(color: .black, location: 0.85),
+                            .init(color: .clear, location: 1.0),
+                        ], startPoint: .top, endPoint: .bottom)
+                    }
             }
         }
         .task(id: item.Id) {
@@ -352,7 +343,7 @@ struct HomeView: View {
                         lastHeroInteraction = .now
                     }
                 }
-                .frame(height: 540)
+                .frame(height: 500)
 
                 HStack(spacing: 6) {
                     ForEach(heroItems.indices, id: \.self) { index in
@@ -399,7 +390,7 @@ struct HomeView: View {
             .padding(.horizontal)
             .padding(.top, 58)
         }
-        .frame(height: 540)
+        .frame(height: 500)
     }
 
     private func heroCell(_ item: EmbyItem, client: EmbyClient) -> some View {
@@ -435,7 +426,6 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
-                .zoomSource(id: item.Id, ns: zoomNS)
                 let meltTint = heroTints[item.Id] ?? Color(.systemBackground)
                 LinearGradient(stops: [
                     .init(color: .clear, location: 0),
@@ -454,7 +444,7 @@ struct HomeView: View {
                 ], startPoint: .top, endPoint: .bottom)
             }
         }
-        .frame(height: 540)
+        .frame(height: 500)
         .clipped()
     }
 
