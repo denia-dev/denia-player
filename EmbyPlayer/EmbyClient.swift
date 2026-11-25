@@ -559,6 +559,53 @@ struct EmbyClient {
         return try await send(request)
     }
 
+}
+
+/// One-flight PlaybackInfo prefetch. The player cover otherwise pays
+/// the PlaybackInfo POST round trip after the tap, on the startup
+/// path; DetailView warms the call while he is still reading the
+/// page, and PlayerView consumes the result instead of minting a
+/// second play session. Entries are single-use and go stale after
+/// 10 minutes.
+@MainActor
+final class PlaybackInfoWarmer {
+    static let shared = PlaybackInfoWarmer()
+
+    private struct Entry {
+        let started: Date
+        let task: Task<EmbyPlaybackInfo, Error>
+    }
+
+    private var entries: [String: Entry] = [:]
+    private let maxAge: TimeInterval = 600
+
+    private func key(client: EmbyClient, itemID: String) -> String {
+        client.server.baseURL + "|" + client.server.userID + "|" + itemID
+    }
+
+    func warm(client: EmbyClient, itemID: String, startSeconds: Double) {
+        let key = key(client: client, itemID: itemID)
+        if let entry = entries[key], Date().timeIntervalSince(entry.started) < maxAge { return }
+        if entries.count >= 8, let oldest = entries.min(by: { $0.value.started < $1.value.started }) {
+            entries.removeValue(forKey: oldest.key)
+        }
+        entries[key] = Entry(started: Date(), task: Task {
+            try await client.playbackInfo(itemID: itemID, startSeconds: startSeconds)
+        })
+    }
+
+    /// Removes and returns the warmed task when a fresh one exists.
+    /// The caller falls back to a live fetch when this returns nil or
+    /// the warmed task failed.
+    func consume(client: EmbyClient, itemID: String) -> Task<EmbyPlaybackInfo, Error>? {
+        let key = key(client: client, itemID: itemID)
+        guard let entry = entries.removeValue(forKey: key),
+              Date().timeIntervalSince(entry.started) < maxAge else { return nil }
+        return entry.task
+    }
+}
+
+extension EmbyClient {
     /// Static original-file URL: the server serves the file bytes untouched
     /// (range requests supported); mpv demuxes/decodes locally and reads the
     /// embedded ASS/fonts itself.

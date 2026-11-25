@@ -109,7 +109,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         desiredSubtitleOff = subtitleOff
         loadDate = Date()
         let media = VLCMedia(url: url)
-        media.addOption("network-caching=15000")
+        media.addOption("network-caching=3000")
         if startSeconds > 5 {
             media.addOption("start-time=\(Int(startSeconds))")
         }
@@ -346,7 +346,7 @@ final class VLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDeleg
         reloadTarget = target
         reloadSeekAttempts = 0
         let media = VLCMedia(url: url)
-        media.addOption("network-caching=15000")
+        media.addOption("network-caching=3000")
         if target > 5 {
             media.addOption("start-time=\(Int(target))")
         }

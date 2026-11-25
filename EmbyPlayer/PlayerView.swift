@@ -200,7 +200,16 @@ struct PlayerView: View {
         }
         guard let client = store.client() else { resolveError = "没有可用服务器"; return }
         do {
-            let info = try await client.playbackInfo(itemID: item.Id, startSeconds: startSeconds)
+            // Consume the session DetailView warmed while he read the
+            // page; fall back to a live fetch when there is none or
+            // the warmed call failed.
+            let info: EmbyPlaybackInfo
+            if let warmed = await PlaybackInfoWarmer.shared.consume(client: client, itemID: item.Id),
+               let warmedInfo = try? await warmed.value {
+                info = warmedInfo
+            } else {
+                info = try await client.playbackInfo(itemID: item.Id, startSeconds: startSeconds)
+            }
             guard let source = info.MediaSources.first(where: { $0.SupportsDirectPlay == true }) ?? info.MediaSources.first else {
                 resolveError = "服务器没有返回媒体源"
                 return
@@ -473,9 +482,14 @@ struct MPVPlayerScreen: View {
             automaticallyPlays: true,
             dolbyVisionPolicy: Prefs.dvP7Convert ? .profile7Compatibility : .strict,
             hardwareDecoding: forceSoftware ? .disabled : (Prefs.decodeMode == "software" ? .disabled : (Prefs.decodeMode == "auto" ? .automatic : .videoToolbox)),
-            initialBufferDuration: .seconds(3),
+            // Startup/seek batch (v1.49): the old 3 s initial buffer
+            // was a fixed tax on every tap, and the 5 s rebuffer made
+            // every seek into unbuffered territory sit on a spinner.
+            // The 120 s forward cache still absorbs network stalls
+            // once playing, so start at 1 s and rebuffer at 2 s.
+            initialBufferDuration: .seconds(1),
             networkCacheDuration: .seconds(Prefs.cacheSeconds),
-            rebufferDuration: .seconds(5),
+            rebufferDuration: .seconds(2),
             videoOutput: videoOutput
         ))
         created.setDiagnosticsEnabled(true)

@@ -930,6 +930,11 @@ struct DetailView: View {
             selectedSeasonID = preferred?.Id
             if let preferred { await loadEpisodes(preferred.Id) }
         }
+        // Take the PlaybackInfo POST off the startup path: warm the
+        // play session while he is still reading this page.
+        if let target = playTarget {
+            await PlaybackInfoWarmer.shared.warm(client: client, itemID: target.Id, startSeconds: target.resumeSeconds)
+        }
     }
 
     private func loadEpisodes(_ seasonID: String) async {
@@ -942,6 +947,10 @@ struct DetailView: View {
             : episodes.first(where: { $0.resumeSeconds > 0 })?.Id
         if let targetID, let index = episodes.firstIndex(where: { $0.Id == targetID }) {
             episodeRange = index / 5
+        }
+        // Season switches land here too: warm the (new) play target.
+        if let target = playTarget {
+            await PlaybackInfoWarmer.shared.warm(client: client, itemID: target.Id, startSeconds: target.resumeSeconds)
         }
     }
 }
