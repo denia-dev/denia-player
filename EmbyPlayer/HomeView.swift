@@ -90,7 +90,14 @@ func wideImageKind(_ item: EmbyItem) -> String {
 /// subject included - stays fully sharp. v1.40 blurred the top
 /// half OF the band and fogged the subject; v1.38 filled the
 /// whole frame with a scaled copy and read as the picture
-/// enlarged. Both rejected; the smear strip is the settled form.
+/// enlarged. Both rejected. v1.41's flat smear strip floated
+/// the wrong rows above the band and the line stayed. v1.42
+/// takes the geometry from his reference screenshot (Sen):
+/// a vertically mirrored copy of the artwork's top rows sits
+/// above the band, registered so its bottom row IS the band's
+/// top row, heavily blurred and fading upward into the tint -
+/// the artwork melts into colour with no line anywhere, and
+/// the band itself stays fully sharp.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -109,28 +116,32 @@ private struct HeroArtwork: View {
         ZStack(alignment: .top) {
             Rectangle().fill(tint ?? Color(.systemBackground))
             if let uiImage {
-                // Upward smear (v1.41): a top-aligned, heavily
-                // blurred strip of the artwork's own top rows,
-                // running from the cell top to just past the
-                // band's top edge (the sharp band below covers
-                // its lower part). It fades from clear at the top
-                // to full strength exactly where it meets the
-                // band, so the artwork's colours blur upward
-                // into the flat tint - no separation line, and
-                // nothing inside the band is ever blurred.
+                // Upward melt (v1.42, geometry from his Sen
+                // reference): the artwork's top rows, mirrored
+                // vertically so the strip's bottom row is exactly
+                // the band's top row (registered - the colours
+                // continue across the seam), heavily blurred and
+                // fading upward into the flat tint. The strip is
+                // 120 tall, offset so its bottom lands on the
+                // band's top edge (y=56); only the part above the
+                // band is visible, the sharp band covers the rest.
+                // Nothing inside the band is ever blurred.
                 Image(uiImage: uiImage)
                     .resizable()
-                    .scaledToFill()
-                    .frame(maxWidth: .infinity, minHeight: 130, maxHeight: 130, alignment: .top)
+                    .scaledToFit()
+                    .frame(maxWidth: .infinity)
+                    .scaleEffect(x: 1, y: -1, anchor: .center)
+                    .frame(maxWidth: .infinity, minHeight: 120, maxHeight: 120, alignment: .bottom)
                     .clipped()
-                    .blur(radius: 28)
+                    .blur(radius: 26)
                     .mask {
                         LinearGradient(stops: [
                             .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.43),
+                            .init(color: .clear, location: 0.35),
                             .init(color: .black, location: 1.0),
                         ], startPoint: .top, endPoint: .bottom)
                     }
+                    .offset(y: -64)
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -143,7 +154,8 @@ private struct HeroArtwork: View {
                     .padding(.top, 56)
                     .mask {
                         LinearGradient(stops: [
-                            .init(color: .black, location: 0),
+                            .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.05),
                             .init(color: .black, location: 0.85),
                             .init(color: .clear, location: 1.0),
                         ], startPoint: .top, endPoint: .bottom)
