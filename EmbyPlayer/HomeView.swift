@@ -108,7 +108,11 @@ func wideImageKind(_ item: EmbyItem) -> String {
 /// inside the image.) v1.44 moves the mask before the padding
 /// so the stops are fractions of the band itself, and shifts
 /// the bottom stop 0.85 -> 0.81 to keep the bottom melt the
-/// same length it was.
+/// same length it was. v1.44 verdict: the line is gone, but
+/// the dissolve reached too far down into the picture (tops
+/// of heads washed out); he asked for the blur range moved
+/// up a little - v1.45 shrinks the dissolve from the top 14%
+/// to the top 8%.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
@@ -139,7 +143,7 @@ private struct HeroArtwork: View {
                     .mask {
                         LinearGradient(stops: [
                             .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.14),
+                            .init(color: .black, location: 0.08),
                             .init(color: .black, location: 0.81),
                             .init(color: .clear, location: 1.0),
                         ], startPoint: .top, endPoint: .bottom)
@@ -150,12 +154,13 @@ private struct HeroArtwork: View {
                     // gap between them; now its faded bottom edge
                     // lands just above the logo/title.
                     .padding(.top, 56)
-                // The line, blurred (v1.43): a registered copy of
-                // the same band, blurred, living only in the top
-                // 14% - full strength just below the edge, gone
-                // by 14% down. Together with the sharp band's
-                // fade-in over the same stretch, the top edge
-                // dissolves instead of ending in a line.
+                // The line, blurred (v1.43, range tightened in
+                // v1.45): a registered copy of the same band,
+                // blurred, living only in the top 8% - full
+                // strength just below the edge, gone by 8% down.
+                // Together with the sharp band's fade-in over the
+                // same stretch, the top edge dissolves instead of
+                // ending in a line.
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -164,9 +169,9 @@ private struct HeroArtwork: View {
                     .mask {
                         LinearGradient(stops: [
                             .init(color: .clear, location: 0),
+                            .init(color: .black, location: 0.03),
                             .init(color: .black, location: 0.05),
-                            .init(color: .black, location: 0.08),
-                            .init(color: .clear, location: 0.14),
+                            .init(color: .clear, location: 0.08),
                         ], startPoint: .top, endPoint: .bottom)
                     }
                     .padding(.top, 56)
