@@ -8,6 +8,11 @@ struct ItemImage: View {
     let item: EmbyItem
     let client: EmbyClient
     var kind: String = "Primary"
+    /// Player backdrops pass true: the poster must sit in the same
+    /// aspect-fit framing the video itself will use, or the picture
+    /// visibly jumps when the fill-cropped poster gives way to the
+    /// first frame.
+    var fit: Bool = false
 
     @State private var uiImage: UIImage?
     @State private var failed = false
@@ -40,7 +45,7 @@ struct ItemImage: View {
     var body: some View {
         ZStack {
             if let uiImage {
-                Image(uiImage: uiImage).resizable().scaledToFill()
+                Image(uiImage: uiImage).resizable().aspectRatio(contentMode: fit ? .fit : .fill)
             } else if failed {
                 imagePlaceholder
             } else {

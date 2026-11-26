@@ -69,7 +69,7 @@ struct PlayerView: View {
 
             if !entered {
                 if let client = store.client() {
-                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                    ItemImage(item: item, client: client, kind: wideImageKind(item), fit: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .ignoresSafeArea()
@@ -89,7 +89,7 @@ struct PlayerView: View {
                 }
             } else {
                 if let client = store.client() {
-                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                    ItemImage(item: item, client: client, kind: wideImageKind(item), fit: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .ignoresSafeArea()
@@ -566,6 +566,13 @@ struct MPVPlayerScreen: View {
     }
 
     @State private var chromeVisible = true
+    /// True once playback has actually started moving. The engine can
+    /// report a playing state while a resume seek is still buffering -
+    /// surface black, no frame - and dropping the poster on the state
+    /// alone gave a beat of chrome over black on every entry (his
+    /// 2026-11-26 recording). The poster now stays until the position
+    /// advances, so entry is one static, correctly-framed UI.
+    @State private var hasStarted = false
     @State private var ratingsStore = RatingsStore.shared
     @State private var controlsLocked = false
     @State private var pressStart: Date?
@@ -673,8 +680,8 @@ struct MPVPlayerScreen: View {
             // refract before the first frame arrives - over pure black
             // the glass renders as a black blob.
             Group {
-                if player.state == .loading, let client = store.client() {
-                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                if player.state == .loading || !hasStarted, let client = store.client() {
+                    ItemImage(item: item, client: client, kind: wideImageKind(item), fit: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .ignoresSafeArea()
@@ -682,10 +689,10 @@ struct MPVPlayerScreen: View {
                         .transition(.opacity)
                 }
             }
-            .animation(.easeInOut(duration: 0.35), value: player.state == .loading)
+            .animation(.easeInOut(duration: 0.35), value: player.state == .loading || !hasStarted)
             .allowsHitTesting(false)
 
-            if player.state == .loading {
+            if player.state == .loading || !hasStarted {
                 ProgressView().tint(.white).scaleEffect(1.4)
             }
             if let activeSegment {
@@ -796,6 +803,7 @@ struct MPVPlayerScreen: View {
         .task { await osdTicker() }
         .task { await ensurePlayerRatings() }
         .task { await startPlayback() }
+        .task(id: playerGeneration) { await markStartedWhenPlaying() }
         .task(id: playerGeneration) { await consumePiPSubtitles() }
         .task { await progressLoop() }
         .onAppear {
@@ -863,6 +871,19 @@ struct MPVPlayerScreen: View {
         playerGeneration += 1
         preparedGeneration = -1
         await startPlayback()
+    }
+
+    /// Flips `hasStarted` once the position actually advances past the
+    /// start point; the 3 s cap guarantees the poster can never trap a
+    /// paused-at-start or slowly-seeking title.
+    private func markStartedWhenPlaying() async {
+        hasStarted = false
+        let deadline = Date().addingTimeInterval(3)
+        while !Task.isCancelled, !hasStarted {
+            if player.position.secondsValue > startAt + 0.3 { hasStarted = true; break }
+            if Date() > deadline { hasStarted = true; break }
+            try? await Task.sleep(for: .milliseconds(200))
+        }
     }
 
     private func startPlayback() async {
@@ -1899,7 +1920,13 @@ struct MPVPlayerScreen: View {
             .font(.system(size: 11, weight: .medium))
             .foregroundStyle(.white.opacity(0.9))
             .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
-            .padding(.top, 4)
+            // The strip is an always-on overlay at the top centre - the
+            // same spot the chrome's title header occupies. With the
+            // chrome up it must sit BELOW the title + ratings block or
+            // the clock / fps / resolution strike through the title
+            // (his 2026-11-26 screenshot).
+            .padding(.top, chromeVisible ? 72 : 4)
+            .animation(.easeInOut(duration: 0.25), value: chromeVisible)
             .allowsHitTesting(false)
         }
     }

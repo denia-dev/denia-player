@@ -520,7 +520,7 @@ struct VLCPlayerView: View {
             // the first second instead of glass over black.
             Group {
                 if controller.duration == 0, let client = store.client() {
-                    ItemImage(item: item, client: client, kind: wideImageKind(item))
+                    ItemImage(item: item, client: client, kind: wideImageKind(item), fit: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .clipped()
                         .ignoresSafeArea()
