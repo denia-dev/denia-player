@@ -586,6 +586,7 @@ struct MPVPlayerScreen: View {
     @State private var gestureHint: String?
     @State private var showDiagnostics = false
     @State private var showOnlineSubs = false
+    @State private var showDanmakuSearch = false
     @State private var osdTimeText = ""
     @State private var batteryPercent = -1
     @State private var currentRate: Double = 1
@@ -759,6 +760,12 @@ struct MPVPlayerScreen: View {
                 if Prefs.rememberSubtitleChoice {
                     RememberedExternalSubtitle.save(url, for: item.SeriesId ?? item.Id)
                 }
+            }
+        }
+        .sheet(isPresented: $showDanmakuSearch) {
+            DanmakuSearchView(defaultQuery: item.SeriesName ?? item.Name,
+                              currentEpisode: item.IndexNumber ?? 0) { title, episode in
+                applyManualDanmaku(title: title, episode: episode)
             }
         }
         .sheet(isPresented: $showDiagnostics) {
@@ -1045,14 +1052,16 @@ struct MPVPlayerScreen: View {
 
     /// Match + download + convert via the self-hosted danmaku
     /// service, then load the generated ASS as the secondary track.
+    /// An override name (a manual search pick) replaces the whole
+    /// candidate list for this load.
     @discardableResult
-    private func loadDanmaku() async -> Bool {
+    private func loadDanmaku(overrideName: String? = nil) async -> Bool {
         guard !danmakuOn, !danmakuLoading else { return danmakuOn }
         danmakuLoading = true
         defer { danmakuLoading = false }
         let generation = playerGeneration
         guard let file = await DanmakuService.assFile(
-            fileName: danmakuFileName(),
+            fileNames: overrideName.map { [$0] } ?? danmakuFileNames(),
             durationSeconds: Double(item.RunTimeTicks ?? 0) / 10_000_000
         ) else { return false }
         // Let the player's track list settle first, like the other
@@ -1069,23 +1078,50 @@ struct MPVPlayerScreen: View {
         return true
     }
 
-    /// The name the danmaku service matches on: the real file name
-    /// when the server reports one (it parses scene-style names),
-    /// else a constructed "Series S01E02" / "Title (Year)".
-    private func danmakuFileName() -> String {
+    /// Candidate names for the danmaku service, best first: a
+    /// remembered manual pick for this series, the real file name
+    /// (scene-style names parse well), then constructed names from
+    /// the item metadata. The service is tried with each in turn —
+    /// one bad name no longer sinks the whole load.
+    private func danmakuFileNames() -> [String] {
+        var names: [String] = []
+        if let manual = UserDefaults.standard.string(forKey: "danmaku.manual.\(item.SeriesId ?? item.Id)"),
+           !manual.isEmpty {
+            if let episode = item.IndexNumber {
+                names.append(String(format: "%@ S%02dE%02d", manual, item.ParentIndexNumber ?? 1, episode))
+            } else {
+                names.append(manual)
+            }
+        }
         if let path = currentSource?.Path, !path.isEmpty {
-            return (path as NSString).lastPathComponent
+            names.append((path as NSString).lastPathComponent)
         }
         if let localFileURL {
-            return localFileURL.lastPathComponent
+            names.append(localFileURL.lastPathComponent)
         }
         if let series = item.SeriesName, !series.isEmpty {
-            return String(format: "%@ S%02dE%02d", series, item.ParentIndexNumber ?? 1, item.IndexNumber ?? 0)
+            names.append(String(format: "%@ S%02dE%02d", series, item.ParentIndexNumber ?? 1, item.IndexNumber ?? 0))
         }
         if let year = item.ProductionYear {
-            return "\(item.Name) (\(year))"
+            names.append("\(item.Name) (\(year))")
         }
-        return item.Name
+        names.append(item.Name)
+        var seen = Set<String>()
+        return names.filter { !$0.isEmpty && seen.insert($0).inserted }
+    }
+
+    /// A manual pick from the danmaku search page: remember the
+    /// chosen title for this series (later episodes auto-apply it),
+    /// drop any danmaku already on screen and load the picked
+    /// episode right away.
+    private func applyManualDanmaku(title: String, episode: Int) {
+        UserDefaults.standard.set(title, forKey: "danmaku.manual.\(item.SeriesId ?? item.Id)")
+        let name = String(format: "%@ S%02dE%02d", title, item.ParentIndexNumber ?? 1, episode)
+        if danmakuOn {
+            player.selectSubtitle(nil, for: .secondary)
+            danmakuOn = false
+        }
+        Task { _ = await loadDanmaku(overrideName: name) }
     }
 
     private var aiCachedForSelection: Bool {
@@ -1729,39 +1765,6 @@ struct MPVPlayerScreen: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
                                 .glassEffect(.regular, in: Capsule())
-                            if Prefs.danmakuEnabled {
-                                // Standalone danmaku toggle on the progress
-                                // row, Bilibili-style: visible without
-                                // opening the subtitle menu. Pink capsule
-                                // while danmaku is on, glass while off.
-                                Button {
-                                    if danmakuOn {
-                                        player.selectSubtitle(nil, for: .secondary)
-                                        danmakuOn = false
-                                    } else {
-                                        Task { _ = await loadDanmaku() }
-                                    }
-                                    pokeChrome()
-                                } label: {
-                                    Group {
-                                        if danmakuLoading {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                                .tint(.white)
-                                        } else {
-                                            Text("弹")
-                                                .font(.caption.weight(.bold))
-                                        }
-                                    }
-                                    .frame(width: 34, height: 22)
-                                    .background(
-                                        danmakuOn
-                                            ? AnyShapeStyle(Color(red: 1.0, green: 0.18, blue: 0.53))
-                                            : AnyShapeStyle(.ultraThinMaterial),
-                                        in: Capsule())
-                                }
-                                .disabled(danmakuLoading)
-                            }
                         }
                         if let error = player.lastError {
                             Text(String(describing: error)).font(.caption2).foregroundStyle(.red.opacity(0.9)).lineLimit(2)
@@ -1898,6 +1901,16 @@ struct MPVPlayerScreen: View {
                     Section("在线字幕") {
                         Button("搜索在线字幕") { showOnlineSubs = true }
                     }
+                } label: { circleLabel("captions.bubble") }
+            }
+            Menu {
+                if let nextEpisode {
+                    Button("下一集") { onPlayNext?(nextEpisode) }
+                }
+                if chapters.count > 1 {
+                    Button("章节") { showChapters = true }
+                }
+                if Prefs.danmakuEnabled {
                     Section("弹幕") {
                         if danmakuLoading {
                             Text("弹幕匹配中…")
@@ -1911,15 +1924,8 @@ struct MPVPlayerScreen: View {
                                 Task { _ = await loadDanmaku() }
                             }
                         }
+                        Button("搜索弹幕") { showDanmakuSearch = true }
                     }
-                } label: { circleLabel("captions.bubble") }
-            }
-            Menu {
-                if let nextEpisode {
-                    Button("下一集") { onPlayNext?(nextEpisode) }
-                }
-                if chapters.count > 1 {
-                    Button("章节") { showChapters = true }
                 }
                 Section("倍速") {
                     ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in

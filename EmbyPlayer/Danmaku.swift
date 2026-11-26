@@ -48,9 +48,21 @@ enum DanmakuService {
     /// Full pipeline: match the title against the danmaku service,
     /// download the episode's comments and render them into a local
     /// ASS file the player loads as an external subtitle track.
-    /// Returns nil when any step has no result.
-    static func assFile(fileName: String, durationSeconds: Double) async -> URL? {
+    /// Candidate names are tried in order (a remembered manual pick
+    /// first, then the real file name, then constructed names), so a
+    /// garbage file name no longer sinks an otherwise matchable show.
+    /// Returns nil when no candidate produces comments.
+    static func assFile(fileNames: [String], durationSeconds: Double) async -> URL? {
         guard let service = await DanmakuConfig.service() else { return nil }
+        for name in fileNames where !name.isEmpty {
+            if let url = await assFile(service: service, fileName: name, durationSeconds: durationSeconds) {
+                return url
+            }
+        }
+        return nil
+    }
+
+    private static func assFile(service: (base: String, token: String), fileName: String, durationSeconds: Double) async -> URL? {
         guard let matched = await match(service: service, fileName: fileName, durationSeconds: durationSeconds) else { return nil }
         let episodeID = matched.episodeID
         let fontSize = Prefs.danmakuFontSize
@@ -122,7 +134,7 @@ enum DanmakuService {
             data = cached
         } else {
             let endpoint: URL?
-            if let sourceURL, !sourceURL.isEmpty {
+            if let sourceURL, sourceURL.hasPrefix("http") {
                 var components = URLComponents(string: "\(service.base)/\(service.token)/api/v2/comment")
                 components?.queryItems = [URLQueryItem(name: "url", value: sourceURL)]
                 endpoint = components?.url
@@ -318,5 +330,83 @@ enum DanmakuASS {
             .replacingOccurrences(of: "}", with: "\\}")
             .replacingOccurrences(of: "\r", with: "")
             .replacingOccurrences(of: "\n", with: "\\N")
+    }
+}
+
+// MARK: - Manual search
+
+struct DanmakuEpisodeOption {
+    var episodeId: Int
+    var title: String
+    var number: Int
+}
+
+struct DanmakuAnimeOption {
+    var animeId: Int
+    /// Cleaned display/match title (year, 【tags】 and "from X" removed).
+    var title: String
+    var sourceName: String
+    var episodes: [DanmakuEpisodeOption]
+}
+
+extension DanmakuService {
+
+    /// One stateless call that returns candidate anime with their
+    /// full episode lists (the service resolves episodes inside the
+    /// same request, which is the only search flow that survives
+    /// Cloudflare Workers' per-request isolates).
+    static func search(keyword: String) async -> [DanmakuAnimeOption] {
+        guard let service = await DanmakuConfig.service() else { return [] }
+        var components = URLComponents(string: "\(service.base)/\(service.token)/api/v2/search/episodes")
+        components?.queryItems = [URLQueryItem(name: "anime", value: keyword)]
+        guard let url = components?.url,
+              let (data, response) = try? await URLSession.shared.data(from: url),
+              (response as? HTTPURLResponse)?.statusCode == 200,
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let animes = root["animes"] as? [[String: Any]] else { return [] }
+        return animes.compactMap { anime in
+            guard let animeId = (anime["animeId"] as? NSNumber)?.intValue,
+                  let rawTitle = anime["animeTitle"] as? String else { return nil }
+            let episodes = (anime["episodes"] as? [[String: Any]] ?? []).enumerated().compactMap { index, ep -> DanmakuEpisodeOption? in
+                guard let episodeId = (ep["episodeId"] as? NSNumber)?.intValue,
+                      let title = ep["episodeTitle"] as? String else { return nil }
+                return DanmakuEpisodeOption(episodeId: episodeId, title: title,
+                                            number: episodeNumber(from: title) ?? index + 1)
+            }
+            guard !episodes.isEmpty else { return nil }
+            return DanmakuAnimeOption(animeId: animeId, title: cleanTitle(rawTitle),
+                                      sourceName: sourceDisplayName(rawTitle), episodes: episodes)
+        }
+    }
+
+    private static func episodeNumber(from title: String) -> Int? {
+        guard let regex = try? NSRegularExpression(pattern: "第\\s*(\\d+)\\s*[集话話回]"),
+              let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
+              let range = Range(match.range(at: 1), in: title) else { return nil }
+        return Int(title[range])
+    }
+
+    /// "上伊那牡丹，酒醉身姿似百合花般（2026）【动画】from renren" →
+    /// "上伊那牡丹，酒醉身姿似百合花般" — the form the match
+    /// endpoint recognises.
+    static func cleanTitle(_ raw: String) -> String {
+        var title = raw
+        if let range = title.range(of: "from ", options: .caseInsensitive) {
+            title = String(title[..<range.lowerBound])
+        }
+        title = title.replacingOccurrences(of: "【[^】]*】", with: "", options: .regularExpression)
+        title = title.replacingOccurrences(of: "[(（]\\s*(19|20)\\d{2}\\s*[)）]", with: "", options: .regularExpression)
+        return title.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func sourceDisplayName(_ rawTitle: String) -> String {
+        guard let range = rawTitle.range(of: "from ", options: .caseInsensitive) else { return "弹幕库" }
+        let key = rawTitle[range.upperBound...].trimmingCharacters(in: .whitespaces).lowercased()
+        let names = ["renren": "人人", "dandan": "弹弹", "bahamut": "巴哈姆特",
+                     "bilibili": "哔哩哔哩", "tencent": "腾讯", "youku": "优酷",
+                     "iqiyi": "爱奇艺", "migu": "咪咕", "imgo": "芒果TV",
+                     "sohu": "搜狐", "leshi": "乐视", "xigua": "西瓜",
+                     "douban": "豆瓣", "hanjutv": "韩剧TV", "360": "360"]
+        return names[key] ?? key
     }
 }
