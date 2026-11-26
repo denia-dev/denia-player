@@ -51,13 +51,14 @@ enum DanmakuService {
     /// Returns nil when any step has no result.
     static func assFile(fileName: String, durationSeconds: Double) async -> URL? {
         guard let service = await DanmakuConfig.service() else { return nil }
-        guard let episodeID = await match(service: service, fileName: fileName, durationSeconds: durationSeconds) else { return nil }
+        guard let matched = await match(service: service, fileName: fileName, durationSeconds: durationSeconds) else { return nil }
+        let episodeID = matched.episodeID
         let fontSize = Prefs.danmakuFontSize
         let scroll = Prefs.danmakuScrollSeconds
         let dir = cacheDirectory()
         let assURL = dir.appendingPathComponent("dm-\(episodeID)-\(fontSize)-\(Int(scroll * 10)).ass")
         if FileManager.default.fileExists(atPath: assURL.path) { return assURL }
-        guard let comments = await comments(service: service, episodeID: episodeID), !comments.isEmpty else { return nil }
+        guard let comments = await comments(service: service, episodeID: episodeID, sourceURL: matched.url), !comments.isEmpty else { return nil }
         let ass = DanmakuASS.convert(comments: comments, fontSize: Double(fontSize), scrollDuration: scroll)
         guard let data = ass.data(using: .utf8) else { return nil }
         try? data.write(to: assURL, options: .atomic)
@@ -72,10 +73,20 @@ enum DanmakuService {
     }
 
     /// Remembered matches keyed by the exact query file name, so
-    /// reopening an episode skips the match round-trip.
-    private static func match(service: (base: String, token: String), fileName: String, durationSeconds: Double) async -> Int? {
-        let defaultsKey = "danmaku.match.\(fileName)"
-        if let saved = UserDefaults.standard.object(forKey: defaultsKey) as? Int, saved > 0 { return saved }
+    /// reopening an episode skips the match round-trip. The match's
+    /// source page URL is remembered alongside the episode ID: on
+    /// Cloudflare Workers the service's ID -> URL table lives in
+    /// per-isolate memory and is usually gone by the time the
+    /// comment request lands, so comments are fetched through the
+    /// stateless /comment?url= form instead (verified live
+    /// 2026-11-27: ID form 404s, URL form returns full comments).
+    private static func match(service: (base: String, token: String), fileName: String, durationSeconds: Double) async -> (episodeID: Int, url: String?)? {
+        let idKey = "danmaku.match.\(fileName)"
+        let urlKey = "danmaku.matchurl.\(fileName)"
+        if let saved = UserDefaults.standard.object(forKey: idKey) as? Int, saved > 0,
+           let savedURL = UserDefaults.standard.string(forKey: urlKey), !savedURL.isEmpty {
+            return (saved, savedURL)
+        }
         guard let url = URL(string: "\(service.base)/\(service.token)/api/v2/match") else { return nil }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -95,18 +106,30 @@ enum DanmakuService {
               let first = matches.first,
               let episodeID = (first["episodeId"] as? NSNumber)?.intValue, episodeID > 0
         else { return nil }
-        UserDefaults.standard.set(episodeID, forKey: defaultsKey)
-        return episodeID
+        let sourceURL = first["url"] as? String
+        UserDefaults.standard.set(episodeID, forKey: idKey)
+        if let sourceURL, !sourceURL.isEmpty {
+            UserDefaults.standard.set(sourceURL, forKey: urlKey)
+        }
+        return (episodeID, sourceURL)
     }
 
-    private static func comments(service: (base: String, token: String), episodeID: Int) async -> [DanmakuComment]? {
+    private static func comments(service: (base: String, token: String), episodeID: Int, sourceURL: String?) async -> [DanmakuComment]? {
         let dir = cacheDirectory()
         let rawURL = dir.appendingPathComponent("dm-\(episodeID).json")
         let data: Data
         if let cached = try? Data(contentsOf: rawURL) {
             data = cached
         } else {
-            guard let url = URL(string: "\(service.base)/\(service.token)/api/v2/comment/\(episodeID)?format=json"),
+            let endpoint: URL?
+            if let sourceURL, !sourceURL.isEmpty {
+                var components = URLComponents(string: "\(service.base)/\(service.token)/api/v2/comment")
+                components?.queryItems = [URLQueryItem(name: "url", value: sourceURL)]
+                endpoint = components?.url
+            } else {
+                endpoint = URL(string: "\(service.base)/\(service.token)/api/v2/comment/\(episodeID)?format=json")
+            }
+            guard let url = endpoint,
                   let (fetched, response) = try? await URLSession.shared.data(from: url),
                   (response as? HTTPURLResponse)?.statusCode == 200
             else { return nil }
