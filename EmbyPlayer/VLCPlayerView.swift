@@ -501,7 +501,7 @@ struct VLCPlayerView: View {
                         Image(systemName: "xmark")
                             .font(.body.bold())
                             .foregroundStyle(.white)
-                            .padding(10)
+                            .frame(width: 44, height: 44)
                             .glassEffect(.regular.interactive(), in: Circle())
                             .shadow(color: .black.opacity(0.25), radius: 8, y: 2)
                     }
