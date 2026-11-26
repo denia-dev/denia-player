@@ -595,6 +595,8 @@ struct MPVPlayerScreen: View {
     @State private var segments: [MediaSegment] = []
     @State private var autoSkippedStarts: Set<Double> = []
     @State private var translating = false
+    @State private var danmakuOn = false
+    @State private var danmakuLoading = false
     @State private var translateProgressText = ""
     @State private var translateError: String?
     @State private var activeSegment: MediaSegment?
@@ -895,7 +897,7 @@ struct MPVPlayerScreen: View {
             currentRate = startRate
             if startRate != 1.0 { player.setPlaybackRate(startRate) }
             Task { await prepareAudio() }
-            Task { await applySecondarySubtitle() }
+            Task { await prepareDanmakuOrSecondary() }
             scheduleHide()
             startSleepTimer()
             endWatchTask = Task { await watchForEnd() }
@@ -916,7 +918,7 @@ struct MPVPlayerScreen: View {
         if startRate != 1.0 { player.setPlaybackRate(startRate) }
         Task { await prepareSubtitles() }
         Task { await prepareAudio() }
-        Task { await applySecondarySubtitle() }
+        Task { await prepareDanmakuOrSecondary() }
         if !continuingVLCSession {
             await client.reportStart(itemID: item.Id, sourceID: source.Id, sessionID: launch.sessionID, positionSeconds: startAt)
         }
@@ -1029,6 +1031,61 @@ struct MPVPlayerScreen: View {
             player.setSubtitlesVisible(true)
             return
         }
+    }
+
+    /// Danmaku first, dual subtitles as the fallback: the danmaku
+    /// track rides the secondary subtitle slot, so the two cannot
+    /// coexist. When no danmaku matches (or the service is not
+    /// configured), the configured secondary language applies as
+    /// before.
+    private func prepareDanmakuOrSecondary() async {
+        if Prefs.danmakuEnabled, await loadDanmaku() { return }
+        await applySecondarySubtitle()
+    }
+
+    /// Match + download + convert via the self-hosted danmaku
+    /// service, then load the generated ASS as the secondary track.
+    @discardableResult
+    private func loadDanmaku() async -> Bool {
+        guard !danmakuOn, !danmakuLoading else { return danmakuOn }
+        danmakuLoading = true
+        defer { danmakuLoading = false }
+        let generation = playerGeneration
+        guard let file = await DanmakuService.assFile(
+            fileName: danmakuFileName(),
+            durationSeconds: Double(item.RunTimeTicks ?? 0) / 10_000_000
+        ) else { return false }
+        // Let the player's track list settle first, like the other
+        // track pickers do, so the added track lands cleanly.
+        for _ in 0..<16 {
+            guard generation == playerGeneration, !Task.isCancelled else { return false }
+            if !player.subtitleTracks.isEmpty { break }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        guard generation == playerGeneration else { return false }
+        player.loadExternalSubtitle(file, selecting: .secondary)
+        player.setSubtitlesVisible(true)
+        danmakuOn = true
+        return true
+    }
+
+    /// The name the danmaku service matches on: the real file name
+    /// when the server reports one (it parses scene-style names),
+    /// else a constructed "Series S01E02" / "Title (Year)".
+    private func danmakuFileName() -> String {
+        if let path = currentSource?.Path, !path.isEmpty {
+            return (path as NSString).lastPathComponent
+        }
+        if let localFileURL {
+            return localFileURL.lastPathComponent
+        }
+        if let series = item.SeriesName, !series.isEmpty {
+            return String(format: "%@ S%02dE%02d", series, item.ParentIndexNumber ?? 1, item.IndexNumber ?? 0)
+        }
+        if let year = item.ProductionYear {
+            return "\(item.Name) (\(year))"
+        }
+        return item.Name
     }
 
     private var aiCachedForSelection: Bool {
@@ -1773,6 +1830,7 @@ struct MPVPlayerScreen: View {
                         Section("副字幕（双字幕）") {
                             Button("关闭副字幕") {
                                 player.selectSubtitle(nil, for: .secondary)
+                                danmakuOn = false
                                 if Prefs.rememberSubtitleChoice {
                                     Prefs.rememberSecondarySubtitle(index: -1, for: item.SeriesId ?? item.Id)
                                 }
@@ -1781,6 +1839,7 @@ struct MPVPlayerScreen: View {
                                 Button {
                                     player.selectSubtitle(track.id, for: .secondary)
                                     player.setSubtitlesVisible(true)
+                                    danmakuOn = false
                                     if Prefs.rememberSubtitleChoice,
                                        let ordinal = player.subtitleTracks.firstIndex(where: { $0.id == track.id }),
                                        let streamIndex = subtitleStreamIndex(ordinal: ordinal) {
@@ -1805,6 +1864,20 @@ struct MPVPlayerScreen: View {
                     }
                     Section("在线字幕") {
                         Button("搜索在线字幕") { showOnlineSubs = true }
+                    }
+                    Section("弹幕") {
+                        if danmakuLoading {
+                            Text("弹幕匹配中…")
+                        } else if danmakuOn {
+                            Button("关闭弹幕") {
+                                player.selectSubtitle(nil, for: .secondary)
+                                danmakuOn = false
+                            }
+                        } else {
+                            Button("开启弹幕") {
+                                Task { _ = await loadDanmaku() }
+                            }
+                        }
                     }
                 } label: { circleLabel("captions.bubble") }
             }

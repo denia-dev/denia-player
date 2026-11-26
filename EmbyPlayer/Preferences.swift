@@ -52,6 +52,18 @@ enum Prefs {
     static var showSubtitleButton: Bool {
         d.object(forKey: "prefs.showSubtitleButton") == nil ? true : d.bool(forKey: "prefs.showSubtitleButton")
     }
+    /// Danmaku (self-hosted danmu_api service; address + token come
+    /// from the cloud config, not from a user setting).
+    static var danmakuEnabled: Bool {
+        d.object(forKey: "prefs.danmakuEnabled") == nil ? true : d.bool(forKey: "prefs.danmakuEnabled")
+    }
+    static var danmakuFontSize: Int {
+        d.object(forKey: "prefs.danmakuFontSize") == nil ? 36 : d.integer(forKey: "prefs.danmakuFontSize")
+    }
+    /// Seconds a scrolling comment takes to cross the screen.
+    static var danmakuScrollSeconds: Double {
+        d.object(forKey: "prefs.danmakuScrollSeconds") == nil ? 8 : d.double(forKey: "prefs.danmakuScrollSeconds")
+    }
     /// Seek distance of the centre-cluster and double-tap shortcuts.
     static var seekStepSeconds: Double {
         d.object(forKey: "prefs.seekStepSeconds") == nil ? 15 : d.double(forKey: "prefs.seekStepSeconds")
@@ -676,6 +688,9 @@ struct SubtitlePrefsView: View {
     @AppStorage("prefs.subBorder") private var subBorder = "outline"
     @AppStorage("prefs.subMarginY") private var subMarginY = 20
     @AppStorage("prefs.secondarySubtitle") private var secondarySubtitle = "off"
+    @AppStorage("prefs.danmakuEnabled") private var danmakuEnabled = true
+    @AppStorage("prefs.danmakuFontSize") private var danmakuFontSize = 36
+    @AppStorage("prefs.danmakuScrollSeconds") private var danmakuScrollSeconds = 8.0
     @State private var assrtToken = ""
     @State private var osApiKey = ""
 
@@ -737,6 +752,26 @@ struct SubtitlePrefsView: View {
                     .frame(minHeight: 44)
                 }
                 Text("第二个字幕源 OpenSubtitles（opensubtitles.com）：它没有公共额度，必须用自己的 API Key——在它网站免费注册、到 API 页面申请一个消费者 Key 填在这里，搜索框顶部可切换字幕源。免费账号每天有下载次数上限。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+                prefsSectionLabel("弹幕").padding(.top, 8)
+                prefsCard {
+                    prefsToggleRow("弹幕", isOn: $danmakuEnabled)
+                    prefsDivider
+                    prefsMenuRow("弹幕字号", value: danmakuFontLabel) {
+                        Button("小") { danmakuFontSize = 30 }
+                        Button("中") { danmakuFontSize = 36 }
+                        Button("大") { danmakuFontSize = 44 }
+                    }
+                    prefsDivider
+                    prefsMenuRow("滚动速度", value: danmakuSpeedLabel) {
+                        Button("慢") { danmakuScrollSeconds = 10.0 }
+                        Button("标准") { danmakuScrollSeconds = 8.0 }
+                        Button("快") { danmakuScrollSeconds = 6.5 }
+                    }
+                }
+                Text("弹幕来自自建的聚合弹幕服务、按片名自动匹配，占用副字幕轨道，与双字幕不能同时使用；仅 mpv 播放器支持。字号与速度改了之后，下次打开视频生效。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -858,6 +893,22 @@ struct SubtitlePrefsView: View {
         case "zhHant": return "繁体中文"
         case "en": return "英文"
         default: return "关闭"
+        }
+    }
+
+    private var danmakuFontLabel: String {
+        switch danmakuFontSize {
+        case 30: return "小"
+        case 44: return "大"
+        default: return "中"
+        }
+    }
+
+    private var danmakuSpeedLabel: String {
+        switch danmakuScrollSeconds {
+        case 10.0: return "慢"
+        case 6.5: return "快"
+        default: return "标准"
         }
     }
 }
