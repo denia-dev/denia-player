@@ -1729,6 +1729,39 @@ struct MPVPlayerScreen: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
                                 .glassEffect(.regular, in: Capsule())
+                            if Prefs.danmakuEnabled {
+                                // Standalone danmaku toggle on the progress
+                                // row, Bilibili-style: visible without
+                                // opening the subtitle menu. Pink capsule
+                                // while danmaku is on, glass while off.
+                                Button {
+                                    if danmakuOn {
+                                        player.selectSubtitle(nil, for: .secondary)
+                                        danmakuOn = false
+                                    } else {
+                                        Task { _ = await loadDanmaku() }
+                                    }
+                                    pokeChrome()
+                                } label: {
+                                    Group {
+                                        if danmakuLoading {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                                .tint(.white)
+                                        } else {
+                                            Text("弹")
+                                                .font(.caption.weight(.bold))
+                                        }
+                                    }
+                                    .frame(width: 34, height: 22)
+                                    .background(
+                                        danmakuOn
+                                            ? AnyShapeStyle(Color(red: 1.0, green: 0.18, blue: 0.53))
+                                            : AnyShapeStyle(.ultraThinMaterial),
+                                        in: Capsule())
+                                }
+                                .disabled(danmakuLoading)
+                            }
                         }
                         if let error = player.lastError {
                             Text(String(describing: error)).font(.caption2).foregroundStyle(.red.opacity(0.9)).lineLimit(2)
