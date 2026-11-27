@@ -2,7 +2,6 @@ import SwiftUI
 import UIKit
 import CoreImage
 import CryptoKit
-import Vision
 
 /// One decoded copy of each remote image, shared by every view that
 /// asks for it. SwiftUI's AsyncImage fetches and decodes PER INSTANCE:
@@ -298,86 +297,6 @@ final class ImageMemoryCache {
         dict[itemID] = Self.hexString(of: UIColor(tint))
         UserDefaults.standard.set(dict, forKey: Self.tintDefaultsKey)
         return tint
-    }
-
-    // MARK: persisted hero focal rects (v1.66)
-    //
-    // The hero band used to be placed blind: fit-to-width, pinned
-    // 56pt from the top, so where a poster's subject (usually the
-    // person) landed in the 500pt cell was pure luck - faces sat
-    // under the top fade on one poster and down in the melt on the
-    // next (his 2026-11-28 report, with SenPlayer's subject-first
-    // framing as the reference). The subject rect is now computed
-    // once per item with Vision - faces win when any are found,
-    // attention saliency otherwise - persisted like the tints, and
-    // HeroArtwork shifts the band so the subject lands in the
-    // cell's prime zone.
-
-    private static let focalDefaultsKey = "heroFocalRects"
-
-    /// Normalized focal rect (top-left origin) persisted per item.
-    func heroFocalPersisted(itemID: String) -> CGRect? {
-        guard let dict = UserDefaults.standard.dictionary(forKey: Self.focalDefaultsKey) as? [String: [Double]],
-              let v = dict[itemID], v.count == 4 else { return nil }
-        return CGRect(x: v[0], y: v[1], width: v[2], height: v[3])
-    }
-
-    func heroFocal(for image: UIImage, itemID: String) async -> CGRect? {
-        if let persisted = heroFocalPersisted(itemID: itemID) { return persisted }
-        guard let focal = Self.computeFocalRect(image), !focal.isNull, !focal.isEmpty else { return nil }
-        var dict = (UserDefaults.standard.dictionary(forKey: Self.focalDefaultsKey) as? [String: [Double]]) ?? [:]
-        dict[itemID] = [focal.origin.x, focal.origin.y, focal.width, focal.height].map { Double($0) }
-        UserDefaults.standard.set(dict, forKey: Self.focalDefaultsKey)
-        return focal
-    }
-
-    /// Faces (expanded so the frame holds the head, not just the
-    /// features) or, failing that, the union of attention-saliency
-    /// objects. Vision reports normalized rects with a bottom-left
-    /// origin; the result is flipped to top-left origin. A saliency
-    /// union covering most of the frame carries no framing
-    /// information and counts as no focal.
-    private static func computeFocalRect(_ image: UIImage) -> CGRect? {
-        let maxWidth: CGFloat = 512
-        let scale = min(1, maxWidth / max(image.size.width, 1))
-        let size = CGSize(width: max(1, image.size.width * scale),
-                          height: max(1, image.size.height * scale))
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = 1
-        let small = UIGraphicsImageRenderer(size: size, format: format).image { _ in
-            image.draw(in: CGRect(origin: .zero, size: size))
-        }
-        guard let cg = small.cgImage else { return nil }
-        let faceRequest = VNDetectFaceRectanglesRequest()
-        let saliencyRequest = VNGenerateAttentionBasedSaliencyImageRequest()
-        let handler = VNImageRequestHandler(cgImage: cg, options: [:])
-        do {
-            try handler.perform([faceRequest, saliencyRequest])
-        } catch {
-            return nil
-        }
-        let unit = CGRect(x: 0, y: 0, width: 1, height: 1)
-        func flipped(_ rect: CGRect) -> CGRect {
-            CGRect(x: rect.origin.x, y: 1 - rect.origin.y - rect.height,
-                   width: rect.width, height: rect.height)
-        }
-        if let faces = faceRequest.results, !faces.isEmpty {
-            var union = CGRect.null
-            for face in faces {
-                let rect = flipped(face.boundingBox)
-                union = union.union(rect.insetBy(dx: -rect.width * 0.45, dy: -rect.height * 0.45))
-            }
-            return union.intersection(unit)
-        }
-        if let observation = saliencyRequest.results?.first,
-           let objects = observation.salientObjects, !objects.isEmpty {
-            var union = CGRect.null
-            for object in objects { union = union.union(flipped(object.boundingBox)) }
-            let clipped = union.intersection(unit)
-            if clipped.width * clipped.height > 0.65 { return nil }
-            return clipped
-        }
-        return nil
     }
 
     private static func hexString(of color: UIColor) -> String {

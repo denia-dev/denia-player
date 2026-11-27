@@ -132,39 +132,11 @@ private struct HeroArtwork: View {
     let onBlank: (String) -> Void
 
     @State private var uiImage: UIImage?
-    @State private var focalRect: CGRect?
-
-    /// The poster's subject rect, when known: the persisted value
-    /// wins so a repeat visit frames identically on frame one.
-    private var effectiveFocal: CGRect? {
-        focalRect ?? ImageMemoryCache.shared.heroFocalPersisted(itemID: item.Id)
-    }
-
-    /// The band's top offset: 56pt by default (his call, v1.37).
-    /// With a focal rect (v1.66), shift the band so the subject's
-    /// centre lands in the cell's prime zone - about 205pt from
-    /// the top, clear of the top fade above and the title block
-    /// below - instead of wherever the poster's own composition
-    /// happened to put it. Clamped both ways: down at most 24pt
-    /// (the tint gap must not swallow the band's top), up only
-    /// while the art's bottom still reaches the melt zone.
-    private func bandTopOffset(containerWidth: CGFloat) -> CGFloat {
-        guard let uiImage, let focal = effectiveFocal,
-              uiImage.size.width > 0, containerWidth > 0 else { return 56 }
-        let imageHeight = containerWidth * uiImage.size.height / uiImage.size.width
-        let focalCenter = (focal.origin.y + focal.height / 2) * imageHeight
-        var shift = 205 - (56 + focalCenter)
-        let minShift = min(0, 374 - imageHeight)
-        shift = min(24, max(minShift, shift))
-        return 56 + shift
-    }
 
     var body: some View {
-        GeometryReader { geo in
-            let topPad = bandTopOffset(containerWidth: geo.size.width)
-            ZStack(alignment: .top) {
-                Rectangle().fill(tint ?? Color(.systemBackground))
-                if let uiImage {
+        ZStack(alignment: .top) {
+            Rectangle().fill(tint ?? Color(.systemBackground))
+            if let uiImage {
                 Image(uiImage: uiImage)
                     .resizable()
                     .scaledToFit()
@@ -186,9 +158,8 @@ private struct HeroArtwork: View {
                     // top-pinned, the band ended high above the
                     // bottom-anchored title block with a washed-out
                     // gap between them; now its faded bottom edge
-                    // lands just above the logo/title. v1.66: the
-                    // offset is focal-aware (bandTopOffset).
-                    .padding(.top, topPad)
+                    // lands just above the logo/title.
+                    .padding(.top, 56)
                 // The line, blurred (v1.43, range tuned in
                 // v1.45-v1.48): a registered copy of the same
                 // band, blurred, living only in the top 3% - full
@@ -209,10 +180,8 @@ private struct HeroArtwork: View {
                             .init(color: .clear, location: 0.03),
                         ], startPoint: .top, endPoint: .bottom)
                     }
-                    .padding(.top, topPad)
-                }
+                    .padding(.top, 56)
             }
-            .animation(.easeInOut(duration: 0.3), value: topPad)
         }
         .task(id: item.Id) {
             guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720) else {
@@ -227,7 +196,6 @@ private struct HeroArtwork: View {
                 switch await ImageMemoryCache.shared.heroImageResult(for: url) {
                 case .loaded(let image):
                     uiImage = image
-                    focalRect = await ImageMemoryCache.shared.heroFocal(for: image, itemID: item.Id)
                     return
                 case .blank:
                     onBlank(item.Id)
