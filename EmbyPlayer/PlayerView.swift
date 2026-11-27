@@ -376,6 +376,91 @@ private struct PiPSubtitleCaption: View {
     }
 }
 
+/// Native danmaku renderer (v1.59). The comments were laid out by
+/// DanmakuLayout in a virtual 1280x720 space; this view maps them
+/// onto the real frame and scrolls them on the player's clock.
+/// The published position only updates a few times a second, so
+/// between updates the display time is extrapolated from the last
+/// published position at the current rate — pause freezes it,
+/// seeks re-anchor it via onChange.
+private struct DanmakuOverlayView: View {
+    let placed: [DanmakuPlaced]
+    let player: MPVPlayer
+    let rate: Double
+    let fontSize: Double
+    let scrollDuration: Double
+
+    @State private var anchorPosition: Double = 0
+    @State private var anchorDate: Date = .now
+
+    var body: some View {
+        GeometryReader { geo in
+            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
+                let t = displayTime(now: context.date)
+                let scaleX = geo.size.width / DanmakuLayout.playX
+                let scaleY = geo.size.height / DanmakuLayout.playY
+                let rowHeight = fontSize * 1.25 * scaleY
+                ZStack(alignment: .topLeading) {
+                    ForEach(visibleComments(at: t), id: \.index) { comment in
+                        Text(comment.text)
+                            .font(.system(size: fontSize * scaleY, weight: .medium))
+                            .foregroundStyle(danmakuColor(comment.color))
+                            .shadow(color: .black.opacity(0.9), radius: 1.5, x: 0, y: 1)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .offset(x: xPosition(comment, at: t, scaleX: scaleX, viewWidth: geo.size.width),
+                                    y: yPosition(comment, rowHeight: rowHeight, viewHeight: geo.size.height))
+                    }
+                }
+            }
+        }
+        .onChange(of: player.position.secondsValue) { _, newValue in
+            anchorPosition = newValue
+            anchorDate = .now
+        }
+        .onAppear {
+            anchorPosition = player.position.secondsValue
+            anchorDate = .now
+        }
+    }
+
+    private func displayTime(now: Date) -> Double {
+        if player.isPaused { return anchorPosition }
+        return anchorPosition + now.timeIntervalSince(anchorDate) * max(rate, 0.1)
+    }
+
+    private func visibleComments(at t: Double) -> [DanmakuPlaced] {
+        placed.filter { $0.time <= t && t <= $0.end }
+    }
+
+    private func xPosition(_ comment: DanmakuPlaced, at t: Double, scaleX: Double, viewWidth: Double) -> Double {
+        switch comment.kind {
+        case .scroll:
+            let progress = (t - comment.time) / scrollDuration
+            let xUnits = DanmakuLayout.playX - progress * (DanmakuLayout.playX + comment.width)
+            return xUnits * scaleX
+        case .top, .bottom:
+            return (viewWidth - comment.width * scaleX) / 2
+        }
+    }
+
+    private func yPosition(_ comment: DanmakuPlaced, rowHeight: Double, viewHeight: Double) -> Double {
+        switch comment.kind {
+        case .scroll, .top:
+            return Double(comment.row) * rowHeight
+        case .bottom:
+            return viewHeight - Double(comment.row + 1) * rowHeight
+        }
+    }
+
+    private func danmakuColor(_ value: Int) -> Color {
+        if value <= 0 || value == 0xFFFFFF { return .white }
+        return Color(red: Double((value >> 16) & 0xFF) / 255,
+                     green: Double((value >> 8) & 0xFF) / 255,
+                     blue: Double(value & 0xFF) / 255)
+    }
+}
+
 /// Label for the next episode on the countdown card: "第 3 集 · 标题".
 func episodeCountdownLabel(_ episode: EmbyItem) -> String {
     if let n = episode.IndexNumber {
@@ -615,6 +700,9 @@ struct MPVPlayerScreen: View {
     @State private var translating = false
     @State private var danmakuOn = false
     @State private var danmakuLoading = false
+    @State private var danmakuPlaced: [DanmakuPlaced] = []
+    @State private var danmakuFontSize: Double = 36
+    @State private var danmakuScrollSeconds: Double = 8
     @State private var translateProgressText = ""
     @State private var translateError: String?
     @State private var activeSegment: MediaSegment?
@@ -645,6 +733,17 @@ struct MPVPlayerScreen: View {
                 }
                 .id(playerGeneration)
                 .ignoresSafeArea()
+
+            // Danmaku layer (v1.59): drawn by the app itself above
+            // the video, under the gesture layer; never hit-tested.
+            if danmakuOn, !danmakuPlaced.isEmpty {
+                DanmakuOverlayView(placed: danmakuPlaced, player: player,
+                                   rate: currentRate,
+                                   fontSize: danmakuFontSize,
+                                   scrollDuration: danmakuScrollSeconds)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
 
             // Gesture layer.
             gestureLayer
@@ -1057,64 +1156,43 @@ struct MPVPlayerScreen: View {
         }
     }
 
-    /// Danmaku first, dual subtitles as the fallback: the danmaku
-    /// track rides the secondary subtitle slot, so the two cannot
-    /// coexist. When no danmaku matches (or the service is not
-    /// configured), the configured secondary language applies as
-    /// before.
+    /// Danmaku and dual subtitles are independent now: the danmaku
+    /// overlay is drawn by the app itself (v1.59) and no longer
+    /// occupies the secondary subtitle slot, so both run at once.
     private func prepareDanmakuOrSecondary() async {
-        if Prefs.danmakuEnabled, await loadDanmaku() { return }
+        if Prefs.danmakuEnabled { _ = await loadDanmaku() }
         await applySecondarySubtitle()
     }
 
-    /// Match + download + convert via the self-hosted danmaku
-    /// service, then load the generated ASS as the secondary track.
+    /// Match + download via the self-hosted danmaku service, lay the
+    /// comments out into tracks and hand them to the native overlay.
     /// An override name (a manual search pick) replaces the whole
     /// candidate list for this load.
     @discardableResult
     private func loadDanmaku(overrideName: String? = nil) async -> Bool {
-        guard !danmakuOn, !danmakuLoading else { return danmakuOn }
+        guard !danmakuLoading else { return danmakuOn }
+        if danmakuOn, overrideName == nil { return true }
+        // Re-opening after 关闭弹幕 is instant: the laid-out comments
+        // are still here, no refetch needed.
+        if overrideName == nil, !danmakuPlaced.isEmpty {
+            danmakuOn = true
+            return true
+        }
         danmakuLoading = true
         defer { danmakuLoading = false }
         let generation = playerGeneration
-        guard let file = await DanmakuService.assFile(
+        guard let comments = await DanmakuService.comments(
             fileNames: overrideName.map { [$0] } ?? danmakuFileNames(),
             durationSeconds: Double(item.RunTimeTicks ?? 0) / 10_000_000
         ) else { return false }
-        // Let the player's track list settle first, like the other
-        // track pickers do, so the added track lands cleanly.
-        for _ in 0..<16 {
-            guard generation == playerGeneration, !Task.isCancelled else { return false }
-            if !player.subtitleTracks.isEmpty { break }
-            try? await Task.sleep(for: .milliseconds(500))
-        }
         guard generation == playerGeneration else { return false }
-        // The danmaku ASS carries \move animation, but two player
-        // settings flatten it into stacked plain-text lines (his
-        // 2026-11-27 report: comments piled bottom-up in the centre
-        // instead of scrolling across the top; the same file renders
-        // as proper scrolling danmaku in reference libass):
-        // - sub-ass-override=force (set when he customises subtitle
-        //   colour/border) discards authored ASS positioning/animation.
-        // - MPVUI's text-subtitle interception presents text tracks
-        //   as static text snapshots instead of libass composition.
-        // Switch both off while danmaku is on; the menu's 关闭弹幕
-        // restores them (see restoreSubtitleRendering).
-        player.setProperty("sub-ass-override", to: "no")
-        player.setTextSubtitleInterceptionEnabled(false)
-        player.loadExternalSubtitle(file, selecting: .secondary)
-        player.setSubtitlesVisible(true)
+        let fontSize = Double(Prefs.danmakuFontSize)
+        let scroll = Prefs.danmakuScrollSeconds
+        danmakuFontSize = fontSize
+        danmakuScrollSeconds = scroll
+        danmakuPlaced = DanmakuLayout.build(comments: comments, fontSize: fontSize, scrollDuration: scroll)
         danmakuOn = true
         return true
-    }
-
-    /// Undo the two rendering switches loadDanmaku applies, so the
-    /// subtitle colour/border preferences and the PiP caption stream
-    /// behave exactly as before once danmaku is off.
-    private func restoreSubtitleRendering() {
-        let force = Prefs.subColorName != "white" || Prefs.subBorderStyle != "outline"
-        player.setProperty("sub-ass-override", to: force ? "force" : "yes")
-        player.setTextSubtitleInterceptionEnabled(true)
     }
 
     /// Candidate names for the danmaku service, best first: a
@@ -1156,10 +1234,7 @@ struct MPVPlayerScreen: View {
     private func applyManualDanmaku(title: String, episode: Int) {
         UserDefaults.standard.set(title, forKey: "danmaku.manual.\(item.SeriesId ?? item.Id)")
         let name = String(format: "%@ S%02dE%02d", title, item.ParentIndexNumber ?? 1, episode)
-        if danmakuOn {
-            player.selectSubtitle(nil, for: .secondary)
-            danmakuOn = false
-        }
+        danmakuOn = false
         Task { _ = await loadDanmaku(overrideName: name) }
     }
 
@@ -1955,9 +2030,7 @@ struct MPVPlayerScreen: View {
                             Text("弹幕匹配中…")
                         } else if danmakuOn {
                             Button("关闭弹幕") {
-                                player.selectSubtitle(nil, for: .secondary)
                                 danmakuOn = false
-                                restoreSubtitleRendering()
                             }
                         } else {
                             Button("开启弹幕") {

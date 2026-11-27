@@ -62,6 +62,27 @@ enum DanmakuService {
         return nil
     }
 
+    /// Raw comments for the native danmaku overlay (v1.59): same
+    /// candidate-name matching as assFile, but returns the parsed
+    /// comments instead of an ASS file. The ASS route was dropped
+    /// because the player's subtitle pipeline kept flattening the
+    /// authored \move animation into stacked plain-text lines (his
+    /// reports on v1.57 and v1.58); the overlay draws the comments
+    /// itself on the player's clock, which no subtitle setting can
+    /// flatten.
+    static func comments(fileNames: [String], durationSeconds: Double) async -> [DanmakuComment]? {
+        guard let service = await DanmakuConfig.service() else { return nil }
+        for name in fileNames where !name.isEmpty {
+            guard let matched = await match(service: service, fileName: name, durationSeconds: durationSeconds)
+            else { continue }
+            if let list = await comments(service: service, episodeID: matched.episodeID, sourceURL: matched.url),
+               !list.isEmpty {
+                return list
+            }
+        }
+        return nil
+    }
+
     private static func assFile(service: (base: String, token: String), fileName: String, durationSeconds: Double) async -> URL? {
         guard let matched = await match(service: service, fileName: fileName, durationSeconds: durationSeconds) else { return nil }
         let episodeID = matched.episodeID
@@ -296,7 +317,7 @@ enum DanmakuASS {
 
     /// Rough advance-width estimate in font-size units: full width
     /// for CJK / fullwidth forms, ~0.55 for ASCII, 0.8 otherwise.
-    private static func textWidth(_ text: String, fontSize: Double) -> Double {
+    static func textWidth(_ text: String, fontSize: Double) -> Double {
         var units = 0.0
         for scalar in text.unicodeScalars {
             let v = scalar.value
@@ -408,5 +429,94 @@ extension DanmakuService {
                      "sohu": "搜狐", "leshi": "乐视", "xigua": "西瓜",
                      "douban": "豆瓣", "hanjutv": "韩剧TV", "360": "360"]
         return names[key] ?? key
+    }
+}
+
+/// One comment placed for the native overlay: which track row it
+/// rides and how wide it is in the virtual 1280x720 space the ASS
+/// converter used, so the collision rules carry over unchanged.
+struct DanmakuPlaced {
+    enum Kind { case scroll, top, bottom }
+    var index: Int   // position in the laid-out array; unique view identity
+    var time: Double
+    var end: Double
+    var kind: Kind
+    var row: Int
+    var width: Double   // virtual units (1280-wide space)
+    var color: Int
+    var text: String
+}
+
+/// Track allocation for the native overlay - the same rules as
+/// DanmakuASS.convert (a scroll row's previous tail must be fully
+/// on screen, wider followers must not rear-end, fixed comments
+/// stack in a few rows), minus the ASS serialisation.
+enum DanmakuLayout {
+    static let playX = 1280.0
+    static let playY = 720.0
+    static let fixedDuration = 4.5
+
+    static func build(comments: [DanmakuComment], fontSize: Double, scrollDuration: Double) -> [DanmakuPlaced] {
+        var list = comments.sorted { $0.time < $1.time }
+        let cap = 3000
+        if list.count > cap {
+            let stride = Double(list.count) / Double(cap)
+            var sampled: [DanmakuComment] = []
+            sampled.reserveCapacity(cap)
+            var index = 0.0
+            while Int(index) < list.count {
+                sampled.append(list[Int(index)])
+                index += stride
+            }
+            list = sampled
+        }
+
+        let rowHeight = fontSize * 1.25
+        let scrollRows = max(1, Int(playY * 0.85 / rowHeight))
+        let fixedRows = 6
+        var lastScroll = Array(repeating: (start: -1_000_000.0, width: 0.0), count: scrollRows)
+        var lastTop = Array(repeating: -1_000_000.0, count: fixedRows)
+        var lastBottom = Array(repeating: -1_000_000.0, count: fixedRows)
+
+        var placed: [DanmakuPlaced] = []
+        placed.reserveCapacity(list.count)
+        for comment in list {
+            let width = DanmakuASS.textWidth(comment.text, fontSize: fontSize)
+            switch comment.mode {
+            case 5:
+                guard let row = (0..<fixedRows).first(where: { comment.time >= lastTop[$0] + fixedDuration })
+                else { continue }
+                lastTop[row] = comment.time
+                placed.append(DanmakuPlaced(index: placed.count, time: comment.time, end: comment.time + fixedDuration,
+                                            kind: .top, row: row, width: width,
+                                            color: comment.color, text: comment.text))
+            case 4:
+                guard let row = (0..<fixedRows).first(where: { comment.time >= lastBottom[$0] + fixedDuration })
+                else { continue }
+                lastBottom[row] = comment.time
+                placed.append(DanmakuPlaced(index: placed.count, time: comment.time, end: comment.time + fixedDuration,
+                                            kind: .bottom, row: row, width: width,
+                                            color: comment.color, text: comment.text))
+            default:
+                var row: Int?
+                for candidate in 0..<scrollRows {
+                    let last = lastScroll[candidate]
+                    let tailIn = last.start + scrollDuration * last.width / (playX + last.width)
+                    guard comment.time >= tailIn else { continue }
+                    if width > last.width {
+                        let safe = last.start + scrollDuration * (last.width + width) / (playX + last.width)
+                        guard comment.time >= safe else { continue }
+                    }
+                    row = candidate
+                    break
+                }
+                guard let row else { continue }
+                lastScroll[row] = (comment.time, width)
+                placed.append(DanmakuPlaced(index: placed.count, time: comment.time, end: comment.time + scrollDuration,
+                                            kind: .scroll, row: row, width: width,
+                                            color: comment.color, text: comment.text))
+            }
+        }
+        return placed
     }
 }
