@@ -223,6 +223,33 @@ struct EmbyClient {
         return try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
     }
 
+    /// Generic paged browse across the whole server for the
+    /// libraries index page (v1.74): genre / decade / country
+    /// filters, top-rated, collections, A-Z. The caller supplies
+    /// the filter + sort params; paging and totals are added here.
+    func browsePage(params: [String: String], startIndex: Int, limit: Int) async throws -> EmbyItemsResponse {
+        var query = params.map { URLQueryItem(name: $0.key, value: $0.value) }
+        query.append(URLQueryItem(name: "Recursive", value: "true"))
+        query.append(URLQueryItem(name: "Fields", value: "Overview,Genres"))
+        query.append(URLQueryItem(name: "StartIndex", value: String(startIndex)))
+        query.append(URLQueryItem(name: "Limit", value: String(limit)))
+        query.append(URLQueryItem(name: "EnableTotalRecordCount", value: "true"))
+        return try await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+    }
+
+    /// Names for a browse list (genres, countries) from Emby's
+    /// filter endpoints. Empty on any failure — the list page then
+    /// just shows its empty state.
+    func filterNames(path: String) async -> [String] {
+        let query = [
+            URLQueryItem(name: "UserId", value: server.userID),
+            URLQueryItem(name: "SortBy", value: "SortName"),
+            URLQueryItem(name: "SortOrder", value: "Ascending"),
+        ]
+        let response: EmbyItemsResponse? = try? await send(makeRequest(path: path, query: query))
+        return (response?.Items ?? []).map(\.Name).filter { !$0.isEmpty }
+    }
+
     func item(id: String) async throws -> EmbyItem {
         // People/Chapters/MediaSources are NOT in Emby's default field
         // set: without naming them here the detail response carries no

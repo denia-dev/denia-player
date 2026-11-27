@@ -242,20 +242,52 @@ struct LibrariesTabView: View {
     private var libraries: [EmbyItem] { catalog.libraries }
 
     var body: some View {
+        // Index page (v1.74, his approved mock): the rails moved
+        // to the home page, so this tab is the directory — one
+        // card per library (tap through to its full grid) over a
+        // cross-library browse grid. Grouped-background page with
+        // white cards, like the mock he signed off.
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 26) {
+            LazyVStack(alignment: .leading, spacing: 20) {
                 header
+                Text("媒体库").font(.system(size: 21, weight: .bold))
                 ForEach(Array(libraries.enumerated()), id: \.offset) { _, library in
-                    LibraryRailSection(library: library)
+                    LibraryIndexCard(library: library)
+                }
+                Text("分类浏览").font(.system(size: 21, weight: .bold))
+                    .padding(.top, 4)
+                LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
+                                    GridItem(.flexible(), spacing: 10),
+                                    GridItem(.flexible(), spacing: 10)], spacing: 10) {
+                    browseTile("按类型", symbol: "theatermasks.fill", route: .browseList(.genres))
+                    browseTile("按年代", symbol: "calendar", route: .browseList(.decades))
+                    browseTile("高分榜", symbol: "star.fill", route: .browseGrid(.topRated))
+                    browseTile("合集", symbol: "square.stack.fill", route: .browseGrid(.collections))
+                    browseTile("国家地区", symbol: "globe", route: .browseList(.countries))
+                    browseTile("A–Z 全部", symbol: "textformat.abc", route: .browseGrid(.allAZ))
                 }
             }
             .padding(.horizontal)
             .padding(.top, 10)
             .padding(.bottom, 32)
         }
+        .background(Color(.systemGroupedBackground))
         .toolbar(.hidden, for: .navigationBar)
         .task { await load() }
         .sheet(isPresented: $showServers) { ServersView() }
+    }
+
+    private func browseTile(_ title: String, symbol: String, route: Route) -> some View {
+        NavigationLink(value: route) {
+            VStack(spacing: 8) {
+                Image(systemName: symbol).font(.system(size: 21))
+                Text(title).font(.system(size: 13, weight: .medium))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 16)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
     }
 
     /// SenPlayer-style header: a server pill (tap to manage/switch
@@ -295,6 +327,307 @@ struct LibrariesTabView: View {
         catalog.syncKey(store.activeServer?.id)
         guard let client = store.client() else { return }
         await catalog.ensureLibraries(client: client, force: force)
+    }
+}
+
+// MARK: - 资源库索引页 (v1.74)
+
+enum BrowseKind: Hashable { case genres, decades, countries }
+
+/// A cross-library browse: a title plus the /Items filter params
+/// (paging/recursive/fields are added by browsePage).
+struct BrowseFilter: Hashable {
+    var title: String
+    var params: [String: String]
+
+    static let topRated = BrowseFilter(title: "高分榜", params: [
+        "IncludeItemTypes": "Movie,Series", "SortBy": "CommunityRating,SortName", "SortOrder": "Descending"])
+    static let collections = BrowseFilter(title: "合集", params: [
+        "IncludeItemTypes": "BoxSet", "SortBy": "SortName", "SortOrder": "Ascending"])
+    static let allAZ = BrowseFilter(title: "A–Z 全部", params: [
+        "IncludeItemTypes": "Movie,Series", "SortBy": "SortName", "SortOrder": "Ascending"])
+
+    static func genre(_ name: String) -> BrowseFilter {
+        BrowseFilter(title: name, params: [
+            "IncludeItemTypes": "Movie,Series", "Genres": name, "SortBy": "SortName", "SortOrder": "Ascending"])
+    }
+    static func decade(_ label: String, years: [Int]) -> BrowseFilter {
+        BrowseFilter(title: label, params: [
+            "IncludeItemTypes": "Movie,Series",
+            "Years": years.map(String.init).joined(separator: ","),
+            "SortBy": "SortName", "SortOrder": "Ascending"])
+    }
+    static func country(_ name: String) -> BrowseFilter {
+        BrowseFilter(title: name, params: [
+            "IncludeItemTypes": "Movie,Series", "Countries": name, "SortBy": "SortName", "SortOrder": "Ascending"])
+    }
+}
+
+/// One library on the index page: a strip of four posters from
+/// the library's latest additions (CatalogCache section data)
+/// over the library name and total count; the whole card goes to
+/// the library's full grid.
+private struct LibraryIndexCard: View {
+    @Environment(AppStore.self) private var store
+    @State private var catalog = CatalogCache.shared
+    let library: EmbyItem
+
+    private var data: CatalogCache.SectionData? { catalog.sections[library.Id] }
+    private var coverItems: [EmbyItem] {
+        Array((data?.items ?? []).filter { $0.ImageTags?["Primary"] != nil }.prefix(4))
+    }
+
+    var body: some View {
+        NavigationLink(value: Route.library(library)) {
+            VStack(alignment: .leading, spacing: 10) {
+                if let client = store.client() {
+                    HStack(spacing: 6) {
+                        if coverItems.isEmpty {
+                            RoundedRectangle(cornerRadius: 8)
+                                .fill(Color.primary.opacity(0.06))
+                                .frame(maxWidth: .infinity)
+                                .frame(height: 86)
+                        } else {
+                            ForEach(Array(coverItems.enumerated()), id: \.offset) { _, item in
+                                ItemImage(item: item, client: client)
+                                    .frame(maxWidth: .infinity)
+                                    .frame(height: 86)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                    }
+                }
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(library.Name).font(.system(size: 17, weight: .bold))
+                    Spacer()
+                    if let count = data?.count {
+                        Text("\(count)").foregroundStyle(.secondary).font(.system(size: 13))
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .padding(12)
+            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
+        }
+        .buttonStyle(.plain)
+        .task {
+            if let client = store.client() {
+                await catalog.ensureSection(libraryID: library.Id, client: client)
+            }
+        }
+    }
+}
+
+/// The list half of 分类浏览： genre and country names come from
+/// the server's filter endpoints; decades are fixed rows whose
+/// grids filter by the decade's year list.
+struct BrowseListView: View {
+    @Environment(AppStore.self) private var store
+    let kind: BrowseKind
+    @State private var names: [String] = []
+    @State private var loaded = false
+
+    private var title: String {
+        switch kind {
+        case .genres: return "按类型"
+        case .decades: return "按年代"
+        case .countries: return "国家地区"
+        }
+    }
+
+    private var decadeRows: [(String, BrowseFilter)] {
+        [("2020年代", .decade("2020年代", years: Array(2020...2029))),
+         ("2010年代", .decade("2010年代", years: Array(2010...2019))),
+         ("2000年代", .decade("2000年代", years: Array(2000...2009))),
+         ("1990年代", .decade("1990年代", years: Array(1990...1999))),
+         ("1980年代", .decade("1980年代", years: Array(1980...1989))),
+         ("更早", .decade("更早", years: Array(1930...1979)))]
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                switch kind {
+                case .decades:
+                    ForEach(Array(decadeRows.enumerated()), id: \.offset) { _, row in
+                        rowLink(row.0, filter: row.1)
+                    }
+                case .genres:
+                    ForEach(names, id: \.self) { name in rowLink(name, filter: .genre(name)) }
+                case .countries:
+                    ForEach(names, id: \.self) { name in rowLink(name, filter: .country(name)) }
+                }
+                if loaded, kind != .decades, names.isEmpty {
+                    Text("没有读到列表，稍后再试。")
+                        .foregroundStyle(.secondary).font(.footnote).padding()
+                }
+            }
+            .padding(.horizontal)
+        }
+        .navigationTitle(title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func rowLink(_ label: String, filter: BrowseFilter) -> some View {
+        NavigationLink(value: Route.browseGrid(filter)) {
+            HStack {
+                Text(label).font(.system(size: 16))
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 14)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+
+    private func load() async {
+        guard kind != .decades, let client = store.client() else { loaded = true; return }
+        names = await client.filterNames(path: kind == .genres ? "/Genres" : "/Countries")
+        loaded = true
+    }
+}
+
+/// The grid half of 分类浏览： a paged poster grid over a
+/// BrowseFilter, mirroring LibraryView's paging discipline
+/// (generation guard, in-flight marker, retry row). BoxSets open
+/// as library grids (their children), everything else as detail.
+struct BrowseGridView: View {
+    @Environment(AppStore.self) private var store
+    @Environment(\.zoomNS) private var zoomNS
+    let filter: BrowseFilter
+    @State private var items: [EmbyItem] = []
+    @State private var errorText: String?
+    @State private var totalCount: Int?
+    @State private var loadingMore = false
+    @State private var pageError: String?
+    @State private var inFlightPageStart: Int?
+    @State private var loadGeneration = UUID()
+
+    private let pageSize = 60
+
+    private var columns: [GridItem] {
+        [GridItem(.adaptive(minimum: Prefs.posterColumns == 2 ? 150 : Prefs.posterColumns == 4 ? 88 : 110), spacing: 12)]
+    }
+
+    var body: some View {
+        ScrollView {
+            if let errorText {
+                Text(errorText).foregroundStyle(.red).font(.footnote).padding()
+            }
+            LazyVGrid(columns: columns, spacing: 16) {
+                ForEach(items) { item in
+                    NavigationLink(value: item.type == "BoxSet" ? Route.library(item) : Route.detail(item)) {
+                        gridCell(item)
+                    }
+                    .buttonStyle(.plain)
+                    .onAppear { maybeLoadMore(after: item) }
+                }
+                if loadingMore {
+                    ProgressView()
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 8)
+                } else if let pageError {
+                    VStack(spacing: 8) {
+                        Text(pageError).foregroundStyle(.red).font(.footnote)
+                        Button("重试加载") { loadNextPage() }
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                }
+            }
+            .padding()
+        }
+        .navigationTitle(filter.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: filter) { await load() }
+    }
+
+    @ViewBuilder
+    private func gridCell(_ item: EmbyItem) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let client = store.client() {
+                ItemImage(item: item, client: client)
+                    .aspectRatio(2 / 3, contentMode: .fill)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                    .zoomSource(id: item.Id, ns: zoomNS)
+            }
+            Text(item.Name).font(.caption).lineLimit(1)
+            if let year = item.ProductionYear {
+                Text(String(year)).font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func load() async {
+        let generation = UUID()
+        loadGeneration = generation
+        let filter = self.filter
+        items = []
+        totalCount = nil
+        errorText = nil
+        pageError = nil
+        loadingMore = false
+        inFlightPageStart = nil
+        guard let client = store.client() else { return }
+        do {
+            let page = try await client.browsePage(params: filter.params, startIndex: 0, limit: pageSize)
+            guard !Task.isCancelled, self.filter == filter, loadGeneration == generation else { return }
+            items = page.Items
+            totalCount = page.TotalRecordCount
+        } catch {
+            guard !Task.isCancelled, self.filter == filter, loadGeneration == generation else { return }
+            errorText = error.localizedDescription
+        }
+    }
+
+    private func maybeLoadMore(after item: EmbyItem) {
+        guard let index = items.firstIndex(where: { $0.Id == item.Id }),
+              index >= items.count - 9 else { return }
+        loadNextPage()
+    }
+
+    private func loadNextPage() {
+        guard !loadingMore, inFlightPageStart == nil,
+              let total = totalCount, items.count < total else { return }
+        let filter = self.filter
+        let generation = loadGeneration
+        let startIndex = items.count
+        inFlightPageStart = startIndex
+        loadingMore = true
+        pageError = nil
+        Task {
+            defer {
+                if self.filter == filter, loadGeneration == generation,
+                   inFlightPageStart == startIndex {
+                    inFlightPageStart = nil
+                    loadingMore = false
+                }
+            }
+            guard let client = store.client() else {
+                guard self.filter == filter, loadGeneration == generation else { return }
+                pageError = "无法连接媒体服务器，请重试。"
+                return
+            }
+            do {
+                let page = try await client.browsePage(params: filter.params, startIndex: startIndex, limit: pageSize)
+                guard !Task.isCancelled, self.filter == filter,
+                      loadGeneration == generation, items.count == startIndex else { return }
+                let known = Set(items.map(\.Id))
+                items.append(contentsOf: page.Items.filter { !known.contains($0.Id) })
+                if let newTotal = page.TotalRecordCount { totalCount = newTotal }
+            } catch {
+                guard !Task.isCancelled, self.filter == filter,
+                      loadGeneration == generation, items.count == startIndex else { return }
+                pageError = "加载失败：\(error.localizedDescription)"
+            }
+        }
     }
 }
 
