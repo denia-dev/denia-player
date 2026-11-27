@@ -216,11 +216,16 @@ private struct HeroArtwork: View {
 /// carousel's 720p backdrops were never in the disk cache and had
 /// to come from the server every time, while the library posters
 /// (same items every day) painted instantly (his 2026-11-27
-/// report: 只有轮播图慢）. The pool now persists per server for
-/// one calendar day: same-day launches restore the same batch by
-/// IDs, and only a new day samples a fresh batch.
+/// report: 只有轮播图慢）. v1.64 persisted the batch's IDs for a
+/// day, but the carousel still waited on the Ids round-trip
+/// before its first frame (his launch recording the same night:
+/// a grey hero for a beat). The store now persists the items
+/// themselves (the fields the hero reads), so a launch restores
+/// the whole batch locally - no network before the first paint -
+/// and a new day's fresh batch is sampled in the background and
+/// swapped in when it lands.
 private enum HeroPoolStore {
-    struct Saved: Codable { let day: String; let ids: [String] }
+    struct Saved: Codable { let day: String; let items: [HeroPoolItem] }
 
     static var today: String {
         let formatter = DateFormatter()
@@ -236,11 +241,56 @@ private enum HeroPoolStore {
         return saved
     }
 
-    static func save(serverID: String, ids: [String]) {
-        let saved = Saved(day: today, ids: ids)
+    static func save(serverID: String, items: [EmbyItem]) {
+        let saved = Saved(day: today, items: items.map(HeroPoolItem.init))
         if let data = try? JSONEncoder().encode(saved) {
             UserDefaults.standard.set(data, forKey: "heroPool.\(serverID)")
         }
+    }
+}
+
+/// The subset of EmbyItem the hero path reads (admission filter,
+/// cell text, ratings), in a flat Codable shape - the full model
+/// graph (media sources, people, chapters) is Decodable-only and
+/// the hero never touches it.
+private struct HeroPoolItem: Codable {
+    let Id: String
+    let Name: String
+    let type: String
+    let Overview: String?
+    let ProductionYear: Int?
+    let RunTimeTicks: Int64?
+    let Genres: [String]?
+    let Tags: [String]?
+    let ImageTags: [String: String]?
+    let BackdropImageTags: [String]?
+    let CommunityRating: Double?
+    let CriticRating: Double?
+    let ProviderIds: [String: String]?
+    let SeriesName: String?
+    let SeriesId: String?
+
+    init(_ item: EmbyItem) {
+        Id = item.Id; Name = item.Name; type = item.type
+        Overview = item.Overview; ProductionYear = item.ProductionYear
+        RunTimeTicks = item.RunTimeTicks; Genres = item.Genres; Tags = item.Tags
+        ImageTags = item.ImageTags; BackdropImageTags = item.BackdropImageTags
+        CommunityRating = item.CommunityRating; CriticRating = item.CriticRating
+        ProviderIds = item.ProviderIds; SeriesName = item.SeriesName; SeriesId = item.SeriesId
+    }
+
+    var item: EmbyItem {
+        EmbyItem(Id: Id, Name: Name, type: type, CollectionType: nil,
+                 SeriesName: SeriesName, SeriesId: SeriesId, SeasonId: nil,
+                 IndexNumber: nil, ParentIndexNumber: nil,
+                 Overview: Overview, ProductionYear: ProductionYear,
+                 RunTimeTicks: RunTimeTicks, ChildCount: nil,
+                 Genres: Genres, Tags: Tags, ProductionLocations: nil,
+                 OriginalTitle: nil, CommunityRating: CommunityRating,
+                 CriticRating: CriticRating, PremiereDate: nil,
+                 People: nil, Chapters: nil, ImageTags: ImageTags,
+                 BackdropImageTags: BackdropImageTags, UserData: nil,
+                 MediaSources: nil, ProviderIds: ProviderIds)
     }
 }
 
@@ -612,6 +662,24 @@ struct HomeView: View {
 
     private func load() async {
         guard let client = store.client() else { return }
+        // Instant paint: restore the persisted pool (whatever day it
+        // is from) before any network work, so the carousel renders
+        // with the first frames and its backdrops come straight from
+        // the disk cache. A stale-day batch is refreshed in the
+        // background at the end of this load.
+        let serverKey = store.activeServer?.id ?? ""
+        var poolIsStale = false
+        if heroPool.isEmpty, let saved = HeroPoolStore.load(serverID: serverKey), !saved.items.isEmpty {
+            heroPool = saved.items.map { $0.item }
+            poolIsStale = saved.day != HeroPoolStore.today
+            for heroItem in heroItems {
+                if let tint = ImageMemoryCache.shared.dominantTintPersisted(itemID: heroItem.Id) {
+                    heroTints[heroItem.Id] = tint
+                }
+            }
+            if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
+        }
+        let needsPool = heroPool.isEmpty
         // Same freshness pattern as the library catalog: same server,
         // loaded less than 10 minutes ago, data already on screen -
         // keep it instead of refetching everything (this is what made
@@ -624,10 +692,10 @@ struct HomeView: View {
         do {
             async let resumeFetch = client.resumeItems()
             async let latestFetch = client.latestItems()
-            async let poolFetch = fetchDailyPool(client: client)
+            async let poolFetch = fetchPoolIfNeeded(client: client, needed: needsPool)
             resume = try await resumeFetch
             latest = await latestFetch
-            heroPool = await poolFetch
+            if let fetched = await poolFetch { heroPool = fetched }
             // Prefill every hero tint we have persisted, so the
             // page opens already coloured instead of flashing
             // the flat background first (v1.40).
@@ -657,21 +725,27 @@ struct HomeView: View {
         } catch {
             errorText = error.localizedDescription
         }
+        // The on-screen batch is from a previous day: sample today's
+        // batch in the background and swap it in when it lands, so
+        // the launch itself never waits on the pool queries.
+        if poolIsStale {
+            Task {
+                let fresh = await client.heroPool()
+                guard !fresh.isEmpty, store.activeServer?.id == serverKey else { return }
+                HeroPoolStore.save(serverID: serverKey, items: fresh)
+                heroPool = fresh
+                if heroIndex >= heroItems.count { heroIndex = 0 }
+            }
+        }
     }
 
-    /// Today's hero pool: restore the persisted batch by IDs when
-    /// one was saved today (their backdrops are already in the disk
-    /// cache); otherwise sample a fresh batch and persist it for
-    /// the rest of the day.
-    private func fetchDailyPool(client: EmbyClient) async -> [EmbyItem] {
-        let serverKey = store.activeServer?.id ?? ""
-        if let saved = HeroPoolStore.load(serverID: serverKey), saved.day == HeroPoolStore.today {
-            let restored = await client.items(byIDs: saved.ids)
-            if !restored.isEmpty { return restored }
-        }
+    /// First-ever launch (or an empty restore): sample a fresh
+    /// batch and persist it for instant restores from then on.
+    private func fetchPoolIfNeeded(client: EmbyClient, needed: Bool) async -> [EmbyItem]? {
+        guard needed else { return nil }
         let fresh = await client.heroPool()
         if !fresh.isEmpty {
-            HeroPoolStore.save(serverID: serverKey, ids: fresh.map(\.Id))
+            HeroPoolStore.save(serverID: store.activeServer?.id ?? "", items: fresh)
         }
         return fresh
     }
