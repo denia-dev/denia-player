@@ -258,6 +258,7 @@ struct HomeView: View {
     /// tone under the carousel tracks the swipe itself instead of
     /// crossfading after the page settles.
     @State private var heroScrollX: CGFloat = 0
+    @State private var heroIsScrolling = false
     /// Last time the user touched the hero carousel (drag or tap).
     /// Auto-advance stays quiet for a while after any interaction:
     /// a tap landing while the paging scroll is animating to the
@@ -329,10 +330,18 @@ struct HomeView: View {
     /// under the art). One helper so the cell melt and the page
     /// ambient can never drift apart again.
     private func heroMeltColor(_ tint: Color?) -> Color {
-        // v1.71: lightened less (0.55 -> 0.35) — at 0.55 the wash
-        // read as tinted white and the poster felt pasted onto an
-        // unrelated page (his "渲染力度不够大").
-        (tint ?? Color(.systemBackground)).mix(with: Color(.systemBackground), by: 0.35)
+        // Strength pass (v1.72, his second "力度不够"): the area
+        // average of a poster greys out, so boost its saturation
+        // back, and barely lighten it (mix 0.55 -> 0.35 -> 0.15
+        // across v1.70-72) — the wash must read as the poster's
+        // own colour, not as tinted white.
+        guard let tint else { return Color(.systemBackground) }
+        let ui = UIColor(tint)
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        let boosted = ui.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+            ? Color(hue: Double(h), saturation: Double(min(s * 1.4, 1)), brightness: Double(b), opacity: Double(a))
+            : tint
+        return boosted.mix(with: Color(.systemBackground), by: 0.15)
     }
 
     /// The ambient colour right now: the melt colour of whichever
@@ -345,7 +354,15 @@ struct HomeView: View {
         guard !heroItems.isEmpty else { return Color(.systemBackground) }
         let pageWidth = UIScreen.main.bounds.width
         guard pageWidth > 0 else { return heroMeltColor(currentHeroTint) }
-        let progress = min(max(heroScrollX / pageWidth, 0), CGFloat(heroItems.count - 1))
+        var raw = heroScrollX / pageWidth
+        // If the offset feed ever disagrees with the settled page
+        // while the pager is idle (v1.71 on his phone read as the
+        // page tone not following the poster at all), the settled
+        // index wins — a correct colour beats a stuck blend.
+        if !heroIsScrolling, abs(raw - CGFloat(heroIndex)) > 0.5 {
+            raw = CGFloat(heroIndex)
+        }
+        let progress = min(max(raw, 0), CGFloat(heroItems.count - 1))
         let lower = Int(progress.rounded(.down))
         let frac = progress - CGFloat(lower)
         let base = heroMeltColor(heroTints[heroItems[lower].Id])
@@ -476,6 +493,9 @@ struct HomeView: View {
                 .onScrollPhaseChange { _, phase in
                     if phase == .tracking || phase == .interacting || phase == .decelerating {
                         lastHeroInteraction = .now
+                        heroIsScrolling = true
+                    } else {
+                        heroIsScrolling = false
                     }
                 }
                 .onScrollGeometryChange(for: CGFloat.self) { geometry in
@@ -697,6 +717,26 @@ struct HomeView: View {
             // Start (and refresh) on a random hero so the home page
             // does not open on the same title every time.
             if heroItems.count > 1 { heroIndex = Int.random(in: 0..<heroItems.count) }
+            // Prefetch EVERY hero's poster tint (v1.72): tints used
+            // to be computed only for the page being viewed, so a
+            // first swipe toward an unviewed hero blended the page
+            // toward plain background — part of why the tone below
+            // "didn't follow the poster". The strips are 48px and
+            // persist, so this is a one-time pass per pool.
+            let tintMissing = heroItems.filter { heroTints[$0.Id] == nil }
+            if !tintMissing.isEmpty {
+                Task {
+                    for heroItem in tintMissing {
+                        let strip = (heroItem.ImageTags?["Primary"] != nil
+                            ? client.imageURL(itemID: heroItem.Id, kind: "Primary", maxHeight: 48)
+                            : nil) ?? client.backdropURL(itemID: heroItem.Id, index: 0, maxHeight: 48)
+                        if let strip,
+                           let tint = await ImageMemoryCache.shared.dominantTint(for: strip, itemID: heroItem.Id) {
+                            heroTints[heroItem.Id] = tint
+                        }
+                    }
+                }
+            }
             // Warm every hero backdrop in the background, in order:
             // paging sideways should meet decoded images, not a slow
             // server (his "加载还慢了很多"). The shared cache dedupes
