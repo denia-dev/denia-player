@@ -282,7 +282,10 @@ final class ImageMemoryCache {
     // UserDefaults, so a repeat entry paints coloured on the
     // first frame; the first-ever computation uses a 48px strip.
 
-    private static let tintDefaultsKey = "heroTintHexes"
+    // v1.70: tints are computed from the POSTER now (the hero's
+    // artwork since v1.68), not the backdrop — new key so the old
+    // backdrop-based values are abandoned, not blended in.
+    private static let tintDefaultsKey = "heroTintHexesPoster"
 
     func dominantTintPersisted(itemID: String) -> Color? {
         guard let hex = (UserDefaults.standard.dictionary(forKey: Self.tintDefaultsKey) as? [String: String])?[itemID],

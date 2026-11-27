@@ -316,6 +316,17 @@ struct HomeView: View {
         return heroTints[item.Id]
     }
 
+    /// The wash the hero melts into and the page below sits on:
+    /// the poster's dominant colour lightened toward the page
+    /// background (v1.70, his correction — SenPlayer's posters and
+    /// the area under them are ONE tone; v1.68 melted into plain
+    /// system background, which read as white/grey patches pasted
+    /// under the art). One helper so the cell melt and the page
+    /// ambient can never drift apart again.
+    private func heroMeltColor(_ tint: Color?) -> Color {
+        (tint ?? Color(.systemBackground)).mix(with: Color(.systemBackground), by: 0.55)
+    }
+
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 26) {
@@ -367,13 +378,15 @@ struct HomeView: View {
 
     // MARK: - ambient background
 
-    /// The current hero item's art as the page's ambient wash - the
-    /// SenPlayer home treatment he pointed at on 2026-11-23: the hero
-    /// melts into a page background made of the same art, not into
-    /// solid white. Two copies of one layer: one attached to the
-    /// scroll content (the hero's melt fades into it and it continues
-    /// uninterrupted - no step, the build-58 detail lesson) and one
-    /// fixed behind the ScrollView for rubber-band regions. Both
+    /// The page's ambient wash: the SAME lightened poster tone
+    /// the hero cell melts into (heroMeltColor), flat — SenPlayer's
+    /// home is one continuous tone from the poster's bottom edge
+    /// to the last section. Through v1.69 this layer was the flat
+    /// tint plus the backdrop ghosted at 0.25 under a black wash,
+    /// which read as muddy grey and never matched the cell's melt;
+    /// v1.70 makes both ends the identical colour. Two copies of
+    /// one layer: one attached to the scroll content and one fixed
+    /// behind the ScrollView for rubber-band regions. Both
     /// crossfade when the carousel moves.
     private var currentHeroItem: EmbyItem? {
         heroItems.isEmpty ? nil : heroItems[min(heroIndex, heroItems.count - 1)]
@@ -382,21 +395,10 @@ struct HomeView: View {
     @ViewBuilder
     private func ambientLayer(scale: CGFloat) -> some View {
         ZStack {
-            if let item = currentHeroItem, let client = store.client() {
-                if let tint = currentHeroTint {
-                    tint
-                } else {
-                    Color(.systemBackground)
-                }
-                AmbientImageView(url: client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .clipped()
-                    .scaleEffect(scale)
-                    .opacity(currentHeroTint == nil ? 0.85 : 0.25)
+            if let item = currentHeroItem {
+                heroMeltColor(currentHeroTint)
                     .id(item.Id)
                     .transition(.opacity)
-                LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.24)],
-                               startPoint: .top, endPoint: .bottom)
             } else {
                 Color(.systemBackground)
             }
@@ -518,12 +520,13 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
+                let melt = heroMeltColor(heroTints[item.Id])
                 LinearGradient(stops: [
                     .init(color: .clear, location: 0),
                     .init(color: .clear, location: 0.34),
-                    .init(color: Color(.systemBackground).opacity(0.55), location: 0.58),
-                    .init(color: Color(.systemBackground).opacity(0.88), location: 0.78),
-                    .init(color: Color(.systemBackground), location: 0.92),
+                    .init(color: melt.opacity(0.5), location: 0.58),
+                    .init(color: melt.opacity(0.85), location: 0.78),
+                    .init(color: melt, location: 0.92),
                 ], startPoint: .top, endPoint: .bottom)
             }
             .mask {
@@ -611,7 +614,12 @@ struct HomeView: View {
               // The result is also persisted per item (see
               // dominantTint(for:itemID:)), so repeat entries
               // paint from disk on the first frame.
-              let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 48) else { return }
+              // v1.70: the tint comes from the POSTER (the art
+              // the hero actually shows), so the melt below it
+              // carries the poster's own tone.
+              let url = (item.ImageTags?["Primary"] != nil
+                  ? client.imageURL(itemID: item.Id, kind: "Primary", maxHeight: 48)
+                  : nil) ?? client.backdropURL(itemID: item.Id, index: 0, maxHeight: 48) else { return }
         guard let tint = await ImageMemoryCache.shared.dominantTint(for: url, itemID: item.Id),
               !Task.isCancelled, currentHeroItem?.Id == item.Id else { return }
         heroTints[item.Id] = tint
@@ -671,7 +679,10 @@ struct HomeView: View {
             let warmItems = heroItems
             Task.detached(priority: .utility) {
                 for heroItem in warmItems {
-                    if let url = client.backdropURL(itemID: heroItem.Id, index: 0, maxHeight: 720) {
+                    let url = (heroItem.ImageTags?["Primary"] != nil
+                        ? client.imageURL(itemID: heroItem.Id, kind: "Primary", maxHeight: 1000)
+                        : nil) ?? client.backdropURL(itemID: heroItem.Id, index: 0, maxHeight: 720)
+                    if let url {
                         _ = await ImageMemoryCache.shared.image(for: url)
                     }
                 }
