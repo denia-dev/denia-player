@@ -74,64 +74,49 @@ func wideImageKind(_ item: EmbyItem) -> String {
     (item.BackdropImageTags?.isEmpty == false) ? "Backdrop" : "Primary"
 }
 
-/// Hero artwork: the full backdrop fit to width, pinned to the top
-/// of the hero over the page tint. Backdrops are 16:9 and the hero
-/// frame is tall, so every fill-crop shows only ~42% of the width
-/// and the subject lands wherever the crop window happens to sit -
-/// centre crop and the v1.29 Vision focal point both produced
-/// framings with no subject at all (his 2026-11-25 screenshots: a
-/// hand, half a face at the edge, a ribbon close-up). Fitting the
-/// whole backdrop to width is deterministic: the complete
-/// composition, subject included, is always in frame, and the area
-/// below the band is the flat page tint the title block sits on.
-/// Deliberately built from plain frames only - no GeometryReader,
-/// no zoom source: the v1.33 build (verified to contain the
-/// fit-width code, version 1.33 (134) on device) still rendered
-/// pixel-identical to the old crop on his phone, so v1.34 removed
-/// every layout mechanism that could be involved. The blur in
-/// here lives strictly ABOVE the band (v1.41, his exact
-/// geometry): the artwork's top rows smear upward into the flat
-/// tint so there is no separation line, while the band itself -
-/// subject included - stays fully sharp. v1.40 blurred the top
-/// half OF the band and fogged the subject; v1.38 filled the
-/// whole frame with a scaled copy and read as the picture
-/// enlarged. Both rejected, and the v1.41/v1.42 strips above
-/// the band never touched the line either. What he actually
-/// asked for all along, in his words: blur THIS line - the
-/// band's own top edge. v1.43 does exactly that and nothing
-/// else: a crossfade dissolve over the band's top 14% - the
-/// sharp band fades in over that stretch while a registered
-/// blurred copy (radius 12) fades out over the same stretch,
-/// so the edge itself is blurred away and the rest of the
-/// artwork is untouched. v1.43 still showed the line, and
-/// reading the code again found why every top fade since
-/// v1.39 had been a no-op: the mask sat AFTER .padding(.top,
-/// 56), so the gradient's locations were fractions of the
-/// padded height (277) and the whole top fade landed inside
-/// the padding - the image always started at full alpha. (The
-/// bottom melt worked only because its stops happened to fall
-/// inside the image.) v1.44 moves the mask before the padding
-/// so the stops are fractions of the band itself, and shifts
-/// the bottom stop 0.85 -> 0.81 to keep the bottom melt the
-/// same length it was. v1.44 verdict: the line is gone, but
-/// the dissolve reached too far down into the picture (tops
-/// of heads washed out); he asked for the blur range moved
-/// up a little - v1.45 shrinks the dissolve from the top 14%
-/// to the top 8%. Still too much for him: v1.46 goes to 4%,
-/// v1.47 to 2%, v1.48 back up a touch to 3%.
+/// Hero artwork history, compressed: through v1.65 the hero was
+/// the BACKDROP fit to width over a flat dominant-colour tint -
+/// his fallback call after fill-crops of the 16:9 backdrop kept
+/// losing the subject (centre crop and a Vision focal point both
+/// produced subject-less framings, 2026-11-25). The tint field
+/// and the fit band's top edge then took nine builds of fade
+/// tuning (v1.39-v1.48) and he still rated the result poor.
+/// v1.68 follows his SenPlayer screenshots instead: Sen's hero
+/// is the POSTER, not the backdrop - a portrait poster fills the
+/// frame with only its bottom cropped (which the melt hides),
+/// so the subject is always in frame. See HeroArtwork.
 private struct HeroArtwork: View {
     let item: EmbyItem
     let client: EmbyClient
-    /// The backdrop's dominant colour (CIAreaAverage, computed by
-    /// the cell's owner). Everything outside the sharp band renders
-    /// as this flat tone - NOT as a scaled/blurred copy of the image
-    /// (his correction, v1.39: a blurred fill still reads as the
-    /// picture enlarged, which is what the fit-to-width band exists
-    /// to avoid).
+    /// Placeholder colour shown until the artwork lands (the pool's
+    /// dominant-colour tint). Nothing else renders in this colour:
+    /// v1.68 rebuilt the hero after SenPlayer's home (his three
+    /// reference screenshots, 2026-11-28): the POSTER itself fills
+    /// the whole hero frame - aspectFill, top-anchored so the
+    /// subject (faces live in the upper half) is never cropped -
+    /// and the cell's melt gradient dissolves its bottom into the
+    /// page background. No fit-to-width band, no flat tint field,
+    /// no top fade line. The vertical crop offset is computed from
+    /// the loaded image's real aspect: scaledToFill centres its
+    /// overflow, so shifting down by half the overflow re-anchors
+    /// the crop to the top; landscape art has no vertical overflow
+    /// and stays centred.
     let tint: Color?
     let onBlank: (String) -> Void
 
     @State private var uiImage: UIImage?
+
+    /// Half the vertical overflow of the aspectFill draw, used to
+    /// top-anchor the crop. The hero always spans the full screen
+    /// width and is 500pt tall (heroCell's frame).
+    private var topCropOffset: CGFloat {
+        guard let uiImage, uiImage.size.height > 0 else { return 0 }
+        let cellWidth = UIScreen.main.bounds.width
+        let cellHeight: CGFloat = 500
+        let aspect = uiImage.size.width / uiImage.size.height
+        let drawnHeight = max(cellHeight, cellWidth / aspect)
+        return max(0, (drawnHeight - cellHeight) / 2)
+    }
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -139,52 +124,17 @@ private struct HeroArtwork: View {
             if let uiImage {
                 Image(uiImage: uiImage)
                     .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    // The mask MUST come before the padding: after
-                    // .padding(.top, 56) the gradient's locations
-                    // are fractions of the padded height, and the
-                    // top fade landed entirely inside the padding
-                    // (the bug that kept the line alive to v1.44).
-                    .mask {
-                        LinearGradient(stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.03),
-                            .init(color: .black, location: 0.81),
-                            .init(color: .clear, location: 1.0),
-                        ], startPoint: .top, endPoint: .bottom)
-                    }
-                    // Dropped 56pt from the top (his call, v1.37):
-                    // top-pinned, the band ended high above the
-                    // bottom-anchored title block with a washed-out
-                    // gap between them; now its faded bottom edge
-                    // lands just above the logo/title.
-                    .padding(.top, 56)
-                // The line, blurred (v1.43, range tuned in
-                // v1.45-v1.48): a registered copy of the same
-                // band, blurred, living only in the top 3% - full
-                // strength just below the edge, gone by 3% down.
-                // Together with the sharp band's fade-in over the
-                // same stretch, the top edge dissolves instead of
-                // ending in a line.
-                Image(uiImage: uiImage)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(maxWidth: .infinity)
-                    .blur(radius: 12)
-                    .mask {
-                        LinearGradient(stops: [
-                            .init(color: .clear, location: 0),
-                            .init(color: .black, location: 0.012),
-                            .init(color: .black, location: 0.018),
-                            .init(color: .clear, location: 0.03),
-                        ], startPoint: .top, endPoint: .bottom)
-                    }
-                    .padding(.top, 56)
+                    .scaledToFill()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: topCropOffset)
+                    .clipped()
             }
         }
         .task(id: item.Id) {
-            guard let url = client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720) else {
+            let url = (item.ImageTags?["Primary"] != nil
+                ? client.imageURL(itemID: item.Id, kind: "Primary", maxHeight: 1000)
+                : nil) ?? client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720)
+            guard let url else {
                 onBlank(item.Id)
                 return
             }
@@ -513,6 +463,7 @@ struct HomeView: View {
                         Circle()
                             .fill(Color.white.opacity(index == heroIndex ? 0.95 : 0.4))
                             .frame(width: 7, height: 7)
+                            .shadow(color: .black.opacity(0.22), radius: 2, y: 1)
                     }
                 }
                 .animation(.easeInOut(duration: 0.25), value: heroIndex)
@@ -530,30 +481,35 @@ struct HomeView: View {
     }
 
     private func heroCell(_ item: EmbyItem, client: EmbyClient) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        // SenPlayer layout (his 2026-11-28 reference screenshots):
+        // everything centred, sitting on the artwork's melt into
+        // the page background, in label colours - logo or title,
+        // year · genres, two lines of overview, the ratings strip;
+        // the page dots hang below the strip.
+        VStack(alignment: .center, spacing: 10) {
                 if item.ImageTags?["Logo"] != nil {
                     SharedImage(url: client.imageURL(itemID: item.Id, kind: "Logo"), fill: false)
-                        .frame(maxWidth: 280, maxHeight: 84, alignment: .leading)
+                        .frame(maxWidth: 280, maxHeight: 84, alignment: .center)
                 } else {
                     Text(item.Name)
                         .font(.system(size: 27, weight: .bold))
-                        .foregroundStyle(.white)
-                        .multilineTextAlignment(.leading)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.center)
                         .lineLimit(2)
                 }
                 heroMetaLine(item)
                 if let overview = item.Overview, !overview.isEmpty {
                     Text(overview)
                         .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.82))
+                        .foregroundStyle(.secondary)
                         .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity, alignment: .center)
                 }
                 heroRatingsRow(item)
             }
         .padding(.horizontal, 30)
-        .padding(.bottom, 34)
+        .padding(.bottom, 48)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
         .background {
             ZStack {
@@ -562,20 +518,18 @@ struct HomeView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .clipped()
-                let meltTint = heroTints[item.Id] ?? Color(.systemBackground)
                 LinearGradient(stops: [
                     .init(color: .clear, location: 0),
-                    .init(color: .clear, location: 0.30),
-                    .init(color: meltTint.opacity(0.48), location: 0.60),
-                    .init(color: meltTint.opacity(0.78), location: 0.86),
-                    .init(color: meltTint, location: 1.0),
+                    .init(color: .clear, location: 0.34),
+                    .init(color: Color(.systemBackground).opacity(0.55), location: 0.58),
+                    .init(color: Color(.systemBackground).opacity(0.88), location: 0.78),
+                    .init(color: Color(.systemBackground), location: 0.92),
                 ], startPoint: .top, endPoint: .bottom)
             }
             .mask {
                 LinearGradient(stops: [
                     .init(color: .black, location: 0),
-                    .init(color: .black, location: 0.62),
-                    .init(color: .clear, location: 0.98),
+                    .init(color: .black, location: 0.94),
                     .init(color: .clear, location: 1.0),
                 ], startPoint: .top, endPoint: .bottom)
             }
@@ -584,21 +538,24 @@ struct HomeView: View {
         .clipped()
     }
 
-    /// The hero meta line (SenPlayer layout): year · type · genres.
-    /// Ratings live on their own row (heroRatingsRow).
+    /// The hero meta line (SenPlayer layout): year · genres,
+    /// centred, secondary colour. Ratings live on their own row
+    /// (heroRatingsRow).
     private func heroMetaLine(_ item: EmbyItem) -> some View {
         let productionYear = item.ProductionYear ?? heroMeta[item.Id]?.year ?? nil
         return HStack(spacing: 7) {
             if let year = productionYear {
                 Text(String(year))
+                if let genres = item.Genres, !genres.isEmpty {
+                    Text("·")
+                }
             }
-            Text(item.type == "Series" ? "剧集" : "电影")
             if let genres = item.Genres, !genres.isEmpty {
                 Text(genres.prefix(2).joined(separator: " / "))
             }
         }
         .font(.subheadline.weight(.medium))
-        .foregroundStyle(.white.opacity(0.82))
+        .foregroundStyle(.secondary)
         .lineLimit(1)
     }
 
