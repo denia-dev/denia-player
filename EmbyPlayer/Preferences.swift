@@ -95,6 +95,11 @@ enum Prefs {
     static var dvP7Convert: Bool {
         d.object(forKey: "prefs.dvP7Convert") == nil ? true : d.bool(forKey: "prefs.dvP7Convert")
     }
+    /// SDR → HDR via mpv inverse tone mapping (v1.67, at his
+    /// request). Applied as a player option at creation; whether the
+    /// MPVUI output path carries it to the panel is device-verified
+    /// only — he judges the picture.
+    static var sdrToHdr: Bool { d.bool(forKey: "prefs.sdrToHdr") }
 
     // Audio / subtitle entry preferences (defaults reproduce the
     // behaviour builds 4-27 shipped with)
@@ -255,9 +260,15 @@ private var prefsDivider: some View {
     Divider().padding(.leading, 20)
 }
 
-private func prefsLinkRow(_ title: String, route: Route) -> some View {
+private func prefsLinkRow(_ title: String, icon: String, color: Color, route: Route) -> some View {
     NavigationLink(value: route) {
-        HStack {
+        HStack(spacing: 12) {
+            RoundedRectangle(cornerRadius: 9)
+                .fill(LinearGradient(colors: [color, color.opacity(0.68)],
+                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: 30, height: 30)
+                .overlay(Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white))
+                .shadow(color: color.opacity(0.28), radius: 3, x: 0, y: 1.5)
             Text(title)
             Spacer()
             Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
@@ -322,9 +333,9 @@ struct InterfacePrefsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
-                    prefsLinkRow("OSD 信息显示", route: .osdPrefs)
-                    prefsDivider
-                    prefsLinkRow("自定义播放器按钮", route: .buttonPrefs)
+                    prefsLinkRow("OSD 信息显示", icon: "text.bubble.fill", color: .purple, route: .osdPrefs)
+                    Divider().padding(.leading, 62)
+                    prefsLinkRow("自定义播放器按钮", icon: "button.programmable", color: .indigo, route: .buttonPrefs)
                 }
 
                 prefsSectionLabel("亮度").padding(.top, 8)
@@ -569,6 +580,7 @@ struct VideoPrefsView: View {
     @AppStorage("prefs.decodeMode") private var decodeMode = "hardware"
     @AppStorage("prefs.softwareThreads") private var threads = 8
     @AppStorage("prefs.dvP7Convert") private var p7Convert = true
+    @AppStorage("prefs.sdrToHdr") private var sdrToHdr = false
     @AppStorage("prefs.cacheSeconds") private var cacheSeconds = 120
 
     var body: some View {
@@ -608,6 +620,14 @@ struct VideoPrefsView: View {
                     prefsToggleRow("杜比 P7 转杜比 P8.1", isOn: $p7Convert)
                 }
                 Text("开启后，杜比视界 Profile 7 片源会转成 P8.1 兼容播放（与 SenPlayer 同名开关行为一致）；关闭则按严格模式处理，个别片源可能无法播放。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+
+                prefsCard {
+                    prefsToggleRow("SDR 转 HDR", isOn: $sdrToHdr)
+                }
+                Text("把普通 SDR 画面做逆色调映射、扩展到 HDR 亮度范围（SenPlayer 同名功能的做法）；下次打开视频时生效，原生 HDR / 杜比视界片源不受影响。效果取决于片源和屏幕，觉得画面过曝或发白就关掉。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)

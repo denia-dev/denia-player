@@ -649,6 +649,12 @@ struct MPVPlayerScreen: View {
             "sub-border-style": subBorderValue,
             "sub-margin-y": "\(Prefs.subMarginY)",
         ]
+        if Prefs.sdrToHdr {
+            // Inverse tone mapping expands SDR into the HDR range
+            // (SenPlayer's SDR 转 HDR). Native HDR/DV sources are
+            // unaffected - mpv only inverse-maps SDR inputs.
+            options["inverse-tone-mapping"] = "yes"
+        }
         // ASS subtitles carry their own colors and borders, and mpv's
         // default override mode keeps them - which would make the
         // color/border settings silently do nothing on exactly the
@@ -2043,6 +2049,36 @@ struct MPVPlayerScreen: View {
                     Section("在线字幕") {
                         Button("搜索在线字幕") { showOnlineSubs = true }
                     }
+                    Section("字幕样式（立即生效）") {
+                        Menu("字幕大小") {
+                            ForEach([(0.8, "较小"), (1.0, "标准"), (1.25, "较大"), (1.5, "特大")], id: \.0) { value, label in
+                                Button { applySubScale(value) } label: {
+                                    Label(label, systemImage: Prefs.subScale == value ? "checkmark" : "")
+                                }
+                            }
+                        }
+                        Menu("字幕延迟") {
+                            ForEach([(2.0, "延后 2 秒"), (1.0, "延后 1 秒"), (0.5, "延后 0.5 秒"), (0.0, "无延迟"), (-0.5, "提前 0.5 秒"), (-1.0, "提前 1 秒"), (-2.0, "提前 2 秒")], id: \.0) { value, label in
+                                Button { applySubDelay(value) } label: {
+                                    Label(label, systemImage: Prefs.subDelay == value ? "checkmark" : "")
+                                }
+                            }
+                        }
+                        Menu("字幕颜色") {
+                            ForEach([("white", "白色"), ("yellow", "黄色"), ("cyan", "青色"), ("green", "绿色")], id: \.0) { value, label in
+                                Button { applySubColor(value) } label: {
+                                    Label(label, systemImage: Prefs.subColorName == value ? "checkmark" : "")
+                                }
+                            }
+                        }
+                        Menu("字幕位置") {
+                            ForEach([(8, "紧贴底部"), (20, "标准"), (36, "抬高")], id: \.0) { value, label in
+                                Button { applySubMarginY(value) } label: {
+                                    Label(label, systemImage: Prefs.subMarginY == value ? "checkmark" : "")
+                                }
+                            }
+                        }
+                    }
                 } label: { circleLabel("captions.bubble") }
             }
             Menu {
@@ -2128,6 +2164,38 @@ struct MPVPlayerScreen: View {
     private func subtitleStreamIndex(ordinal: Int) -> Int? {
         let streams = (currentSource?.MediaStreams ?? []).filter { $0.type == "Subtitle" }.sorted { $0.Index < $1.Index }
         return ordinal < streams.count ? streams[ordinal].Index : nil
+    }
+
+    // Live subtitle styling from the player menu (v1.67, SenPlayer
+    // parity): apply to the running mpv instance immediately and
+    // persist to the same keys the settings page and makePlayer use,
+    // so the choice survives into the next session.
+    private func applySubScale(_ value: Double) {
+        UserDefaults.standard.set(value, forKey: "prefs.subScale")
+        player.setProperty("sub-scale", to: String(format: "%.2f", value))
+    }
+
+    private func applySubDelay(_ value: Double) {
+        UserDefaults.standard.set(value, forKey: "prefs.subDelay")
+        player.setProperty("sub-delay", to: String(format: "%.1f", value))
+    }
+
+    private func applySubColor(_ name: String) {
+        UserDefaults.standard.set(name, forKey: "prefs.subColor")
+        let hex: String
+        switch name {
+        case "yellow": hex = "#FFFF00"
+        case "cyan": hex = "#00FFFF"
+        case "green": hex = "#7CFC00"
+        default: hex = "#FFFFFF"
+        }
+        player.setProperty("sub-color", to: hex)
+        if name != "white" { player.setProperty("sub-ass-override", to: "force") }
+    }
+
+    private func applySubMarginY(_ value: Int) {
+        UserDefaults.standard.set(value, forKey: "prefs.subMarginY")
+        player.setProperty("sub-margin-y", to: "\(value)")
     }
 
     private func rememberSubtitlePick(streamIndex: Int?) {

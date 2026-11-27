@@ -76,6 +76,21 @@ struct PosterCell: View {
                 ItemImage(item: item, client: client)
                     .modifier(PosterFrame(width: width))
                     .clipShape(RoundedRectangle(cornerRadius: 12))
+                if let rating = item.CommunityRating, rating > 0 {
+                    HStack(spacing: 2) {
+                        Image(systemName: "star.fill").font(.system(size: 8))
+                            .foregroundStyle(.yellow)
+                        Text(String(format: "%.1f", rating))
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white)
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 3)
+                    .background(Color.black.opacity(0.55), in: Capsule())
+                    .padding(6)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
+                    .allowsHitTesting(false)
+                }
                 if item.type == "Series", let unplayed = item.UserData?.UnplayedItemCount, unplayed > 0 {
                     Text("\(unplayed) 集未看")
                         .font(.caption2.weight(.semibold))
