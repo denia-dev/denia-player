@@ -253,6 +253,11 @@ struct HomeView: View {
     @State private var resume: [EmbyItem] = []
     @State private var latest: [EmbyItem] = []
     @State private var heroIndex = 0
+    /// Live x-offset of the hero pager (v1.71): the page ambient
+    /// blends between neighbouring heroes by this offset, so the
+    /// tone under the carousel tracks the swipe itself instead of
+    /// crossfading after the page settles.
+    @State private var heroScrollX: CGFloat = 0
     /// Last time the user touched the hero carousel (drag or tap).
     /// Auto-advance stays quiet for a while after any interaction:
     /// a tap landing while the paging scroll is animating to the
@@ -324,7 +329,28 @@ struct HomeView: View {
     /// under the art). One helper so the cell melt and the page
     /// ambient can never drift apart again.
     private func heroMeltColor(_ tint: Color?) -> Color {
-        (tint ?? Color(.systemBackground)).mix(with: Color(.systemBackground), by: 0.55)
+        // v1.71: lightened less (0.55 -> 0.35) — at 0.55 the wash
+        // read as tinted white and the poster felt pasted onto an
+        // unrelated page (his "渲染力度不够大").
+        (tint ?? Color(.systemBackground)).mix(with: Color(.systemBackground), by: 0.35)
+    }
+
+    /// The ambient colour right now: the melt colour of whichever
+    /// hero the pager is over, blended toward the next hero by
+    /// the fractional scroll progress. At rest it is exactly the
+    /// settled page's melt colour (so the cell seam stays
+    /// invisible); mid-swipe the page below already carries the
+    /// incoming poster's tone.
+    private var ambientMeltColor: Color {
+        guard !heroItems.isEmpty else { return Color(.systemBackground) }
+        let pageWidth = UIScreen.main.bounds.width
+        guard pageWidth > 0 else { return heroMeltColor(currentHeroTint) }
+        let progress = min(max(heroScrollX / pageWidth, 0), CGFloat(heroItems.count - 1))
+        let lower = Int(progress.rounded(.down))
+        let frac = progress - CGFloat(lower)
+        let base = heroMeltColor(heroTints[heroItems[lower].Id])
+        guard frac > 0.001, lower + 1 < heroItems.count else { return base }
+        return base.mix(with: heroMeltColor(heroTints[heroItems[lower + 1].Id]), by: Double(frac))
     }
 
     var body: some View {
@@ -394,17 +420,11 @@ struct HomeView: View {
 
     @ViewBuilder
     private func ambientLayer(scale: CGFloat) -> some View {
-        ZStack {
-            if let item = currentHeroItem {
-                heroMeltColor(currentHeroTint)
-                    .id(item.Id)
-                    .transition(.opacity)
-            } else {
-                Color(.systemBackground)
-            }
-        }
-        .animation(.easeInOut(duration: 0.55), value: currentHeroItem?.Id)
-        .animation(.easeInOut(duration: 0.55), value: currentHeroTint != nil)
+        // Driven by the pager's scroll offset (ambientMeltColor),
+        // NOT by an on-settle crossfade: the old 0.55s animation
+        // keyed to the settled index left the page below a beat
+        // behind every swipe and then jumped (v1.71, his video).
+        ambientMeltColor
     }
 
     private var homeAmbientScrolling: some View {
@@ -457,6 +477,11 @@ struct HomeView: View {
                     if phase == .tracking || phase == .interacting || phase == .decelerating {
                         lastHeroInteraction = .now
                     }
+                }
+                .onScrollGeometryChange(for: CGFloat.self) { geometry in
+                    geometry.contentOffset.x
+                } action: { _, newX in
+                    if abs(newX - heroScrollX) > 0.5 { heroScrollX = newX }
                 }
                 .frame(height: 500)
 

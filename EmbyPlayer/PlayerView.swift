@@ -1892,6 +1892,10 @@ struct MPVPlayerScreen: View {
                         Spacer()
                         circleMenus
                     }
+                    // Fixed height: the menus anchor to this row, so
+                    // its height must never drift with fractional
+                    // layout rounding of the rows around it (v1.71).
+                    .frame(height: 38)
                     .padding(.horizontal, 14)
 
                     VStack(spacing: 6) {
@@ -1913,7 +1917,14 @@ struct MPVPlayerScreen: View {
                                 }
                             }
                             .tint(.white)
-                            .animation(scrubbing ? nil : .linear(duration: 0.35), value: player.position.secondsValue)
+                            // No repeating animation on the slider
+                            // (v1.71): the per-second position tick
+                            // restarted a 0.35s animation forever,
+                            // and the layout passes it drove made a
+                            // presented menu's anchor row wobble by
+                            // a point at the same rhythm — his video
+                            // shows the 字幕位置 card bouncing ~1pt
+                            // once a second while open.
                             Text(Prefs.timeMode == .remaining
                                  ? "-" + formatDuration(max(player.duration.secondsValue - (scrubbing ? scrubValue : player.position.secondsValue), 0))
                                  : formatDuration(player.duration.secondsValue))
