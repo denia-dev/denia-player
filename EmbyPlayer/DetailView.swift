@@ -41,6 +41,13 @@ struct DetailView: View {
     /// push transition has settled - see heroBackdrop.
     @State private var showFullArt = false
 
+    /// Bumped when the player cover dismisses: the page then
+    /// re-lays out from scratch at the restored portrait geometry.
+    /// Without it the content kept the player's landscape-era
+    /// layout and the overview came back compressed/truncated
+    /// (his 2026-11-27 report, same look as the v1.51 truncation).
+    @State private var pageRefreshID = 0
+
     /// What the hero melts into: the page tint once known, the
     /// system background before that.
     private var meltColor: Color { tint ?? Color(.systemBackground) }
@@ -82,8 +89,9 @@ struct DetailView: View {
                 .offset(y: entered ? 0 : 18)
                 .animation(.spring(response: 0.6, dampingFraction: 0.9).delay(0.12), value: entered)
             }
-            .containerRelativeFrame(.horizontal)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .id(pageRefreshID)
         .ignoresSafeArea(edges: .top)
         .background {
             // An opaque base from the very first frame: without it
@@ -137,7 +145,7 @@ struct DetailView: View {
             episodeRange = 0
             Task { if let seasonID { await loadEpisodes(seasonID) } }
         }
-        .fullScreenCover(item: $playRequest) { request in
+        .fullScreenCover(item: $playRequest, onDismiss: { pageRefreshID += 1 }) { request in
             PlayerView(item: request.item, startSeconds: request.startSeconds) { next in
                 playRequest = PlayRequest(item: next, startSeconds: 0)
             }

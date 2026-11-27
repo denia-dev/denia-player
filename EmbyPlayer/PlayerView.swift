@@ -1207,7 +1207,18 @@ struct MPVPlayerScreen: View {
         let scroll = Prefs.danmakuScrollSeconds
         danmakuFontSize = fontSize
         danmakuScrollSeconds = scroll
-        danmakuPlaced = DanmakuLayout.build(comments: comments, fontSize: fontSize, scrollDuration: scroll)
+        // Display area -> how many scroll rows the layout may use
+        // (virtual 720-high space). His favourite is a single row
+        // at the top, which is also the default.
+        let rowHeight = fontSize * 1.25
+        let rows: Int
+        switch Prefs.danmakuArea {
+        case "quarter": rows = max(1, Int(720 * 0.25 / rowHeight))
+        case "half": rows = max(1, Int(720 * 0.5 / rowHeight))
+        case "full": rows = max(1, Int(720 * 0.85 / rowHeight))
+        default: rows = 1
+        }
+        danmakuPlaced = DanmakuLayout.build(comments: comments, fontSize: fontSize, scrollDuration: scroll, scrollRows: rows)
         danmakuOn = true
         return true
     }

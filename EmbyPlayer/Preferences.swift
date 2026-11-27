@@ -64,6 +64,11 @@ enum Prefs {
     static var danmakuScrollSeconds: Double {
         d.object(forKey: "prefs.danmakuScrollSeconds") == nil ? 8 : d.double(forKey: "prefs.danmakuScrollSeconds")
     }
+    /// Which part of the screen scrolling danmaku may occupy:
+    /// oneRow (his favourite, 2026-11-27), quarter, half, full.
+    static var danmakuArea: String {
+        d.string(forKey: "prefs.danmakuArea") ?? "oneRow"
+    }
     /// Seek distance of the centre-cluster and double-tap shortcuts.
     static var seekStepSeconds: Double {
         d.object(forKey: "prefs.seekStepSeconds") == nil ? 15 : d.double(forKey: "prefs.seekStepSeconds")
@@ -691,6 +696,7 @@ struct SubtitlePrefsView: View {
     @AppStorage("prefs.danmakuEnabled") private var danmakuEnabled = true
     @AppStorage("prefs.danmakuFontSize") private var danmakuFontSize = 36
     @AppStorage("prefs.danmakuScrollSeconds") private var danmakuScrollSeconds = 8.0
+    @AppStorage("prefs.danmakuArea") private var danmakuArea = "oneRow"
     @State private var assrtToken = ""
     @State private var osApiKey = ""
 
@@ -770,8 +776,15 @@ struct SubtitlePrefsView: View {
                         Button("标准") { danmakuScrollSeconds = 8.0 }
                         Button("快") { danmakuScrollSeconds = 6.5 }
                     }
+                    prefsDivider
+                    prefsMenuRow("显示区域", value: danmakuAreaLabel) {
+                        Button("仅顶部一行") { danmakuArea = "oneRow" }
+                        Button("顶部 1/4") { danmakuArea = "quarter" }
+                        Button("顶部半屏") { danmakuArea = "half" }
+                        Button("全屏") { danmakuArea = "full" }
+                    }
                 }
-                Text("弹幕来自自建的聚合弹幕服务、按片名自动匹配，占用副字幕轨道，与双字幕不能同时使用；仅 mpv 播放器支持。字号与速度改了之后，下次打开视频生效。")
+                Text("弹幕来自自建的聚合弹幕服务、按片名自动匹配，由应用直接绘制，可与双字幕同时使用；仅 mpv 播放器支持。字号、速度与区域改了之后，下次打开视频生效。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
@@ -909,6 +922,15 @@ struct SubtitlePrefsView: View {
         case 10.0: return "慢"
         case 6.5: return "快"
         default: return "标准"
+        }
+    }
+
+    private var danmakuAreaLabel: String {
+        switch danmakuArea {
+        case "quarter": return "顶部 1/4"
+        case "half": return "顶部半屏"
+        case "full": return "全屏"
+        default: return "仅顶部一行"
         }
     }
 }

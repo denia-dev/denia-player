@@ -456,7 +456,7 @@ enum DanmakuLayout {
     static let playY = 720.0
     static let fixedDuration = 4.5
 
-    static func build(comments: [DanmakuComment], fontSize: Double, scrollDuration: Double) -> [DanmakuPlaced] {
+    static func build(comments: [DanmakuComment], fontSize: Double, scrollDuration: Double, scrollRows: Int) -> [DanmakuPlaced] {
         var list = comments.sorted { $0.time < $1.time }
         let cap = 3000
         if list.count > cap {
@@ -471,9 +471,11 @@ enum DanmakuLayout {
             list = sampled
         }
 
-        let rowHeight = fontSize * 1.25
-        let scrollRows = max(1, Int(playY * 0.85 / rowHeight))
-        let fixedRows = 6
+        let scrollRows = max(1, scrollRows)
+        // Fixed comments stay inside the chosen area as well: the
+        // top stack shrinks with it, and bottom-fixed comments get
+        // the same cap counted from the bottom edge.
+        let fixedRows = min(6, scrollRows)
         var lastScroll = Array(repeating: (start: -1_000_000.0, width: 0.0), count: scrollRows)
         var lastTop = Array(repeating: -1_000_000.0, count: fixedRows)
         var lastBottom = Array(repeating: -1_000_000.0, count: fixedRows)
