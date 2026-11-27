@@ -428,6 +428,22 @@ struct EmbyClient {
         return Array(merged.prefix(120))
     }
 
+    /// Rehydrates a persisted hero pool (HomeView's daily pool
+    /// store) with a single Ids query instead of the six sampling
+    /// queries above, returned in the stored order.
+    func items(byIDs ids: [String]) async -> [EmbyItem] {
+        guard !ids.isEmpty else { return [] }
+        let query = [
+            URLQueryItem(name: "Ids", value: ids.joined(separator: ",")),
+            URLQueryItem(name: "Fields", value: "Overview,Genres,ProviderIds,Tags"),
+            URLQueryItem(name: "EnableUserData", value: "true"),
+        ]
+        let response: EmbyItemsResponse? = try? await send(makeRequest(path: "/Users/\(server.userID)/Items", query: query))
+        guard let items = response?.Items else { return [] }
+        let byID = Dictionary(items.map { ($0.Id, $0) }, uniquingKeysWith: { first, _ in first })
+        return ids.compactMap { byID[$0] }
+    }
+
     func favoriteItems() async throws -> [EmbyItem] {
         let query = [
             URLQueryItem(name: "Filters", value: "IsFavorite"),

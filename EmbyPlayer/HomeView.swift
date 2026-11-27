@@ -211,6 +211,39 @@ private struct HeroArtwork: View {
     }
 }
 
+/// The hero pool used to be re-sampled on every cold load, and
+/// its random slice made every launch a different batch - so the
+/// carousel's 720p backdrops were never in the disk cache and had
+/// to come from the server every time, while the library posters
+/// (same items every day) painted instantly (his 2026-11-27
+/// report: 只有轮播图慢）. The pool now persists per server for
+/// one calendar day: same-day launches restore the same batch by
+/// IDs, and only a new day samples a fresh batch.
+private enum HeroPoolStore {
+    struct Saved: Codable { let day: String; let ids: [String] }
+
+    static var today: String {
+        let formatter = DateFormatter()
+        formatter.calendar = Calendar.current
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.string(from: Date())
+    }
+
+    static func load(serverID: String) -> Saved? {
+        guard let data = UserDefaults.standard.data(forKey: "heroPool.\(serverID)"),
+              let saved = try? JSONDecoder().decode(Saved.self, from: data) else { return nil }
+        return saved
+    }
+
+    static func save(serverID: String, ids: [String]) {
+        let saved = Saved(day: today, ids: ids)
+        if let data = try? JSONEncoder().encode(saved) {
+            UserDefaults.standard.set(data, forKey: "heroPool.\(serverID)")
+        }
+    }
+}
+
 struct HomeView: View {
     @Environment(AppStore.self) private var store
     @Environment(ShellState.self) private var shell
@@ -591,7 +624,7 @@ struct HomeView: View {
         do {
             async let resumeFetch = client.resumeItems()
             async let latestFetch = client.latestItems()
-            async let poolFetch = client.heroPool()
+            async let poolFetch = fetchDailyPool(client: client)
             resume = try await resumeFetch
             latest = await latestFetch
             heroPool = await poolFetch
@@ -624,6 +657,23 @@ struct HomeView: View {
         } catch {
             errorText = error.localizedDescription
         }
+    }
+
+    /// Today's hero pool: restore the persisted batch by IDs when
+    /// one was saved today (their backdrops are already in the disk
+    /// cache); otherwise sample a fresh batch and persist it for
+    /// the rest of the day.
+    private func fetchDailyPool(client: EmbyClient) async -> [EmbyItem] {
+        let serverKey = store.activeServer?.id ?? ""
+        if let saved = HeroPoolStore.load(serverID: serverKey), saved.day == HeroPoolStore.today {
+            let restored = await client.items(byIDs: saved.ids)
+            if !restored.isEmpty { return restored }
+        }
+        let fresh = await client.heroPool()
+        if !fresh.isEmpty {
+            HeroPoolStore.save(serverID: serverKey, ids: fresh.map(\.Id))
+        }
+        return fresh
     }
 
     /// Fills heroMeta for the current hero items (best-effort,
