@@ -305,7 +305,7 @@ struct LibrariesTabView: View {
 /// a missing poster never leaves a blank hole in the rail. All data
 /// comes from CatalogCache, so a section recreated by the lazy stack
 /// renders its content immediately instead of refetching.
-private struct LibraryRailSection: View {
+struct LibraryRailSection: View {
     @Environment(AppStore.self) private var store
     @State private var catalog = CatalogCache.shared
     let library: EmbyItem

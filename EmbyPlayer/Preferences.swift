@@ -234,9 +234,8 @@ enum Prefs {
     static var showHomeLibraries: Bool {
         d.object(forKey: "prefs.showHomeLibraries") == nil ? true : d.bool(forKey: "prefs.showHomeLibraries")
     }
-    static var showHomeLatest: Bool {
-        d.object(forKey: "prefs.showHomeLatest") == nil ? true : d.bool(forKey: "prefs.showHomeLatest")
-    }
+    // prefs.showHomeLatest was removed in v1.73 with the section
+    // itself (his call: 最新添加删掉).
     /// 0-4 = that tab; -1 = whichever tab was used last.
     static var startTab: Int {
         d.object(forKey: "prefs.startTab") == nil ? 0 : d.integer(forKey: "prefs.startTab")
@@ -1012,7 +1011,6 @@ struct AppPrefsView: View {
 struct ModulePrefsView: View {
     @AppStorage("prefs.showHomeResume") private var showResume = true
     @AppStorage("prefs.showHomeLibraries") private var showLibraries = true
-    @AppStorage("prefs.showHomeLatest") private var showLatest = true
 
     var body: some View {
         ScrollView {
@@ -1021,8 +1019,6 @@ struct ModulePrefsView: View {
                     prefsToggleRow("继续观看", isOn: $showResume)
                     prefsDivider
                     prefsToggleRow("我的媒体库", isOn: $showLibraries)
-                    prefsDivider
-                    prefsToggleRow("最新添加", isOn: $showLatest)
                 }
                 Text("控制首页各区块的显示；顶部推荐轮播不受影响。")
                     .font(.footnote)

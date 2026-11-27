@@ -251,7 +251,8 @@ struct HomeView: View {
     @Environment(\.zoomNS) private var zoomNS
 
     @State private var resume: [EmbyItem] = []
-    @State private var latest: [EmbyItem] = []
+    @State private var catalog = CatalogCache.shared
+    private var libraries: [EmbyItem] { catalog.libraries }
     @State private var heroIndex = 0
     /// Live x-offset of the hero pager (v1.71): the page ambient
     /// blends between neighbouring heroes by this offset, so the
@@ -392,18 +393,17 @@ struct HomeView: View {
                         .padding(.horizontal)
                     }
                 }
-                if Prefs.showHomeLatest, !latest.isEmpty, let client = store.client() {
-                    sectionHeader("最新添加", count: nil)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(alignment: .top, spacing: 12) {
-                            ForEach(latest) { item in
-                                NavigationLink(value: Route.detail(item)) {
-                                    PosterCell(item: item, client: client, width: 104)
-                                }
-                                .buttonStyle(.plain)
-                            }
-                        }
-                        .padding(.horizontal)
+                // The library rails live here now (v1.73, his call:
+                // 资源库搬到主页, 最新添加删掉) — every library in
+                // order, straight down the page. Same section view
+                // and the same CatalogCache the libraries tab uses,
+                // so both places render identical rails from one
+                // data source. The existing 我的媒体库 module toggle
+                // (previously unwired) gates the whole block.
+                if Prefs.showHomeLibraries {
+                    ForEach(Array(libraries.enumerated()), id: \.offset) { _, library in
+                        LibraryRailSection(library: library)
+                            .padding(.horizontal)
                     }
                 }
             }
@@ -672,6 +672,10 @@ struct HomeView: View {
 
     private func load() async {
         guard let client = store.client() else { return }
+        // The library rails render from CatalogCache; keep it
+        // pointed at the active server and warming (v1.73).
+        catalog.syncKey(store.activeServer?.id)
+        Task { await catalog.ensureLibraries(client: client) }
         // Instant paint: restore the persisted pool (whatever day it
         // is from) before any network work, so the carousel renders
         // with the first frames and its backdrops come straight from
@@ -701,10 +705,8 @@ struct HomeView: View {
         errorText = nil
         do {
             async let resumeFetch = client.resumeItems()
-            async let latestFetch = client.latestItems()
             async let poolFetch = fetchPoolIfNeeded(client: client, needed: needsPool)
             resume = try await resumeFetch
-            latest = await latestFetch
             if let fetched = await poolFetch { heroPool = fetched }
             // Prefill every hero tint we have persisted, so the
             // page opens already coloured instead of flashing
