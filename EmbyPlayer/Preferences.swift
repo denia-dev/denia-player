@@ -275,6 +275,20 @@ private func prefsToggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
         .frame(minHeight: 54)
 }
 
+/// One option inside a prefsMenuRow menu, with a checkmark on
+/// the currently selected value (his 2026-11-27 report: the
+/// menus gave no indication of which option was active).
+@ViewBuilder
+private func optButton(_ title: String, _ selected: Bool, action: @escaping () -> Void) -> some View {
+    Button(action: action) {
+        if selected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
+        }
+    }
+}
+
 private func prefsMenuRow<Content: View>(_ title: String, value: String, @ViewBuilder content: () -> Content) -> some View {
     Menu {
         content()
@@ -321,30 +335,30 @@ struct InterfacePrefsView: View {
                 prefsSectionLabel("控制栏").padding(.top, 8)
                 prefsCard {
                     prefsMenuRow("进度条时间模式", value: timeMode == "remaining" ? "剩余时间" : "总时长") {
-                        Button("总时长") { timeMode = "total" }
-                        Button("剩余时间") { timeMode = "remaining" }
+                        optButton("总时长", timeMode == "total") { timeMode = "total" }
+                        optButton("剩余时间", timeMode == "remaining") { timeMode = "remaining" }
                     }
                     prefsDivider
                     prefsMenuRow("自动隐藏", value: hideSeconds == 0 ? "永不" : "\(Int(hideSeconds)) 秒") {
-                        Button("3 秒") { hideSeconds = 3 }
-                        Button("5 秒") { hideSeconds = 5 }
-                        Button("8 秒") { hideSeconds = 8 }
-                        Button("永不") { hideSeconds = 0 }
+                        optButton("3 秒", hideSeconds == 3) { hideSeconds = 3 }
+                        optButton("5 秒", hideSeconds == 5) { hideSeconds = 5 }
+                        optButton("8 秒", hideSeconds == 8) { hideSeconds = 8 }
+                        optButton("永不", hideSeconds == 0) { hideSeconds = 0 }
                     }
                 }
 
                 prefsSectionLabel("屏幕方向").padding(.top, 8)
                 prefsCard {
                     prefsMenuRow("进入播放器屏幕方向", value: orientationLabel) {
-                        Button("强制横屏") { orientation = "landscape" }
-                        Button("跟随设备") { orientation = "auto" }
-                        Button("强制竖屏") { orientation = "portrait" }
+                        optButton("强制横屏", orientation == "landscape") { orientation = "landscape" }
+                        optButton("跟随设备", orientation == "auto") { orientation = "auto" }
+                        optButton("强制竖屏", orientation == "portrait") { orientation = "portrait" }
                     }
                     prefsDivider
                     prefsMenuRow("设备横屏方向", value: sideLabel) {
-                        Button("自动") { landscapeSide = "auto" }
-                        Button("左横屏") { landscapeSide = "left" }
-                        Button("右横屏") { landscapeSide = "right" }
+                        optButton("自动", landscapeSide == "auto") { landscapeSide = "auto" }
+                        optButton("左横屏", landscapeSide == "left") { landscapeSide = "left" }
+                        optButton("右横屏", landscapeSide == "right") { landscapeSide = "right" }
                     }
                 }
 
@@ -460,25 +474,25 @@ struct PlaybackPrefsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
                     prefsMenuRow("快进 / 快退秒数", value: "\(Int(seekStep)) 秒") {
-                        Button("10 秒") { seekStep = 10 }
-                        Button("15 秒") { seekStep = 15 }
-                        Button("30 秒") { seekStep = 30 }
+                        optButton("10 秒", seekStep == 10) { seekStep = 10 }
+                        optButton("15 秒", seekStep == 15) { seekStep = 15 }
+                        optButton("30 秒", seekStep == 30) { seekStep = 30 }
                     }
                     prefsDivider
                     prefsMenuRow("默认播放速度", value: rateLabel) {
-                        Button("0.75×") { defaultRate = 0.75 }
-                        Button("1×") { defaultRate = 1.0 }
-                        Button("1.25×") { defaultRate = 1.25 }
-                        Button("1.5×") { defaultRate = 1.5 }
-                        Button("2×") { defaultRate = 2.0 }
+                        optButton("0.75×", defaultRate == 0.75) { defaultRate = 0.75 }
+                        optButton("1×", defaultRate == 1.0) { defaultRate = 1.0 }
+                        optButton("1.25×", defaultRate == 1.25) { defaultRate = 1.25 }
+                        optButton("1.5×", defaultRate == 1.5) { defaultRate = 1.5 }
+                        optButton("2×", defaultRate == 2.0) { defaultRate = 2.0 }
                     }
                     prefsDivider
                     prefsMenuRow("睡眠定时", value: sleepMinutes == 0 ? "关闭" : "\(sleepMinutes) 分钟") {
-                        Button("关闭") { sleepMinutes = 0 }
-                        Button("15 分钟") { sleepMinutes = 15 }
-                        Button("30 分钟") { sleepMinutes = 30 }
-                        Button("45 分钟") { sleepMinutes = 45 }
-                        Button("60 分钟") { sleepMinutes = 60 }
+                        optButton("关闭", sleepMinutes == 0) { sleepMinutes = 0 }
+                        optButton("15 分钟", sleepMinutes == 15) { sleepMinutes = 15 }
+                        optButton("30 分钟", sleepMinutes == 30) { sleepMinutes = 30 }
+                        optButton("45 分钟", sleepMinutes == 45) { sleepMinutes = 45 }
+                        optButton("60 分钟", sleepMinutes == 60) { sleepMinutes = 60 }
                     }
                     prefsDivider
                     prefsToggleRow("自动播放下一集", isOn: $autoPlayNext)
@@ -526,9 +540,9 @@ struct GesturePrefsView: View {
                     prefsToggleRow("长按倍速播放", isOn: $boost)
                     prefsDivider
                     prefsMenuRow("长按倍速", value: String(format: "%g×", boostRate)) {
-                        Button("1.5×") { boostRate = 1.5 }
-                        Button("2×") { boostRate = 2.0 }
-                        Button("3×") { boostRate = 3.0 }
+                        optButton("1.5×", boostRate == 1.5) { boostRate = 1.5 }
+                        optButton("2×", boostRate == 2.0) { boostRate = 2.0 }
+                        optButton("3×", boostRate == 3.0) { boostRate = 3.0 }
                     }
                 }
                 Text("长按倍速播放：播放中长按画面不放，以设定倍速快进，松手恢复原速度。")
@@ -566,23 +580,23 @@ struct VideoPrefsView: View {
                         .font(.footnote).foregroundStyle(.secondary)
                     prefsDivider
                     prefsMenuRow("首选解码模式", value: decodeLabel) {
-                        Button("自动") { decodeMode = "auto" }
-                        Button("硬解码 (HW/GPU)") { decodeMode = "hardware" }
-                        Button("软解码") { decodeMode = "software" }
+                        optButton("自动", decodeMode == "auto") { decodeMode = "auto" }
+                        optButton("硬解码 (HW/GPU)", decodeMode == "hardware") { decodeMode = "hardware" }
+                        optButton("软解码", decodeMode == "software") { decodeMode = "software" }
                     }
                     prefsDivider
                     prefsMenuRow("软件解码线程", value: "\(threads)") {
-                        Button("2") { threads = 2 }
-                        Button("4") { threads = 4 }
-                        Button("8") { threads = 8 }
-                        Button("16") { threads = 16 }
+                        optButton("2", threads == 2) { threads = 2 }
+                        optButton("4", threads == 4) { threads = 4 }
+                        optButton("8", threads == 8) { threads = 8 }
+                        optButton("16", threads == 16) { threads = 16 }
                     }
                     prefsDivider
                     prefsMenuRow("预读缓存", value: "\(cacheSeconds) 秒") {
-                        Button("60 秒") { cacheSeconds = 60 }
-                        Button("120 秒") { cacheSeconds = 120 }
-                        Button("180 秒") { cacheSeconds = 180 }
-                        Button("300 秒") { cacheSeconds = 300 }
+                        optButton("60 秒", cacheSeconds == 60) { cacheSeconds = 60 }
+                        optButton("120 秒", cacheSeconds == 120) { cacheSeconds = 120 }
+                        optButton("180 秒", cacheSeconds == 180) { cacheSeconds = 180 }
+                        optButton("300 秒", cacheSeconds == 300) { cacheSeconds = 300 }
                     }
                 }
                 Text("硬解码：高效省电，基本不发热，能否硬解取决于设备与系统。软解码：兼容性强，但播放大文件容易发热且耗电量高。除非无法正常播放，否则不要使用软解码。预读缓存越大越抗网络抖动，也越占内存；下次打开视频时生效。以上设置作用于 mpv 引擎；VLCKit 引擎（PGS 字幕片源）使用其内置解码。")
@@ -629,21 +643,21 @@ struct AudioPrefsView: View {
                     prefsToggleRow("记住所选音轨", isOn: $rememberChoice)
                     prefsDivider
                     prefsMenuRow("音频首选语言", value: languageLabel) {
-                        Button("默认") { audioLanguage = "default" }
-                        Button("中文") { audioLanguage = "zh" }
-                        Button("英文") { audioLanguage = "en" }
-                        Button("日语") { audioLanguage = "ja" }
-                        Button("韩语") { audioLanguage = "ko" }
+                        optButton("默认", audioLanguage == "default") { audioLanguage = "default" }
+                        optButton("中文", audioLanguage == "zh") { audioLanguage = "zh" }
+                        optButton("英文", audioLanguage == "en") { audioLanguage = "en" }
+                        optButton("日语", audioLanguage == "ja") { audioLanguage = "ja" }
+                        optButton("韩语", audioLanguage == "ko") { audioLanguage = "ko" }
                     }
                     prefsDivider
                     prefsMenuRow("音频延迟", value: audioDelayLabel) {
-                        Button("延后 2 秒") { audioDelay = 2.0 }
-                        Button("延后 1 秒") { audioDelay = 1.0 }
-                        Button("延后 0.5 秒") { audioDelay = 0.5 }
-                        Button("无延迟") { audioDelay = 0 }
-                        Button("提前 0.5 秒") { audioDelay = -0.5 }
-                        Button("提前 1 秒") { audioDelay = -1.0 }
-                        Button("提前 2 秒") { audioDelay = -2.0 }
+                        optButton("延后 2 秒", audioDelay == 2.0) { audioDelay = 2.0 }
+                        optButton("延后 1 秒", audioDelay == 1.0) { audioDelay = 1.0 }
+                        optButton("延后 0.5 秒", audioDelay == 0.5) { audioDelay = 0.5 }
+                        optButton("无延迟", audioDelay == 0) { audioDelay = 0 }
+                        optButton("提前 0.5 秒", audioDelay == -0.5) { audioDelay = -0.5 }
+                        optButton("提前 1 秒", audioDelay == -1.0) { audioDelay = -1.0 }
+                        optButton("提前 2 秒", audioDelay == -2.0) { audioDelay = -2.0 }
                     }
                 }
                 prefsCard {
@@ -705,17 +719,17 @@ struct SubtitlePrefsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
                     prefsMenuRow("默认字幕", value: subtitleLabel) {
-                        Button("简体中文") { subtitlePreference = "zhHans" }
-                        Button("繁体中文") { subtitlePreference = "zhHant" }
-                        Button("英文") { subtitlePreference = "en" }
-                        Button("关闭") { subtitlePreference = "off" }
+                        optButton("简体中文", subtitlePreference == "zhHans") { subtitlePreference = "zhHans" }
+                        optButton("繁体中文", subtitlePreference == "zhHant") { subtitlePreference = "zhHant" }
+                        optButton("英文", subtitlePreference == "en") { subtitlePreference = "en" }
+                        optButton("关闭", subtitlePreference == "off") { subtitlePreference = "off" }
                     }
                     prefsDivider
                     prefsMenuRow("副字幕", value: secondarySubtitleLabel) {
-                        Button("关闭") { secondarySubtitle = "off" }
-                        Button("简体中文") { secondarySubtitle = "zhHans" }
-                        Button("繁体中文") { secondarySubtitle = "zhHant" }
-                        Button("英文") { secondarySubtitle = "en" }
+                        optButton("关闭", secondarySubtitle == "off") { secondarySubtitle = "off" }
+                        optButton("简体中文", secondarySubtitle == "zhHans") { secondarySubtitle = "zhHans" }
+                        optButton("繁体中文", secondarySubtitle == "zhHant") { secondarySubtitle = "zhHant" }
+                        optButton("英文", secondarySubtitle == "en") { secondarySubtitle = "en" }
                     }
                 }
                 Text("副字幕：再挂一条其它语言的字幕同时显示（双字幕），开播时自动选轨；仅 mpv 播放器支持，播放器字幕菜单里也能临时选。")
@@ -766,22 +780,22 @@ struct SubtitlePrefsView: View {
                     prefsToggleRow("弹幕", isOn: $danmakuEnabled)
                     prefsDivider
                     prefsMenuRow("弹幕字号", value: danmakuFontLabel) {
-                        Button("小") { danmakuFontSize = 30 }
-                        Button("中") { danmakuFontSize = 36 }
-                        Button("大") { danmakuFontSize = 44 }
+                        optButton("小", danmakuFontSize == 30) { danmakuFontSize = 30 }
+                        optButton("中", danmakuFontSize == 36) { danmakuFontSize = 36 }
+                        optButton("大", danmakuFontSize == 44) { danmakuFontSize = 44 }
                     }
                     prefsDivider
                     prefsMenuRow("滚动速度", value: danmakuSpeedLabel) {
-                        Button("慢") { danmakuScrollSeconds = 10.0 }
-                        Button("标准") { danmakuScrollSeconds = 8.0 }
-                        Button("快") { danmakuScrollSeconds = 6.5 }
+                        optButton("慢", danmakuScrollSeconds == 10.0) { danmakuScrollSeconds = 10.0 }
+                        optButton("标准", danmakuScrollSeconds == 8.0) { danmakuScrollSeconds = 8.0 }
+                        optButton("快", danmakuScrollSeconds == 6.5) { danmakuScrollSeconds = 6.5 }
                     }
                     prefsDivider
                     prefsMenuRow("显示区域", value: danmakuAreaLabel) {
-                        Button("仅顶部一行") { danmakuArea = "oneRow" }
-                        Button("顶部 1/4") { danmakuArea = "quarter" }
-                        Button("顶部半屏") { danmakuArea = "half" }
-                        Button("全屏") { danmakuArea = "full" }
+                        optButton("仅顶部一行", danmakuArea == "oneRow") { danmakuArea = "oneRow" }
+                        optButton("顶部 1/4", danmakuArea == "quarter") { danmakuArea = "quarter" }
+                        optButton("顶部半屏", danmakuArea == "half") { danmakuArea = "half" }
+                        optButton("全屏", danmakuArea == "full") { danmakuArea = "full" }
                     }
                 }
                 Text("弹幕来自自建的聚合弹幕服务、按片名自动匹配，由应用直接绘制，可与双字幕同时使用；仅 mpv 播放器支持。字号、速度与区域改了之后，下次打开视频生效。")
@@ -793,41 +807,41 @@ struct SubtitlePrefsView: View {
                 }
                 prefsCard {
                     prefsMenuRow("字幕大小", value: subScaleLabel) {
-                        Button("较小") { subScale = 0.8 }
-                        Button("标准") { subScale = 1.0 }
-                        Button("较大") { subScale = 1.25 }
-                        Button("特大") { subScale = 1.5 }
+                        optButton("较小", subScale == 0.8) { subScale = 0.8 }
+                        optButton("标准", subScale == 1.0) { subScale = 1.0 }
+                        optButton("较大", subScale == 1.25) { subScale = 1.25 }
+                        optButton("特大", subScale == 1.5) { subScale = 1.5 }
                     }
                     prefsDivider
                     prefsMenuRow("字幕延迟", value: subDelayLabel) {
-                        Button("延后 2 秒") { subDelay = 2.0 }
-                        Button("延后 1 秒") { subDelay = 1.0 }
-                        Button("延后 0.5 秒") { subDelay = 0.5 }
-                        Button("无延迟") { subDelay = 0 }
-                        Button("提前 0.5 秒") { subDelay = -0.5 }
-                        Button("提前 1 秒") { subDelay = -1.0 }
-                        Button("提前 2 秒") { subDelay = -2.0 }
+                        optButton("延后 2 秒", subDelay == 2.0) { subDelay = 2.0 }
+                        optButton("延后 1 秒", subDelay == 1.0) { subDelay = 1.0 }
+                        optButton("延后 0.5 秒", subDelay == 0.5) { subDelay = 0.5 }
+                        optButton("无延迟", subDelay == 0) { subDelay = 0 }
+                        optButton("提前 0.5 秒", subDelay == -0.5) { subDelay = -0.5 }
+                        optButton("提前 1 秒", subDelay == -1.0) { subDelay = -1.0 }
+                        optButton("提前 2 秒", subDelay == -2.0) { subDelay = -2.0 }
                     }
                 }
                 prefsSectionLabel("样式").padding(.top, 8)
                 prefsCard {
                     prefsMenuRow("字幕颜色", value: subColorLabel) {
-                        Button("白色") { subColor = "white" }
-                        Button("黄色") { subColor = "yellow" }
-                        Button("青色") { subColor = "cyan" }
-                        Button("绿色") { subColor = "green" }
+                        optButton("白色", subColor == "white") { subColor = "white" }
+                        optButton("黄色", subColor == "yellow") { subColor = "yellow" }
+                        optButton("青色", subColor == "cyan") { subColor = "cyan" }
+                        optButton("绿色", subColor == "green") { subColor = "green" }
                     }
                     prefsDivider
                     prefsMenuRow("字幕描边", value: subBorderLabel) {
-                        Button("描边") { subBorder = "outline" }
-                        Button("背景框") { subBorder = "box" }
-                        Button("无") { subBorder = "none" }
+                        optButton("描边", subBorder == "outline") { subBorder = "outline" }
+                        optButton("背景框", subBorder == "box") { subBorder = "box" }
+                        optButton("无", subBorder == "none") { subBorder = "none" }
                     }
                     prefsDivider
                     prefsMenuRow("字幕位置", value: subMarginLabel) {
-                        Button("紧贴底部") { subMarginY = 8 }
-                        Button("标准") { subMarginY = 20 }
-                        Button("抬高") { subMarginY = 36 }
+                        optButton("紧贴底部", subMarginY == 8) { subMarginY = 8 }
+                        optButton("标准", subMarginY == 20) { subMarginY = 20 }
+                        optButton("抬高", subMarginY == 36) { subMarginY = 36 }
                     }
                 }
                 Text("打开视频时自动挑选的字幕（内嵌与外挂字幕都算）；没有匹配的字幕时回退到片源默认字幕。选「关闭」则不自动开启字幕，仍可在播放器里手动选择。字幕大小、延迟与样式在打开视频时应用，对 mpv 引擎的文字字幕生效；PGS 位图字幕（VLCKit）不受影响。")
@@ -951,16 +965,16 @@ struct AppPrefsView: View {
                         ForEach(tabNames.indices, id: \.self) { index in
                             Button(tabNames[index]) { startTab = index }
                         }
-                        Button("上次使用") { startTab = -1 }
+                        optButton("上次使用", startTab == -1) { startTab = -1 }
                     }
                 }
 
                 prefsSectionLabel("外观").padding(.top, 8)
                 prefsCard {
                     prefsMenuRow("外观模式", value: appearanceLabel) {
-                        Button("跟随系统") { appearance = "system" }
-                        Button("浅色") { appearance = "light" }
-                        Button("深色") { appearance = "dark" }
+                        optButton("跟随系统", appearance == "system") { appearance = "system" }
+                        optButton("浅色", appearance == "light") { appearance = "light" }
+                        optButton("深色", appearance == "dark") { appearance = "dark" }
                     }
                 }
             }
@@ -1101,9 +1115,9 @@ struct DownloadsPrefsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
                     prefsMenuRow("同时下载数", value: "\(maxConcurrent) 个") {
-                        Button("1 个") { maxConcurrent = 1 }
-                        Button("2 个") { maxConcurrent = 2 }
-                        Button("3 个") { maxConcurrent = 3 }
+                        optButton("1 个", maxConcurrent == 1) { maxConcurrent = 1 }
+                        optButton("2 个", maxConcurrent == 2) { maxConcurrent = 2 }
+                        optButton("3 个", maxConcurrent == 3) { maxConcurrent = 3 }
                     }
                     prefsDivider
                     prefsToggleRow("仅 Wi-Fi 下载", isOn: $wiFiOnly)
@@ -1143,9 +1157,9 @@ struct ListPrefsView: View {
             VStack(alignment: .leading, spacing: 14) {
                 prefsCard {
                     prefsMenuRow("海报列数", value: "\(posterColumns) 列") {
-                        Button("2 列（大图）") { posterColumns = 2 }
-                        Button("3 列（标准）") { posterColumns = 3 }
-                        Button("4 列（紧凑）") { posterColumns = 4 }
+                        optButton("2 列（大图）", posterColumns == 2) { posterColumns = 2 }
+                        optButton("3 列（标准）", posterColumns == 3) { posterColumns = 3 }
+                        optButton("4 列（紧凑）", posterColumns == 4) { posterColumns = 4 }
                     }
                 }
                 Text("作用于资源库与收藏的海报网格。")
@@ -1186,11 +1200,11 @@ struct AITranslatePrefsView: View {
                     }
                     prefsDivider
                     prefsMenuRow("翻译成", value: targetLabel) {
-                        Button("简体中文") { targetLang = "zh-Hans" }
-                        Button("繁体中文") { targetLang = "zh-Hant" }
-                        Button("英文") { targetLang = "en" }
-                        Button("日语") { targetLang = "ja" }
-                        Button("韩语") { targetLang = "ko" }
+                        optButton("简体中文", targetLang == "zh-Hans") { targetLang = "zh-Hans" }
+                        optButton("繁体中文", targetLang == "zh-Hant") { targetLang = "zh-Hant" }
+                        optButton("英文", targetLang == "en") { targetLang = "en" }
+                        optButton("日语", targetLang == "ja") { targetLang = "ja" }
+                        optButton("韩语", targetLang == "ko") { targetLang = "ko" }
                     }
                 }
                 Text("接口按 OpenAI 兼容格式调用（DeepSeek、OpenAI、硅基流动等都能用），地址填到域名即可，不用带 /chat/completions。费用由接口方按量收取，DeepSeek 翻一集动画大约几分钱。API Key 只存本机钥匙串。用法：播放时打开字幕菜单 →「AI 翻译」。仅文字字幕可译，PGS 图片字幕不行；仅 mpv 播放器可用。译好的字幕会缓存在本机，同一集再看不重复收费。")
