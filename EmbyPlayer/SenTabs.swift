@@ -242,20 +242,14 @@ struct LibrariesTabView: View {
     private var libraries: [EmbyItem] { catalog.libraries }
 
     var body: some View {
-        // Index page (v1.74, his approved mock): the rails moved
-        // to the home page, so this tab is the directory — one
-        // card per library (tap through to its full grid) over a
-        // cross-library browse grid. Grouped-background page with
-        // white cards, like the mock he signed off.
+        // Browse page (v1.74 mock, corrected v1.75): the library
+        // rails live on the home page now, so library cards here
+        // would just duplicate it — his call: this tab carries
+        // ONLY the cross-library 分类浏览 tiles.
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
                 header
-                Text("媒体库").font(.system(size: 21, weight: .bold))
-                ForEach(Array(libraries.enumerated()), id: \.offset) { _, library in
-                    LibraryIndexCard(library: library)
-                }
                 Text("分类浏览").font(.system(size: 21, weight: .bold))
-                    .padding(.top, 4)
                 LazyVGrid(columns: [GridItem(.flexible(), spacing: 10),
                                     GridItem(.flexible(), spacing: 10),
                                     GridItem(.flexible(), spacing: 10)], spacing: 10) {
@@ -360,63 +354,6 @@ struct BrowseFilter: Hashable {
     static func country(_ name: String) -> BrowseFilter {
         BrowseFilter(title: name, params: [
             "IncludeItemTypes": "Movie,Series", "Countries": name, "SortBy": "SortName", "SortOrder": "Ascending"])
-    }
-}
-
-/// One library on the index page: a strip of four posters from
-/// the library's latest additions (CatalogCache section data)
-/// over the library name and total count; the whole card goes to
-/// the library's full grid.
-private struct LibraryIndexCard: View {
-    @Environment(AppStore.self) private var store
-    @State private var catalog = CatalogCache.shared
-    let library: EmbyItem
-
-    private var data: CatalogCache.SectionData? { catalog.sections[library.Id] }
-    private var coverItems: [EmbyItem] {
-        Array((data?.items ?? []).filter { $0.ImageTags?["Primary"] != nil }.prefix(4))
-    }
-
-    var body: some View {
-        NavigationLink(value: Route.library(library)) {
-            VStack(alignment: .leading, spacing: 10) {
-                if let client = store.client() {
-                    HStack(spacing: 6) {
-                        if coverItems.isEmpty {
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.primary.opacity(0.06))
-                                .frame(maxWidth: .infinity)
-                                .frame(height: 86)
-                        } else {
-                            ForEach(Array(coverItems.enumerated()), id: \.offset) { _, item in
-                                ItemImage(item: item, client: client)
-                                    .frame(maxWidth: .infinity)
-                                    .frame(height: 86)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
-                        }
-                    }
-                }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
-                    Text(library.Name).font(.system(size: 17, weight: .bold))
-                    Spacer()
-                    if let count = data?.count {
-                        Text("\(count)").foregroundStyle(.secondary).font(.system(size: 13))
-                    }
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.tertiary)
-                }
-            }
-            .padding(12)
-            .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
-        .task {
-            if let client = store.client() {
-                await catalog.ensureSection(libraryID: library.Id, client: client)
-            }
-        }
     }
 }
 
