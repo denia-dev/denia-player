@@ -95,11 +95,12 @@ enum Prefs {
     static var dvP7Convert: Bool {
         d.object(forKey: "prefs.dvP7Convert") == nil ? true : d.bool(forKey: "prefs.dvP7Convert")
     }
-    /// SDR → HDR via mpv inverse tone mapping (v1.67, at his
-    /// request). Applied as a player option at creation; whether the
-    /// MPVUI output path carries it to the panel is device-verified
-    /// only — he judges the picture.
-    static var sdrToHdr: Bool { d.bool(forKey: "prefs.sdrToHdr") }
+    // SDR → HDR was tried in v1.67 (inverse-tone-mapping option)
+    // and removed in v1.69: he saw no effect, and the MPVUI source
+    // shows why — the kernel reserves the whole target-* output
+    // colour family (MPVOptionOwnership), so an SDR stream is
+    // always rendered to an SDR target and inverse mapping has
+    // nothing to expand into. No toggle is kept for a no-op.
 
     // Audio / subtitle entry preferences (defaults reproduce the
     // behaviour builds 4-27 shipped with)
@@ -580,7 +581,6 @@ struct VideoPrefsView: View {
     @AppStorage("prefs.decodeMode") private var decodeMode = "hardware"
     @AppStorage("prefs.softwareThreads") private var threads = 8
     @AppStorage("prefs.dvP7Convert") private var p7Convert = true
-    @AppStorage("prefs.sdrToHdr") private var sdrToHdr = false
     @AppStorage("prefs.cacheSeconds") private var cacheSeconds = 120
 
     var body: some View {
@@ -624,13 +624,6 @@ struct VideoPrefsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
 
-                prefsCard {
-                    prefsToggleRow("SDR 转 HDR", isOn: $sdrToHdr)
-                }
-                Text("把普通 SDR 画面做逆色调映射、扩展到 HDR 亮度范围（SenPlayer 同名功能的做法）；下次打开视频时生效，原生 HDR / 杜比视界片源不受影响。效果取决于片源和屏幕，觉得画面过曝或发白就关掉。")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 20)
             }
             .padding()
         }

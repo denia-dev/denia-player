@@ -649,12 +649,6 @@ struct MPVPlayerScreen: View {
             "sub-border-style": subBorderValue,
             "sub-margin-y": "\(Prefs.subMarginY)",
         ]
-        if Prefs.sdrToHdr {
-            // Inverse tone mapping expands SDR into the HDR range
-            // (SenPlayer's SDR 转 HDR). Native HDR/DV sources are
-            // unaffected - mpv only inverse-maps SDR inputs.
-            options["inverse-tone-mapping"] = "yes"
-        }
         // ASS subtitles carry their own colors and borders, and mpv's
         // default override mode keeps them - which would make the
         // color/border settings silently do nothing on exactly the
@@ -704,6 +698,11 @@ struct MPVPlayerScreen: View {
     @State private var pressBoosted = false
     @State private var pressTask: Task<Void, Never>?
     @State private var hideTask: Task<Void, Never>?
+    /// While a chrome menu is open the auto-hide is held off until
+    /// this date: the hide used to fire mid-browse, tear the menu
+    /// down and eat his taps (v1.69 — his 字幕样式找不到 and
+    /// 关闭弹幕要点多次 reports were both this).
+    @State private var chromeHoldUntil: Date?
     @State private var loadError: String?
     @State private var session: (sourceID: String, sessionID: String?)?
     @State private var scrubbing = false
@@ -722,6 +721,10 @@ struct MPVPlayerScreen: View {
     @State private var autoSkippedStarts: Set<Double> = []
     @State private var translating = false
     @State private var danmakuOn = false
+    /// His explicit 关闭弹幕 for this playback session: an
+    /// in-flight or queued auto-load must never turn danmaku back
+    /// on over it (v1.69 hardening alongside the menu-hold fix).
+    @State private var danmakuUserOff = false
     @State private var danmakuLoading = false
     @State private var danmakuPlaced: [DanmakuPlaced] = []
     @State private var danmakuFontSize: Double = 36
@@ -1196,8 +1199,9 @@ struct MPVPlayerScreen: View {
         guard !danmakuLoading else { return danmakuOn }
         if danmakuOn, overrideName == nil { return true }
         // Re-opening after 关闭弹幕 is instant: the laid-out comments
-        // are still here, no refetch needed.
-        if overrideName == nil, !danmakuPlaced.isEmpty {
+        // are still here, no refetch needed. His explicit off for
+        // this session always wins over this shortcut.
+        if overrideName == nil, !danmakuPlaced.isEmpty, !danmakuUserOff {
             danmakuOn = true
             return true
         }
@@ -1209,6 +1213,9 @@ struct MPVPlayerScreen: View {
             durationSeconds: Double(item.RunTimeTicks ?? 0) / 10_000_000
         ) else { return false }
         guard generation == playerGeneration else { return false }
+        // He turned danmaku off while this load was in flight:
+        // the load finishes silently and stays off.
+        guard !danmakuUserOff else { return false }
         let fontSize = Double(Prefs.danmakuFontSize)
         let scroll = Prefs.danmakuScrollSeconds
         danmakuFontSize = fontSize
@@ -1268,6 +1275,7 @@ struct MPVPlayerScreen: View {
     private func applyManualDanmaku(title: String, episode: Int) {
         UserDefaults.standard.set(title, forKey: "danmaku.manual.\(item.SeriesId ?? item.Id)")
         let name = String(format: "%@ S%02dE%02d", title, item.ParentIndexNumber ?? 1, episode)
+        danmakuUserOff = false
         danmakuOn = false
         Task { _ = await loadDanmaku(overrideName: name) }
     }
@@ -1874,7 +1882,7 @@ struct MPVPlayerScreen: View {
                     Spacer()
                 }
                 .padding(.horizontal, 16)
-                .padding(.bottom, 10)
+                .padding(.bottom, 6)
             } else {
                 VStack(spacing: 10) {
                     HStack(alignment: .center, spacing: 10) {
@@ -1940,7 +1948,7 @@ struct MPVPlayerScreen: View {
                         .frame(width: 34, alignment: .trailing)
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 10)
+                    .padding(.bottom, 6)
                 }
             }
         }
@@ -1950,6 +1958,10 @@ struct MPVPlayerScreen: View {
                            startPoint: .top, endPoint: .bottom)
                 .allowsHitTesting(false)
         )
+        // The bottom cluster hugs the screen's bottom edge (his
+        // v1.69 report: the bar floated above a black band — the
+        // bottom safe-area inset plus padding held it up).
+        .ignoresSafeArea(edges: .bottom)
     }
 
     private var transportButtons: some View {
@@ -1992,6 +2004,7 @@ struct MPVPlayerScreen: View {
                         }
                     }
                 } label: { circleLabel("waveform") }
+                .simultaneousGesture(TapGesture().onEnded { holdChrome() })
             }
             if Prefs.showSubtitleButton, !player.subtitleTracks.isEmpty {
                 Menu {
@@ -2008,6 +2021,39 @@ struct MPVPlayerScreen: View {
                             }
                         } label: {
                             Label(trackLabel(track), systemImage: track.isSelected ? "checkmark" : "")
+                        }
+                    }
+                    // Moved up in v1.69: at the bottom of this long
+                    // menu he never reached it (and the auto-hide
+                    // kept closing the menu first — see holdChrome).
+                    Section("字幕样式（立即生效）") {
+                        Menu("字幕大小") {
+                            ForEach([(0.8, "较小"), (1.0, "标准"), (1.25, "较大"), (1.5, "特大")], id: \.0) { value, label in
+                                Button { applySubScale(value) } label: {
+                                    Label(label, systemImage: Prefs.subScale == value ? "checkmark" : "")
+                                }
+                            }
+                        }
+                        Menu("字幕延迟") {
+                            ForEach([(2.0, "延后 2 秒"), (1.0, "延后 1 秒"), (0.5, "延后 0.5 秒"), (0.0, "无延迟"), (-0.5, "提前 0.5 秒"), (-1.0, "提前 1 秒"), (-2.0, "提前 2 秒")], id: \.0) { value, label in
+                                Button { applySubDelay(value) } label: {
+                                    Label(label, systemImage: Prefs.subDelay == value ? "checkmark" : "")
+                                }
+                            }
+                        }
+                        Menu("字幕颜色") {
+                            ForEach([("white", "白色"), ("yellow", "黄色"), ("cyan", "青色"), ("green", "绿色")], id: \.0) { value, label in
+                                Button { applySubColor(value) } label: {
+                                    Label(label, systemImage: Prefs.subColorName == value ? "checkmark" : "")
+                                }
+                            }
+                        }
+                        Menu("字幕位置") {
+                            ForEach([(8, "紧贴底部"), (20, "标准"), (36, "抬高")], id: \.0) { value, label in
+                                Button { applySubMarginY(value) } label: {
+                                    Label(label, systemImage: Prefs.subMarginY == value ? "checkmark" : "")
+                                }
+                            }
                         }
                     }
                     if player.subtitleTracks.count > 1 {
@@ -2049,37 +2095,8 @@ struct MPVPlayerScreen: View {
                     Section("在线字幕") {
                         Button("搜索在线字幕") { showOnlineSubs = true }
                     }
-                    Section("字幕样式（立即生效）") {
-                        Menu("字幕大小") {
-                            ForEach([(0.8, "较小"), (1.0, "标准"), (1.25, "较大"), (1.5, "特大")], id: \.0) { value, label in
-                                Button { applySubScale(value) } label: {
-                                    Label(label, systemImage: Prefs.subScale == value ? "checkmark" : "")
-                                }
-                            }
-                        }
-                        Menu("字幕延迟") {
-                            ForEach([(2.0, "延后 2 秒"), (1.0, "延后 1 秒"), (0.5, "延后 0.5 秒"), (0.0, "无延迟"), (-0.5, "提前 0.5 秒"), (-1.0, "提前 1 秒"), (-2.0, "提前 2 秒")], id: \.0) { value, label in
-                                Button { applySubDelay(value) } label: {
-                                    Label(label, systemImage: Prefs.subDelay == value ? "checkmark" : "")
-                                }
-                            }
-                        }
-                        Menu("字幕颜色") {
-                            ForEach([("white", "白色"), ("yellow", "黄色"), ("cyan", "青色"), ("green", "绿色")], id: \.0) { value, label in
-                                Button { applySubColor(value) } label: {
-                                    Label(label, systemImage: Prefs.subColorName == value ? "checkmark" : "")
-                                }
-                            }
-                        }
-                        Menu("字幕位置") {
-                            ForEach([(8, "紧贴底部"), (20, "标准"), (36, "抬高")], id: \.0) { value, label in
-                                Button { applySubMarginY(value) } label: {
-                                    Label(label, systemImage: Prefs.subMarginY == value ? "checkmark" : "")
-                                }
-                            }
-                        }
-                    }
                 } label: { circleLabel("captions.bubble") }
+                .simultaneousGesture(TapGesture().onEnded { holdChrome() })
             }
             Menu {
                 if let nextEpisode {
@@ -2094,10 +2111,13 @@ struct MPVPlayerScreen: View {
                             Text("弹幕匹配中…")
                         } else if danmakuOn {
                             Button("关闭弹幕") {
+                                danmakuUserOff = true
                                 danmakuOn = false
+                                pokeChrome()
                             }
                         } else {
                             Button("开启弹幕") {
+                                danmakuUserOff = false
                                 Task { _ = await loadDanmaku() }
                             }
                         }
@@ -2114,6 +2134,7 @@ struct MPVPlayerScreen: View {
                     }
                 }
             } label: { circleLabel("ellipsis") }
+            .simultaneousGesture(TapGesture().onEnded { holdChrome() })
         }
     }
 
@@ -2335,7 +2356,21 @@ struct MPVPlayerScreen: View {
         hideTask = Task {
             try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
+            // A menu is (or was just) open: wait it out instead of
+            // hiding the chrome — and the menu anchored to it —
+            // from under his finger.
+            if let hold = chromeHoldUntil, hold > Date() {
+                scheduleHide()
+                return
+            }
             if !player.isPaused { chromeVisible = false }
         }
+    }
+
+    /// Called when a chrome menu is tapped open: keep the chrome
+    /// (and the menu) alive well past the longest browse.
+    private func holdChrome() {
+        chromeHoldUntil = Date().addingTimeInterval(30)
+        pokeChrome()
     }
 }
