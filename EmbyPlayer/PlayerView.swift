@@ -80,12 +80,14 @@ struct PlayerView: View {
                 case .vlc(let route):
                     VLCPlayerView(item: item, route: route, startSeconds: startSeconds, onPlayNext: onPlayNext,
                                   switchToMPV: { position in performHandoff(position) })
+                        .id(item.Id)
                 case .mpv(let launch):
                     MPVPlayerScreen(item: item, startSeconds: handoffPosition ?? startSeconds, onPlayNext: onPlayNext,
                                     localFileURL: localFileURL, localHasPGS: localHasPGS,
                                     localAudioLabels: localAudioLabels, localSubtitleLabels: localSubtitleLabels,
                                     launch: launch, continuingVLCSession: handoffPosition != nil)
                         .transition(.opacity)
+                        .id(item.Id)
                 }
             } else {
                 if let client = store.client() {
@@ -132,6 +134,21 @@ struct PlayerView: View {
             }
         }
         .task { await resolve() }
+        // Episode switching from inside the player (episode panel,
+        // prev/next, autoplay-next) reaches here as a new item on the
+        // SAME presented cover: the parent swaps its play request, but
+        // this view and the player screen below it keep their state,
+        // so without this handler the pick silently did nothing (his
+        // 2026-11-27 report: 选集没用). Reset the engine decision and
+        // resolve again; the screens are keyed by .id(item.Id) above
+        // so they rebuild fresh for the new episode.
+        .onChange(of: item.Id) { _, _ in
+            decision = nil
+            handoffLaunch = nil
+            handoffPosition = nil
+            resolveError = nil
+            Task { await resolve() }
+        }
         .task {
             // Rotation-locked phones refuse the landscape request; never
             // leave the player stuck on the backdrop in that case.
@@ -1072,10 +1089,32 @@ struct MPVPlayerScreen: View {
             try? await Task.sleep(for: .milliseconds(500))
         }
         guard generation == playerGeneration else { return false }
+        // The danmaku ASS carries \move animation, but two player
+        // settings flatten it into stacked plain-text lines (his
+        // 2026-11-27 report: comments piled bottom-up in the centre
+        // instead of scrolling across the top; the same file renders
+        // as proper scrolling danmaku in reference libass):
+        // - sub-ass-override=force (set when he customises subtitle
+        //   colour/border) discards authored ASS positioning/animation.
+        // - MPVUI's text-subtitle interception presents text tracks
+        //   as static text snapshots instead of libass composition.
+        // Switch both off while danmaku is on; the menu's 关闭弹幕
+        // restores them (see restoreSubtitleRendering).
+        player.setProperty("sub-ass-override", to: "no")
+        player.setTextSubtitleInterceptionEnabled(false)
         player.loadExternalSubtitle(file, selecting: .secondary)
         player.setSubtitlesVisible(true)
         danmakuOn = true
         return true
+    }
+
+    /// Undo the two rendering switches loadDanmaku applies, so the
+    /// subtitle colour/border preferences and the PiP caption stream
+    /// behave exactly as before once danmaku is off.
+    private func restoreSubtitleRendering() {
+        let force = Prefs.subColorName != "white" || Prefs.subBorderStyle != "outline"
+        player.setProperty("sub-ass-override", to: force ? "force" : "yes")
+        player.setTextSubtitleInterceptionEnabled(true)
     }
 
     /// Candidate names for the danmaku service, best first: a
@@ -1918,6 +1957,7 @@ struct MPVPlayerScreen: View {
                             Button("关闭弹幕") {
                                 player.selectSubtitle(nil, for: .secondary)
                                 danmakuOn = false
+                                restoreSubtitleRendering()
                             }
                         } else {
                             Button("开启弹幕") {
