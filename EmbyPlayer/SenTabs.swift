@@ -517,6 +517,7 @@ struct SettingsView: View {
 
                 settingsGroup("通用") {
                     SettingRow(icon: "trash", color: .orange, title: "清除图片缓存", value: cacheNote) {
+                        ImageMemoryCache.shared.clearAll()
                         URLCache.shared.removeAllCachedResponses()
                         cacheNote = "已清除"
                     }

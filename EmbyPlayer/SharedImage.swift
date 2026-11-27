@@ -110,6 +110,35 @@ final class ImageMemoryCache {
         return diskCacheDir?.appendingPathComponent(name)
     }
 
+    /// Total bytes held by the on-disk image cache. The cache
+    /// management page used to report URLCache instead, which the
+    /// poster pipeline barely touches - it showed a few MB while the
+    /// real cache sat unmeasured in ImageDiskCache (his 2026-11-27
+    /// report: the page "没什么用，每次进来都很小的数据").
+    static func diskCacheBytes() -> Int64 {
+        guard let dir = diskCacheDir,
+              let files = try? FileManager.default.contentsOfDirectory(
+                at: dir, includingPropertiesForKeys: [.fileSizeKey]) else { return 0 }
+        return files.reduce(Int64(0)) { sum, file in
+            sum + Int64((try? file.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0)
+        }
+    }
+
+    /// Evicts every layer this class owns: the decoded-image memory
+    /// cache, the baked ambient/variant/tint derivatives, and the
+    /// on-disk files. The old clear buttons only emptied URLCache,
+    /// so "清除图片缓存" never actually cleared the posters.
+    func clearAll() {
+        cache.removeAllObjects()
+        ambientCache.removeAllObjects()
+        variantCache.removeAllObjects()
+        tintCache.removeAllObjects()
+        if let dir = Self.diskCacheDir,
+           let files = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) {
+            for file in files { try? FileManager.default.removeItem(at: file) }
+        }
+    }
+
     // MARK: - hero blank detection
 
     /// Why a hero image is unusable matters: a BLANK placeholder

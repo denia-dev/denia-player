@@ -1070,6 +1070,7 @@ struct CachePrefsView: View {
                 }
                 prefsCard {
                     Button(role: .destructive) {
+                        ImageMemoryCache.shared.clearAll()
                         URLCache.shared.removeAllCachedResponses()
                         cleared = true
                         refreshUsage()
@@ -1097,8 +1098,12 @@ struct CachePrefsView: View {
     }
 
     private func refreshUsage() {
-        let bytes = URLCache.shared.currentDiskUsage + URLCache.shared.currentMemoryUsage
-        usageText = ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        // The real image store is ImageDiskCache; URLCache only holds
+        // incidental URLSession responses. Report both so the number
+        // matches what clearing actually frees.
+        let bytes = ImageMemoryCache.diskCacheBytes()
+            + Int64(URLCache.shared.currentDiskUsage + URLCache.shared.currentMemoryUsage)
+        usageText = ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 
