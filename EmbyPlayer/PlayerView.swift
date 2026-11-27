@@ -376,13 +376,46 @@ private struct PiPSubtitleCaption: View {
     }
 }
 
-/// Native danmaku renderer (v1.59). The comments were laid out by
-/// DanmakuLayout in a virtual 1280x720 space; this view maps them
-/// onto the real frame and scrolls them on the player's clock.
-/// The published position only updates a few times a second, so
-/// between updates the display time is extrapolated from the last
-/// published position at the current rate — pause freezes it,
-/// seeks re-anchor it via onChange.
+/// Continuous clock for the danmaku overlay. The player's
+/// published position only updates a few times a second; snapping
+/// to each update made the scroll step visibly (his v1.59 report:
+/// 滚动有点卡). This clock free-runs on wall time at the playback
+/// rate and only eases toward the published position — a drift
+/// over ~0.3 s is absorbed gradually, while a real seek (jump over
+/// a second) snaps immediately. A plain class on purpose: the
+/// TimelineView drives redraws, state invalidation would only add
+/// churn.
+private final class DanmakuClock {
+    private var time: Double = -1
+    private var lastTick: Date?
+
+    func displayTime(published: Double, paused: Bool, rate: Double, now: Date) -> Double {
+        defer { lastTick = now }
+        guard let last = lastTick, time >= 0 else {
+            time = published
+            return time
+        }
+        let delta = now.timeIntervalSince(last)
+        if paused {
+            time = published
+            return time
+        }
+        let advanced = time + delta * max(rate, 0.1)
+        let drift = published - advanced
+        if abs(drift) > 1.0 {
+            time = published
+        } else {
+            time = advanced + drift * min(1, delta * 4)
+        }
+        return time
+    }
+}
+
+/// Native danmaku renderer (v1.59; Canvas + smooth clock in
+/// v1.6). The comments were laid out by DanmakuLayout in a virtual
+/// 1280x720 space; this view maps them onto the real frame and
+/// draws every visible comment in a single Canvas pass — no
+/// per-comment view tree to diff at 60 fps.
 private struct DanmakuOverlayView: View {
     let placed: [DanmakuPlaced]
     let player: MPVPlayer
@@ -390,47 +423,31 @@ private struct DanmakuOverlayView: View {
     let fontSize: Double
     let scrollDuration: Double
 
-    @State private var anchorPosition: Double = 0
-    @State private var anchorDate: Date = .now
+    @State private var clock = DanmakuClock()
 
     var body: some View {
-        GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
-                let t = displayTime(now: context.date)
-                let scaleX = geo.size.width / DanmakuLayout.playX
-                let scaleY = geo.size.height / DanmakuLayout.playY
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
+            Canvas { ctx, size in
+                let t = clock.displayTime(published: player.position.secondsValue,
+                                           paused: player.isPaused,
+                                           rate: rate, now: context.date)
+                let scaleX = size.width / DanmakuLayout.playX
+                let scaleY = size.height / DanmakuLayout.playY
                 let rowHeight = fontSize * 1.25 * scaleY
-                ZStack(alignment: .topLeading) {
-                    ForEach(visibleComments(at: t), id: \.index) { comment in
-                        Text(comment.text)
-                            .font(.system(size: fontSize * scaleY, weight: .medium))
-                            .foregroundStyle(danmakuColor(comment.color))
-                            .shadow(color: .black.opacity(0.9), radius: 1.5, x: 0, y: 1)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .offset(x: xPosition(comment, at: t, scaleX: scaleX, viewWidth: geo.size.width),
-                                    y: yPosition(comment, rowHeight: rowHeight, viewHeight: geo.size.height))
-                    }
+                let font = Font.system(size: fontSize * scaleY, weight: .medium)
+                for comment in placed where comment.time <= t && t <= comment.end {
+                    let x = xPosition(comment, at: t, scaleX: scaleX, viewWidth: size.width)
+                    let y = yPosition(comment, rowHeight: rowHeight, viewHeight: size.height)
+                    let point = CGPoint(x: x, y: y)
+                    // Cheap outline: a black copy nudged down, then
+                    // the coloured text on top.
+                    ctx.draw(Text(comment.text).font(font).foregroundColor(.black),
+                             at: CGPoint(x: point.x, y: point.y + 1.2), anchor: .topLeading)
+                    ctx.draw(Text(comment.text).font(font).foregroundColor(danmakuColor(comment.color)),
+                             at: point, anchor: .topLeading)
                 }
             }
         }
-        .onChange(of: player.position.secondsValue) { _, newValue in
-            anchorPosition = newValue
-            anchorDate = .now
-        }
-        .onAppear {
-            anchorPosition = player.position.secondsValue
-            anchorDate = .now
-        }
-    }
-
-    private func displayTime(now: Date) -> Double {
-        if player.isPaused { return anchorPosition }
-        return anchorPosition + now.timeIntervalSince(anchorDate) * max(rate, 0.1)
-    }
-
-    private func visibleComments(at t: Double) -> [DanmakuPlaced] {
-        placed.filter { $0.time <= t && t <= $0.end }
     }
 
     private func xPosition(_ comment: DanmakuPlaced, at t: Double, scaleX: Double, viewWidth: Double) -> Double {
