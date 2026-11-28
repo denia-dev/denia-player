@@ -608,10 +608,37 @@ struct MPVPlayerScreen: View {
         _player = State(initialValue: MPVPlayerScreen.makePlayer(
             videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
                 ? .sampleBuffer : .metal,
-            forceSoftware: continuingVLCSession && !(videoStream?.isDolbyVision ?? false)))
+            forceSoftware: continuingVLCSession && !(videoStream?.isDolbyVision ?? false),
+            isDolbyVision: videoStream?.isDolbyVision ?? false))
     }
 
-    static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput, forceSoftware: Bool = false) -> MPVPlayer {
+    /// Bundled upscaler shader chains for 视频设置 → 画质增强
+    /// (v1.77, his ask: AI 超分 on video, not posters). Anime4K runs
+    /// its documented Mode A (Fast) chain; FSRCNNX is one file.
+    /// Dolby Vision titles get none: their colour path belongs to
+    /// the kernel's DV handling and these shaders are written for
+    /// SDR frames. PiP's sample-buffer output ignores user shaders
+    /// inside the kernel, so there is nothing to gate for it.
+    static func upscaleShaderURLs(isDolbyVision: Bool) -> [URL] {
+        guard !isDolbyVision else { return [] }
+        let names: [String]
+        switch Prefs.upscaleMode {
+        case "anime":
+            names = ["Anime4K_Clamp_Highlights", "Anime4K_Restore_CNN_M",
+                     "Anime4K_Upscale_CNN_x2_M", "Anime4K_AutoDownscalePre_x2",
+                     "Anime4K_AutoDownscalePre_x4", "Anime4K_Upscale_CNN_x2_S"]
+        case "general":
+            names = ["FSRCNNX_x2_8-0-4-1"]
+        default:
+            return []
+        }
+        return names.compactMap {
+            Bundle.main.url(forResource: $0, withExtension: "glsl", subdirectory: "Shaders")
+                ?? Bundle.main.url(forResource: $0, withExtension: "glsl")
+        }
+    }
+
+    static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput, forceSoftware: Bool = false, isDolbyVision: Bool = false) -> MPVPlayer {
         // Subtitle styling from the subtitle settings (build 92).
         let subColorValue: String = {
             switch Prefs.subColorName {
@@ -678,6 +705,10 @@ struct MPVPlayerScreen: View {
             initialBufferDuration: .seconds(1),
             networkCacheDuration: .seconds(Prefs.cacheSeconds),
             rebufferDuration: .seconds(2),
+            // v1.77: AI 超分 shaders from 视频设置 (empty = off,
+            // and every other rendering parameter stays defaulted,
+            // so an empty list renders exactly like before).
+            renderingQuality: .init(shaders: upscaleShaderURLs(isDolbyVision: isDolbyVision)),
             videoOutput: videoOutput
         ))
         created.setDiagnosticsEnabled(true)
@@ -1018,7 +1049,10 @@ struct MPVPlayerScreen: View {
         player = MPVPlayerScreen.makePlayer(
             videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
                 ? .sampleBuffer : .metal,
-            forceSoftware: false)
+            forceSoftware: false,
+            // This rebuild exists because the title turned out to
+            // be undeclared Dolby Vision - no upscale shaders.
+            isDolbyVision: true)
         playerGeneration += 1
         preparedGeneration = -1
         await startPlayback()

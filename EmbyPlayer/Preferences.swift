@@ -89,6 +89,10 @@ enum Prefs {
     // Video (mpv configuration; applied when the player is created)
     static var pictureInPicture: Bool { d.bool(forKey: "prefs.pictureInPicture") }
     static var decodeMode: String { d.string(forKey: "prefs.decodeMode") ?? "hardware" }
+    /// AI upscaling shaders (v1.77): "off" | "anime" (Anime4K) |
+    /// "general" (FSRCNNX). Applied at player creation via
+    /// MPVRenderingQuality.shaders; see PlayerView.upscaleShaderURLs.
+    static var upscaleMode: String { d.string(forKey: "prefs.upscaleMode") ?? "off" }
     static var softwareThreads: Int {
         d.object(forKey: "prefs.softwareThreads") == nil ? 8 : d.integer(forKey: "prefs.softwareThreads")
     }
@@ -581,6 +585,7 @@ struct VideoPrefsView: View {
     @AppStorage("prefs.softwareThreads") private var threads = 8
     @AppStorage("prefs.dvP7Convert") private var p7Convert = true
     @AppStorage("prefs.cacheSeconds") private var cacheSeconds = 120
+    @AppStorage("prefs.upscaleMode") private var upscaleMode = "off"
 
     var body: some View {
         ScrollView {
@@ -623,6 +628,18 @@ struct VideoPrefsView: View {
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
 
+                prefsCard {
+                    prefsMenuRow("画质增强（AI 超分）", value: upscaleLabel) {
+                        optButton("关闭", upscaleMode == "off") { upscaleMode = "off" }
+                        optButton("动漫增强（Anime4K）", upscaleMode == "anime") { upscaleMode = "anime" }
+                        optButton("通用增强（FSRCNNX）", upscaleMode == "general") { upscaleMode = "general" }
+                    }
+                }
+                Text("播放时用 GPU 着色器实时放大增强：动漫选 Anime4K（修复线条＋2 倍放大），真人影视选 FSRCNNX。下次打开视频时生效；仅 mpv 引擎，杜比视界影片和画中画下不生效。会增加发热，片源本身已是 4K 时提升不大。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 20)
+
             }
             .padding()
         }
@@ -636,6 +653,14 @@ struct VideoPrefsView: View {
         case "auto": return "自动"
         case "software": return "软解码"
         default: return "硬解码 (HW/GPU)"
+        }
+    }
+
+    private var upscaleLabel: String {
+        switch upscaleMode {
+        case "anime": return "动漫增强（Anime4K）"
+        case "general": return "通用增强（FSRCNNX）"
+        default: return "关闭"
         }
     }
 }
