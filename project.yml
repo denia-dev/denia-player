@@ -16,6 +16,20 @@ targets:
       - path: EmbyPlayer
       - path: EmbyPlayer/Fonts/NotoSansCJKsc-Regular.otf
         buildPhase: resources
+      - path: EmbyPlayer/Shaders/Anime4K_Clamp_Highlights.glsl
+        buildPhase: resources
+      - path: EmbyPlayer/Shaders/Anime4K_Restore_CNN_M.glsl
+        buildPhase: resources
+      - path: EmbyPlayer/Shaders/Anime4K_Upscale_CNN_x2_M.glsl
+        buildPhase: resources
+      - path: EmbyPlayer/Shaders/Anime4K_AutoDownscalePre_x2.glsl
+        buildPhase: resources
+      - path: EmbyPlayer/Shaders/Anime4K_AutoDownscalePre_x4.glsl
+        buildPhase: resources
+      - path: EmbyPlayer/Shaders/Anime4K_Upscale_CNN_x2_S.glsl
+        buildPhase: resources
+      - path: EmbyPlayer/Shaders/FSRCNNX_x2_8-0-4-1.glsl
+        buildPhase: resources
     info:
       path: Info.plist
       properties:
@@ -35,8 +49,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.denia.embyplayer2
-        MARKETING_VERSION: "1.82"
-        CURRENT_PROJECT_VERSION: "183"
+        MARKETING_VERSION: "1.8"
+        CURRENT_PROJECT_VERSION: "181"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
