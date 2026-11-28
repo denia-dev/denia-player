@@ -652,6 +652,12 @@ struct MPVPlayerScreen: View {
                      "Anime4K_AutoDownscalePre_x4", "Anime4K_Upscale_CNN_x2_S"]
         case "general":
             names = ["FSRCNNX_x2_8-0-4-1"]
+        // v1.81 pipeline probe: saturation x3 cannot be missed.
+        // If this tier changes nothing on screen, user shaders
+        // never reach the picture in this kernel build and the
+        // Anime4K subtlety question is moot.
+        case "test":
+            names = ["DiagSaturation"]
         default:
             return []
         }
@@ -1132,6 +1138,11 @@ struct MPVPlayerScreen: View {
             if Date() > deadline { hasStarted = true; break }
             try? await Task.sleep(for: .milliseconds(200))
         }
+        // Commands require an attached surface (kernel doc), so
+        // the change-list issued right after load() can race the
+        // surface and be dropped - re-apply once frames are
+        // actually flowing. Idempotent (clr + append).
+        if !Task.isCancelled { applyUpscaleShaders() }
     }
 
     private func startPlayback() async {
@@ -2252,6 +2263,11 @@ struct MPVPlayerScreen: View {
                         switchUpscaleMode("general")
                     } label: {
                         if upscaleMode == "general" { Label("通用增强（FSRCNNX）", systemImage: "checkmark") } else { Text("通用增强（FSRCNNX）") }
+                    }
+                    Button {
+                        switchUpscaleMode("test")
+                    } label: {
+                        if upscaleMode == "test" { Label("测试（饱和度拉满）", systemImage: "checkmark") } else { Text("测试（饱和度拉满）") }
                     }
                 }
                 Section("倍速") {
