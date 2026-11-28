@@ -571,14 +571,10 @@ struct MPVPlayerScreen: View {
     var continuingVLCSession = false
 
     @State private var player = MPVPlayerScreen.makePlayer(videoOutput:
-        MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: false))
+        Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
+            ? .sampleBuffer : .metal)
     @Environment(\.scenePhase) private var playbackScenePhase
     @State private var playerGeneration = 0
-    /// AI 超分 state for the in-player menu (v1.78): the current
-    /// mode (mirrors Prefs.upscaleMode) and the parameters the
-    /// CURRENT player was built with, so an in-player switch can
-    /// rebuild it identically except for the shaders.
-    @State private var upscaleMode = Prefs.upscaleMode
     @State private var playerForceSoftware = false
     @State private var playerIsDolbyVision = false
     @State private var currentStreamURL: URL?
@@ -612,59 +608,12 @@ struct MPVPlayerScreen: View {
         // the engine's error and rebuilds with hardware decoding.
         let videoStream = launch.source?.MediaStreams?.first { $0.type == "Video" }
         _player = State(initialValue: MPVPlayerScreen.makePlayer(
-            videoOutput: MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: continuingVLCSession),
+            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
+            ? .sampleBuffer : .metal,
             forceSoftware: continuingVLCSession && !(videoStream?.isDolbyVision ?? false),
             isDolbyVision: videoStream?.isDolbyVision ?? false))
         _playerForceSoftware = State(initialValue: continuingVLCSession && !(videoStream?.isDolbyVision ?? false))
         _playerIsDolbyVision = State(initialValue: videoStream?.isDolbyVision ?? false)
-    }
-
-    /// Which render output a new player gets (v1.79 diagnosis):
-    /// the sample-buffer (PiP) output makes the kernel skip user
-    /// shaders ENTIRELY - no effect, no GPU load, no heat - so
-    /// while a 超分 mode is on, the session renders through Metal
-    /// and PiP steps aside; PiP returns when the mode is off. A
-    /// VLC-handoff session exists FOR PiP, so it keeps the
-    /// sample-buffer output regardless of the mode.
-    static func preferredVideoOutput(continuingVLCSession: Bool) -> MPVPlayerConfiguration.VideoOutput {
-        let pipWanted = Prefs.pictureInPicture && !Prefs.appLock
-            && AVPictureInPictureController.isPictureInPictureSupported()
-        if pipWanted && (continuingVLCSession || Prefs.upscaleMode == "off") {
-            return .sampleBuffer
-        }
-        return .metal
-    }
-
-    /// Bundled upscaler shader chains for 视频设置 → 画质增强
-    /// (v1.77, his ask: AI 超分 on video, not posters). Anime4K runs
-    /// its documented Mode A (Fast) chain; FSRCNNX is one file.
-    /// Dolby Vision titles get none: their colour path belongs to
-    /// the kernel's DV handling and these shaders are written for
-    /// SDR frames. PiP's sample-buffer output ignores user shaders
-    /// inside the kernel, so there is nothing to gate for it.
-    static func upscaleShaderURLs(isDolbyVision: Bool) -> [URL] {
-        guard !isDolbyVision else { return [] }
-        let names: [String]
-        switch Prefs.upscaleMode {
-        case "anime":
-            names = ["Anime4K_Clamp_Highlights", "Anime4K_Restore_CNN_M",
-                     "Anime4K_Upscale_CNN_x2_M", "Anime4K_AutoDownscalePre_x2",
-                     "Anime4K_AutoDownscalePre_x4", "Anime4K_Upscale_CNN_x2_S"]
-        case "general":
-            names = ["FSRCNNX_x2_8-0-4-1"]
-        // v1.81 pipeline probe: saturation x3 cannot be missed.
-        // If this tier changes nothing on screen, user shaders
-        // never reach the picture in this kernel build and the
-        // Anime4K subtlety question is moot.
-        case "test":
-            names = ["DiagSaturation"]
-        default:
-            return []
-        }
-        return names.compactMap {
-            Bundle.main.url(forResource: $0, withExtension: "glsl", subdirectory: "Shaders")
-                ?? Bundle.main.url(forResource: $0, withExtension: "glsl")
-        }
     }
 
     static func makePlayer(videoOutput: MPVPlayerConfiguration.VideoOutput, forceSoftware: Bool = false, isDolbyVision: Bool = false) -> MPVPlayer {
@@ -721,17 +670,6 @@ struct MPVPlayerScreen: View {
             options["sub-fonts-dir"] = fontURL.deletingLastPathComponent().path
             options["sub-font"] = "Noto Sans CJK SC"
         }
-        // Diagnostic line shown under 视频设置 → 画质增强 (v1.79):
-        // after two "no effect" rounds, the next report can state
-        // exactly what the last player was built with instead of
-        // anyone guessing. Shaders are NOT passed here any more
-        // (v1.80): the kernel's at-creation path applies them via
-        // an option operation this mpv build rejects ("option not
-        // found" failed the whole session on his device) - they
-        // are attached at runtime instead, see applyUpscaleShaders.
-        UserDefaults.standard.set(
-            "输出 \(videoOutput) · 模式 \(Prefs.upscaleMode) · 着色器 \(upscaleShaderURLs(isDolbyVision: isDolbyVision).count) 个\(isDolbyVision ? " · 杜比视界" : "")",
-            forKey: "diag.upscaleLast")
         let created = MPVPlayer(configuration: .init(
             additionalOptions: options,
             automaticallyPlays: true,
@@ -745,9 +683,6 @@ struct MPVPlayerScreen: View {
             initialBufferDuration: .seconds(1),
             networkCacheDuration: .seconds(Prefs.cacheSeconds),
             rebufferDuration: .seconds(2),
-            // v1.77: AI 超分 shaders from 视频设置 (empty = off,
-            // and every other rendering parameter stays defaulted,
-            // so an empty list renders exactly like before).
             renderingQuality: .init(),
             videoOutput: videoOutput
         ))
@@ -1089,42 +1024,15 @@ struct MPVPlayerScreen: View {
         endWatchTask?.cancel()
         player.stop()
         player = MPVPlayerScreen.makePlayer(
-            videoOutput: MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: false),
+            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
+            ? .sampleBuffer : .metal,
             forceSoftware: false,
             // This rebuild exists because the title turned out to
-            // be undeclared Dolby Vision - no upscale shaders.
+            // be undeclared Dolby Vision.
             isDolbyVision: true)
         playerGeneration += 1
         preparedGeneration = -1
         await startPlayback()
-    }
-
-    /// Attach (or clear) the upscale shader chain on the RUNNING
-    /// player (v1.80). Three doors were tried: the kernel's
-    /// at-creation renderingQuality path sets the shaders with an
-    /// option operation this mpv build answers "option not found"
-    /// and fails the whole session (v1.79, his screenshot);
-    /// setProperty is refused because the kernel owns the option.
-    /// What remains open is mpv's canonical runtime mechanism,
-    /// the change-list command, which the kernel lets through -
-    /// and as a bonus the switch is live, no player rebuild.
-    private func applyUpscaleShaders() {
-        player.executeCommand("change-list", arguments: ["glsl-shaders", "clr", ""])
-        guard !playerIsDolbyVision else { return }
-        for url in Self.upscaleShaderURLs(isDolbyVision: false) {
-            player.executeCommand("change-list", arguments: ["glsl-shaders", "append", url.path])
-        }
-    }
-
-    /// In-player AI 超分 switch (v1.78, his ask: the control also
-    /// lives in the player). Since v1.80 it applies live through
-    /// change-list commands - no rebuild, no position loss.
-    private func switchUpscaleMode(_ mode: String) {
-        guard mode != upscaleMode else { return }
-        upscaleMode = mode
-        UserDefaults.standard.set(mode, forKey: "prefs.upscaleMode")
-        applyUpscaleShaders()
-        pokeChrome()
     }
 
     /// Flips `hasStarted` once the position actually advances past the
@@ -1138,17 +1046,11 @@ struct MPVPlayerScreen: View {
             if Date() > deadline { hasStarted = true; break }
             try? await Task.sleep(for: .milliseconds(200))
         }
-        // Commands require an attached surface (kernel doc), so
-        // the change-list issued right after load() can race the
-        // surface and be dropped - re-apply once frames are
-        // actually flowing. Idempotent (clr + append).
-        if !Task.isCancelled { applyUpscaleShaders() }
     }
 
     private func startPlayback() async {
         if let localFileURL {
             player.load(localFileURL, startTime: startAt > 0 ? .seconds(startAt) : nil)
-            applyUpscaleShaders()
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
             let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
@@ -1169,7 +1071,6 @@ struct MPVPlayerScreen: View {
         currentStreamURL = launch.url
         currentSource = source
         player.load(launch.url, startTime: startAt > 0 ? .seconds(startAt) : nil)
-        applyUpscaleShaders()
         player.requestVideoFeatures([.nativeSubtitles])
         player.setSubtitlesVisible(true)
         let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
@@ -2243,31 +2144,6 @@ struct MPVPlayerScreen: View {
                             }
                         }
                         Button("搜索弹幕") { showDanmakuSearch = true }
-                    }
-                }
-                // v1.79: moved ABOVE 倍速 - at the bottom of this
-                // long menu it sat below the fold and he reported
-                // it missing twice.
-                Section("画质增强（AI 超分）") {
-                    Button {
-                        switchUpscaleMode("off")
-                    } label: {
-                        if upscaleMode == "off" { Label("关闭", systemImage: "checkmark") } else { Text("关闭") }
-                    }
-                    Button {
-                        switchUpscaleMode("anime")
-                    } label: {
-                        if upscaleMode == "anime" { Label("动漫增强（Anime4K）", systemImage: "checkmark") } else { Text("动漫增强（Anime4K）") }
-                    }
-                    Button {
-                        switchUpscaleMode("general")
-                    } label: {
-                        if upscaleMode == "general" { Label("通用增强（FSRCNNX）", systemImage: "checkmark") } else { Text("通用增强（FSRCNNX）") }
-                    }
-                    Button {
-                        switchUpscaleMode("test")
-                    } label: {
-                        if upscaleMode == "test" { Label("测试（饱和度拉满）", systemImage: "checkmark") } else { Text("测试（饱和度拉满）") }
                     }
                 }
                 Section("倍速") {
