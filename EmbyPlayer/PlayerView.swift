@@ -571,8 +571,7 @@ struct MPVPlayerScreen: View {
     var continuingVLCSession = false
 
     @State private var player = MPVPlayerScreen.makePlayer(videoOutput:
-        Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
-            ? .sampleBuffer : .metal)
+        MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: false))
     @Environment(\.scenePhase) private var playbackScenePhase
     @State private var playerGeneration = 0
     /// AI 超分 state for the in-player menu (v1.78): the current
@@ -613,12 +612,27 @@ struct MPVPlayerScreen: View {
         // the engine's error and rebuilds with hardware decoding.
         let videoStream = launch.source?.MediaStreams?.first { $0.type == "Video" }
         _player = State(initialValue: MPVPlayerScreen.makePlayer(
-            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
-                ? .sampleBuffer : .metal,
+            videoOutput: MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: continuingVLCSession),
             forceSoftware: continuingVLCSession && !(videoStream?.isDolbyVision ?? false),
             isDolbyVision: videoStream?.isDolbyVision ?? false))
         _playerForceSoftware = State(initialValue: continuingVLCSession && !(videoStream?.isDolbyVision ?? false))
         _playerIsDolbyVision = State(initialValue: videoStream?.isDolbyVision ?? false)
+    }
+
+    /// Which render output a new player gets (v1.79 diagnosis):
+    /// the sample-buffer (PiP) output makes the kernel skip user
+    /// shaders ENTIRELY - no effect, no GPU load, no heat - so
+    /// while a 超分 mode is on, the session renders through Metal
+    /// and PiP steps aside; PiP returns when the mode is off. A
+    /// VLC-handoff session exists FOR PiP, so it keeps the
+    /// sample-buffer output regardless of the mode.
+    static func preferredVideoOutput(continuingVLCSession: Bool) -> MPVPlayerConfiguration.VideoOutput {
+        let pipWanted = Prefs.pictureInPicture && !Prefs.appLock
+            && AVPictureInPictureController.isPictureInPictureSupported()
+        if pipWanted && (continuingVLCSession || Prefs.upscaleMode == "off") {
+            return .sampleBuffer
+        }
+        return .metal
     }
 
     /// Bundled upscaler shader chains for 视频设置 → 画质增强
@@ -701,6 +715,14 @@ struct MPVPlayerScreen: View {
             options["sub-fonts-dir"] = fontURL.deletingLastPathComponent().path
             options["sub-font"] = "Noto Sans CJK SC"
         }
+        let shaders = upscaleShaderURLs(isDolbyVision: isDolbyVision)
+        // Diagnostic line shown under 视频设置 → 画质增强 (v1.79):
+        // after two "no effect" rounds, the next report can state
+        // exactly what the last player was built with instead of
+        // anyone guessing.
+        UserDefaults.standard.set(
+            "输出 \(videoOutput) · 模式 \(Prefs.upscaleMode) · 着色器 \(shaders.count) 个\(isDolbyVision ? " · 杜比视界" : "")",
+            forKey: "diag.upscaleLast")
         let created = MPVPlayer(configuration: .init(
             additionalOptions: options,
             automaticallyPlays: true,
@@ -717,7 +739,7 @@ struct MPVPlayerScreen: View {
             // v1.77: AI 超分 shaders from 视频设置 (empty = off,
             // and every other rendering parameter stays defaulted,
             // so an empty list renders exactly like before).
-            renderingQuality: .init(shaders: upscaleShaderURLs(isDolbyVision: isDolbyVision)),
+            renderingQuality: .init(shaders: shaders),
             videoOutput: videoOutput
         ))
         created.setDiagnosticsEnabled(true)
@@ -1058,8 +1080,7 @@ struct MPVPlayerScreen: View {
         endWatchTask?.cancel()
         player.stop()
         player = MPVPlayerScreen.makePlayer(
-            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
-                ? .sampleBuffer : .metal,
+            videoOutput: MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: false),
             forceSoftware: false,
             // This rebuild exists because the title turned out to
             // be undeclared Dolby Vision - no upscale shaders.
@@ -1088,8 +1109,7 @@ struct MPVPlayerScreen: View {
         endWatchTask?.cancel()
         player.stop()
         player = MPVPlayerScreen.makePlayer(
-            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
-                ? .sampleBuffer : .metal,
+            videoOutput: MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: playerForceSoftware),
             forceSoftware: playerForceSoftware,
             isDolbyVision: playerIsDolbyVision)
         playerGeneration += 1
@@ -2208,15 +2228,9 @@ struct MPVPlayerScreen: View {
                         Button("搜索弹幕") { showDanmakuSearch = true }
                     }
                 }
-                Section("倍速") {
-                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
-                        Button("\(rate, specifier: "%g")×") {
-                            player.setPlaybackRate(rate)
-                            currentRate = rate
-                            Prefs.rememberRate(rate, for: item.SeriesId ?? item.Id)
-                        }
-                    }
-                }
+                // v1.79: moved ABOVE 倍速 - at the bottom of this
+                // long menu it sat below the fold and he reported
+                // it missing twice.
                 Section("画质增强（AI 超分）") {
                     Button {
                         switchUpscaleMode("off")
@@ -2232,6 +2246,15 @@ struct MPVPlayerScreen: View {
                         switchUpscaleMode("general")
                     } label: {
                         if upscaleMode == "general" { Label("通用增强（FSRCNNX）", systemImage: "checkmark") } else { Text("通用增强（FSRCNNX）") }
+                    }
+                }
+                Section("倍速") {
+                    ForEach([0.5, 0.75, 1.0, 1.25, 1.5, 2.0], id: \.self) { rate in
+                        Button("\(rate, specifier: "%g")×") {
+                            player.setPlaybackRate(rate)
+                            currentRate = rate
+                            Prefs.rememberRate(rate, for: item.SeriesId ?? item.Id)
+                        }
                     }
                 }
             } label: { circleLabel("ellipsis") }

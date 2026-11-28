@@ -586,6 +586,7 @@ struct VideoPrefsView: View {
     @AppStorage("prefs.dvP7Convert") private var p7Convert = true
     @AppStorage("prefs.cacheSeconds") private var cacheSeconds = 120
     @AppStorage("prefs.upscaleMode") private var upscaleMode = "off"
+    @AppStorage("diag.upscaleLast") private var upscaleDiag = ""
 
     var body: some View {
         ScrollView {
@@ -635,10 +636,16 @@ struct VideoPrefsView: View {
                         optButton("通用增强（FSRCNNX）", upscaleMode == "general") { upscaleMode = "general" }
                     }
                 }
-                Text("播放时用 GPU 着色器实时放大增强：动漫选 Anime4K（修复线条＋2 倍放大），真人影视选 FSRCNNX。下次打开视频时生效；仅 mpv 引擎，杜比视界影片和画中画下不生效。会增加发热，片源本身已是 4K 时提升不大。")
+                Text("播放时用 GPU 着色器实时放大增强：动漫选 Anime4K（修复线条＋2 倍放大），真人影视选 FSRCNNX。下次打开视频时生效；仅 mpv 引擎，杜比视界影片不生效。开启超分时画中画让位（着色器在画中画输出通道上会被内核跳过）。会增加发热，片源本身已是 4K 时提升不大。")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 20)
+                if !upscaleDiag.isEmpty {
+                    Text("上次打开视频时：\(upscaleDiag)")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 20)
+                }
 
             }
             .padding()
