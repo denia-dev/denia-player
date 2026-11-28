@@ -575,6 +575,13 @@ struct MPVPlayerScreen: View {
             ? .sampleBuffer : .metal)
     @Environment(\.scenePhase) private var playbackScenePhase
     @State private var playerGeneration = 0
+    /// AI 超分 state for the in-player menu (v1.78): the current
+    /// mode (mirrors Prefs.upscaleMode) and the parameters the
+    /// CURRENT player was built with, so an in-player switch can
+    /// rebuild it identically except for the shaders.
+    @State private var upscaleMode = Prefs.upscaleMode
+    @State private var playerForceSoftware = false
+    @State private var playerIsDolbyVision = false
     @State private var currentStreamURL: URL?
     @State private var currentSource: EmbyMediaSource?
     @State private var preparedGeneration = -1
@@ -610,6 +617,8 @@ struct MPVPlayerScreen: View {
                 ? .sampleBuffer : .metal,
             forceSoftware: continuingVLCSession && !(videoStream?.isDolbyVision ?? false),
             isDolbyVision: videoStream?.isDolbyVision ?? false))
+        _playerForceSoftware = State(initialValue: continuingVLCSession && !(videoStream?.isDolbyVision ?? false))
+        _playerIsDolbyVision = State(initialValue: videoStream?.isDolbyVision ?? false)
     }
 
     /// Bundled upscaler shader chains for 视频设置 → 画质增强
@@ -1042,6 +1051,8 @@ struct MPVPlayerScreen: View {
     /// the same position. Plays exactly like the pre-software build.
     private func fallbackToHardware() async {
         softwareFallbackUsed = true
+        playerForceSoftware = false
+        playerIsDolbyVision = true
         let position = player.position.secondsValue
         if position > 1 { resumeOverride = position }
         endWatchTask?.cancel()
@@ -1053,6 +1064,34 @@ struct MPVPlayerScreen: View {
             // This rebuild exists because the title turned out to
             // be undeclared Dolby Vision - no upscale shaders.
             isDolbyVision: true)
+        playerGeneration += 1
+        preparedGeneration = -1
+        await startPlayback()
+    }
+
+    /// In-player AI 超分 switch (v1.78, his ask: the control also
+    /// lives in the player). Rendering quality is an at-creation
+    /// setting in the kernel, so switching rebuilds the player and
+    /// resumes at the same position - the hardware fallback's
+    /// dance, reusing the parameters the current player was built
+    /// with so nothing else about the session changes.
+    private func switchUpscaleMode(_ mode: String) {
+        guard mode != upscaleMode else { return }
+        upscaleMode = mode
+        UserDefaults.standard.set(mode, forKey: "prefs.upscaleMode")
+        Task { await rebuildPlayerForUpscale() }
+    }
+
+    private func rebuildPlayerForUpscale() async {
+        let position = player.position.secondsValue
+        if position > 1 { resumeOverride = position }
+        endWatchTask?.cancel()
+        player.stop()
+        player = MPVPlayerScreen.makePlayer(
+            videoOutput: Prefs.pictureInPicture && !Prefs.appLock && AVPictureInPictureController.isPictureInPictureSupported()
+                ? .sampleBuffer : .metal,
+            forceSoftware: playerForceSoftware,
+            isDolbyVision: playerIsDolbyVision)
         playerGeneration += 1
         preparedGeneration = -1
         await startPlayback()
@@ -2176,6 +2215,23 @@ struct MPVPlayerScreen: View {
                             currentRate = rate
                             Prefs.rememberRate(rate, for: item.SeriesId ?? item.Id)
                         }
+                    }
+                }
+                Section("画质增强（AI 超分）") {
+                    Button {
+                        switchUpscaleMode("off")
+                    } label: {
+                        if upscaleMode == "off" { Label("关闭", systemImage: "checkmark") } else { Text("关闭") }
+                    }
+                    Button {
+                        switchUpscaleMode("anime")
+                    } label: {
+                        if upscaleMode == "anime" { Label("动漫增强（Anime4K）", systemImage: "checkmark") } else { Text("动漫增强（Anime4K）") }
+                    }
+                    Button {
+                        switchUpscaleMode("general")
+                    } label: {
+                        if upscaleMode == "general" { Label("通用增强（FSRCNNX）", systemImage: "checkmark") } else { Text("通用增强（FSRCNNX）") }
                     }
                 }
             } label: { circleLabel("ellipsis") }
