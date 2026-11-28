@@ -255,30 +255,28 @@ private func prefsCard<Content: View>(@ViewBuilder content: () -> Content) -> so
 
 private func prefsSectionLabel(_ title: String) -> some View {
     Text(title)
-        .font(.subheadline)
+        .font(.system(size: 15, weight: .medium))
         .foregroundStyle(.secondary)
-        .padding(.leading, 20)
+        .padding(.leading, 6)
 }
 
 private var prefsDivider: some View {
-    Divider().padding(.leading, 20)
+    Divider().padding(.leading, 16)
 }
 
 private func prefsLinkRow(_ title: String, icon: String, color: Color, route: Route) -> some View {
     NavigationLink(value: route) {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 9)
-                .fill(LinearGradient(colors: [color, color.opacity(0.68)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .fill(color)
                 .frame(width: 30, height: 30)
                 .overlay(Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white))
-                .shadow(color: color.opacity(0.28), radius: 3, x: 0, y: 1.5)
             Text(title)
             Spacer()
-            Image(systemName: "chevron.right").font(.footnote.weight(.semibold)).foregroundStyle(.secondary)
+            Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(.tertiary)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 54)
+        .padding(.horizontal, 16)
+        .frame(height: 56)
         .contentShape(Rectangle())
     }
     .buttonStyle(.plain)
@@ -286,8 +284,8 @@ private func prefsLinkRow(_ title: String, icon: String, color: Color, route: Ro
 
 private func prefsToggleRow(_ title: String, isOn: Binding<Bool>) -> some View {
     Toggle(title, isOn: isOn)
-        .padding(.horizontal, 20)
-        .frame(minHeight: 54)
+        .padding(.horizontal, 16)
+        .frame(minHeight: 56)
 }
 
 /// One option inside a prefsMenuRow menu, with a checkmark on
@@ -314,8 +312,8 @@ private func prefsMenuRow<Content: View>(_ title: String, value: String, @ViewBu
             Text(value).foregroundStyle(.secondary)
             Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 20)
-        .frame(height: 54)
+        .padding(.horizontal, 16)
+        .frame(height: 56)
         .contentShape(Rectangle())
     }
     // 全局 tint 是蓝色，Menu 标签会被它染成蓝色、值更是淡蓝（太浅）；

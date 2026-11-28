@@ -795,8 +795,8 @@ struct SettingsView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
-                Text("设置").font(.system(size: 32, weight: .bold))
+            VStack(alignment: .leading, spacing: 26) {
+                Text("设置").font(.system(size: 34, weight: .bold))
 
                 serverCard
 
@@ -981,7 +981,7 @@ struct SettingsView: View {
 
     private func settingsGroup<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(title).font(.subheadline).foregroundStyle(.secondary).padding(.leading, 6)
+            Text(title).font(.system(size: 15, weight: .medium)).foregroundStyle(.secondary).padding(.leading, 6)
             VStack(spacing: 0) { content() }
                 .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 24))
         }
@@ -998,22 +998,20 @@ struct SettingRowContent: View {
     var body: some View {
         HStack(spacing: 12) {
             RoundedRectangle(cornerRadius: 9)
-                .fill(LinearGradient(colors: [color, color.opacity(0.68)],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
+                .fill(color)
                 .frame(width: 30, height: 30)
                 .overlay(Image(systemName: icon).font(.system(size: 15, weight: .semibold)).foregroundStyle(.white))
-                .shadow(color: color.opacity(0.28), radius: 3, x: 0, y: 1.5)
             Text(title).foregroundStyle(.primary)
             Spacer()
             if let value {
                 Text(value).foregroundStyle(.secondary).lineLimit(1)
             }
             if chevron {
-                Image(systemName: "chevron.right").font(.footnote.bold()).foregroundStyle(.secondary)
+                Image(systemName: "chevron.right").font(.system(size: 13, weight: .semibold)).foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 14)
+        .padding(.vertical, 13)
         .contentShape(Rectangle())
     }
 }
