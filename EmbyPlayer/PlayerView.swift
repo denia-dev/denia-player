@@ -715,13 +715,16 @@ struct MPVPlayerScreen: View {
             options["sub-fonts-dir"] = fontURL.deletingLastPathComponent().path
             options["sub-font"] = "Noto Sans CJK SC"
         }
-        let shaders = upscaleShaderURLs(isDolbyVision: isDolbyVision)
         // Diagnostic line shown under 视频设置 → 画质增强 (v1.79):
         // after two "no effect" rounds, the next report can state
         // exactly what the last player was built with instead of
-        // anyone guessing.
+        // anyone guessing. Shaders are NOT passed here any more
+        // (v1.80): the kernel's at-creation path applies them via
+        // an option operation this mpv build rejects ("option not
+        // found" failed the whole session on his device) - they
+        // are attached at runtime instead, see applyUpscaleShaders.
         UserDefaults.standard.set(
-            "输出 \(videoOutput) · 模式 \(Prefs.upscaleMode) · 着色器 \(shaders.count) 个\(isDolbyVision ? " · 杜比视界" : "")",
+            "输出 \(videoOutput) · 模式 \(Prefs.upscaleMode) · 着色器 \(upscaleShaderURLs(isDolbyVision: isDolbyVision).count) 个\(isDolbyVision ? " · 杜比视界" : "")",
             forKey: "diag.upscaleLast")
         let created = MPVPlayer(configuration: .init(
             additionalOptions: options,
@@ -739,7 +742,7 @@ struct MPVPlayerScreen: View {
             // v1.77: AI 超分 shaders from 视频设置 (empty = off,
             // and every other rendering parameter stays defaulted,
             // so an empty list renders exactly like before).
-            renderingQuality: .init(shaders: shaders),
+            renderingQuality: .init(),
             videoOutput: videoOutput
         ))
         created.setDiagnosticsEnabled(true)
@@ -1090,31 +1093,32 @@ struct MPVPlayerScreen: View {
         await startPlayback()
     }
 
+    /// Attach (or clear) the upscale shader chain on the RUNNING
+    /// player (v1.80). Three doors were tried: the kernel's
+    /// at-creation renderingQuality path sets the shaders with an
+    /// option operation this mpv build answers "option not found"
+    /// and fails the whole session (v1.79, his screenshot);
+    /// setProperty is refused because the kernel owns the option.
+    /// What remains open is mpv's canonical runtime mechanism,
+    /// the change-list command, which the kernel lets through -
+    /// and as a bonus the switch is live, no player rebuild.
+    private func applyUpscaleShaders() {
+        player.executeCommand("change-list", arguments: ["glsl-shaders", "clr", ""])
+        guard !playerIsDolbyVision else { return }
+        for url in Self.upscaleShaderURLs(isDolbyVision: false) {
+            player.executeCommand("change-list", arguments: ["glsl-shaders", "append", url.path])
+        }
+    }
+
     /// In-player AI 超分 switch (v1.78, his ask: the control also
-    /// lives in the player). Rendering quality is an at-creation
-    /// setting in the kernel, so switching rebuilds the player and
-    /// resumes at the same position - the hardware fallback's
-    /// dance, reusing the parameters the current player was built
-    /// with so nothing else about the session changes.
+    /// lives in the player). Since v1.80 it applies live through
+    /// change-list commands - no rebuild, no position loss.
     private func switchUpscaleMode(_ mode: String) {
         guard mode != upscaleMode else { return }
         upscaleMode = mode
         UserDefaults.standard.set(mode, forKey: "prefs.upscaleMode")
-        Task { await rebuildPlayerForUpscale() }
-    }
-
-    private func rebuildPlayerForUpscale() async {
-        let position = player.position.secondsValue
-        if position > 1 { resumeOverride = position }
-        endWatchTask?.cancel()
-        player.stop()
-        player = MPVPlayerScreen.makePlayer(
-            videoOutput: MPVPlayerScreen.preferredVideoOutput(continuingVLCSession: playerForceSoftware),
-            forceSoftware: playerForceSoftware,
-            isDolbyVision: playerIsDolbyVision)
-        playerGeneration += 1
-        preparedGeneration = -1
-        await startPlayback()
+        applyUpscaleShaders()
+        pokeChrome()
     }
 
     /// Flips `hasStarted` once the position actually advances past the
@@ -1133,6 +1137,7 @@ struct MPVPlayerScreen: View {
     private func startPlayback() async {
         if let localFileURL {
             player.load(localFileURL, startTime: startAt > 0 ? .seconds(startAt) : nil)
+            applyUpscaleShaders()
             player.requestVideoFeatures([.nativeSubtitles])
             player.setSubtitlesVisible(true)
             let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
@@ -1153,6 +1158,7 @@ struct MPVPlayerScreen: View {
         currentStreamURL = launch.url
         currentSource = source
         player.load(launch.url, startTime: startAt > 0 ? .seconds(startAt) : nil)
+        applyUpscaleShaders()
         player.requestVideoFeatures([.nativeSubtitles])
         player.setSubtitlesVisible(true)
         let startRate = Prefs.rememberedRate(for: item.SeriesId ?? item.Id) ?? Prefs.defaultRate
