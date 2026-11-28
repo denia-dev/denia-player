@@ -131,9 +131,14 @@ private struct HeroArtwork: View {
             }
         }
         .task(id: item.Id) {
+            // v1.76 (his ask: sharper posters): the hero cell shows
+            // the poster at ~400x500pt, i.e. ~1200x1500px on a 3x
+            // screen - the old maxHeight 1000 fetch (~667px wide)
+            // was upscaled almost 2x and read soft. 1600 for the
+            // poster, 1440 for the backdrop fallback.
             let url = (item.ImageTags?["Primary"] != nil
-                ? client.imageURL(itemID: item.Id, kind: "Primary", maxHeight: 1000)
-                : nil) ?? client.backdropURL(itemID: item.Id, index: 0, maxHeight: 720)
+                ? client.imageURL(itemID: item.Id, kind: "Primary", maxHeight: 1600)
+                : nil) ?? client.backdropURL(itemID: item.Id, index: 0, maxHeight: 1440)
             guard let url else {
                 onBlank(item.Id)
                 return
@@ -747,8 +752,8 @@ struct HomeView: View {
             Task.detached(priority: .utility) {
                 for heroItem in warmItems {
                     let url = (heroItem.ImageTags?["Primary"] != nil
-                        ? client.imageURL(itemID: heroItem.Id, kind: "Primary", maxHeight: 1000)
-                        : nil) ?? client.backdropURL(itemID: heroItem.Id, index: 0, maxHeight: 720)
+                        ? client.imageURL(itemID: heroItem.Id, kind: "Primary", maxHeight: 1600)
+                        : nil) ?? client.backdropURL(itemID: heroItem.Id, index: 0, maxHeight: 1440)
                     if let url {
                         _ = await ImageMemoryCache.shared.image(for: url)
                     }

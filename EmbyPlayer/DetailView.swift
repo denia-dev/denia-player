@@ -334,7 +334,10 @@ struct DetailView: View {
     private var heroBackdrop: some View {
         if let client = store.client() {
             let previewURL = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 720)
-            let fullURL = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1080)
+            // v1.76: full-size header art raised 1080 -> 1440 so
+            // the aspect-fill crop on a 3x screen is no longer
+            // upscaled (the 720 preview still paints first frame).
+            let fullURL = client.backdropURL(itemID: artworkItemID, index: 0, maxHeight: 1440)
             ZStack {
                 heroPlaceholder(client: client)
                 // The carousel's 720 copy first: same URL the home
